@@ -12,11 +12,12 @@ const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Le
 const ENTITIES = {
   employees: {
     title: 'Werknemers', newLabel: 'Nieuwe werknemer',
-    help: 'De gebruikersnaam wordt ook gebruikt in OwnTracks. "Loxone-gebruiker" = exact dezelfde naam als in Loxone Config. Voeg daarna bij Locaties het thuisadres toe.',
+    help: 'De gebruikersnaam wordt ook gebruikt in OwnTracks. "Loxone-gebruiker" = exact dezelfde naam als in Loxone Config. Voeg daarna bij Locaties het thuisadres toe. Een <b>beheerder</b> is ook gewoon werknemer, maar kan via de knop "Beheer" bovenaan in de app ook het beheer openen.',
     fields: [
       { k: 'name', label: 'Naam', req: true },
       { k: 'username', label: 'Gebruikersnaam', req: true, help: 'kleine letters, bv. ruben' },
       { k: 'loxone_user', label: 'Loxone-gebruiker' },
+      { k: 'is_admin', label: 'Beheerder', type: 'bool', def: false },
       { k: 'active', label: 'Actief', type: 'bool' },
     ],
   },
@@ -61,8 +62,14 @@ const ENTITIES = {
   },
 };
 
+/** Ja/nee-veld: niet ingevuld = standaardwaarde van het veld (meestal ja, bij "Beheerder" nee) */
+const boolOf = (v, f) => {
+  const val = v ?? f.def ?? true;
+  return val !== false && val !== 0;
+};
+
 const fieldValue = (f, row, m) => {
-  if (f.type === 'bool') return row[f.k] !== false ? '✔' : '—';
+  if (f.type === 'bool') return boolOf(row[f.k], f) ? '✔' : '—';
   if (f.type === 'coords') return row.lat != null ? `<a href="https://www.google.com/maps?q=${row.lat},${row.lon}" target="_blank" rel="noopener">kaart</a>` : '<span class="pill warn">ontbreekt</span>';
   if (f.type === 'select') return esc(f.options(m).find((o) => o.id === row[f.k])?.name ?? '');
   return esc(row[f.k] ?? '');
@@ -70,7 +77,7 @@ const fieldValue = (f, row, m) => {
 
 function fieldInput(f, row, m) {
   const v = row?.[f.k];
-  if (f.type === 'bool') return `<input type="checkbox" name="${f.k}" ${v !== false ? 'checked' : ''}>`;
+  if (f.type === 'bool') return `<input type="checkbox" name="${f.k}" ${boolOf(v, f) ? 'checked' : ''}>`;
   if (f.type === 'select') {
     return `<select name="${f.k}" ${f.req ? 'required' : ''}><option value="">—</option>${f.options(m).map((o) => `<option value="${esc(o.id)}" ${o.id === v ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
   }
@@ -88,14 +95,14 @@ export class Admin {
   }
 
   // ---------- Server ----------
-  async server(path, opts = {}) {
-    const url = this.ctx.serverUrl();
-    const key = this.ctx.adminKey();
-    if (!url || !key) throw new Error('Server of beheersleutel niet ingesteld (Beheer → Instellingen).');
-    const res = await fetch(url + path, { ...opts, headers: { 'X-Admin-Key': key, 'Content-Type': 'application/json', ...(opts.headers ?? {}) } });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error ?? `Server: fout ${res.status}`);
-    return data;
+  /** Beheerverzoek aan de server (met beheersleutel of als werknemer met beheerrecht) */
+  server(path, opts = {}) {
+    return this.ctx.serverAdmin(path, opts);
+  }
+
+  /** Heeft dit toestel toegang tot het beheer op de server? */
+  hasServer() {
+    return !!(this.ctx.serverUrl() && this.ctx.adminHeaders());
   }
 
   render(el, tab = 'overzicht') {
@@ -155,15 +162,29 @@ export class Admin {
         rec.id = rec.username;
       }
       if (name === 'sites' && rec.type === 'thuis' && !rec.employee_id) return err('Kies de werknemer bij een thuisadres.');
+      if (name === 'employees') {
+        const me = this.ctx.me();
+        if (me?.username === rec.username && me.isAdmin && !rec.is_admin && !this.ctx.adminKey()
+          && !confirm('Je neemt je eigen beheerrecht af. Daarna kan je het beheer op dit toestel niet meer openen. Doorgaan?')) return;
+        // beheerrecht wordt door de server bewaakt: eerst daar bewaren
+        if (this.hasServer()) {
+          try {
+            await this.server(`/api/admin/employees/${encodeURIComponent(rec.username)}`, {
+              method: 'PUT', body: JSON.stringify({ name: rec.name, loxone_user: rec.loxone_user, is_admin: !!rec.is_admin }),
+            });
+          } catch (e2) {
+            if (rec.is_admin !== boolOf(edit?.is_admin, { def: false })) return err(`Beheerrecht niet gewijzigd: ${e2.message}`);
+            toast(`Bewaard, maar niet doorgegeven aan de server: ${e2.message}`, 'err');
+          }
+        } else if (rec.is_admin) {
+          return err('Beheerders aanduiden kan enkel als de server bereikbaar is.');
+        }
+      }
       rec.updated = Date.now();
       this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
         mm[name] = (mm[name] ?? []).filter((x) => x.id !== rec.id);
         mm[name].push(rec);
       });
-      if (name === 'employees' && this.ctx.serverUrl() && this.ctx.adminKey()) {
-        try { await this.server(`/api/admin/employees/${encodeURIComponent(rec.username)}`, { method: 'PUT', body: JSON.stringify({ name: rec.name, loxone_user: rec.loxone_user }) }); }
-        catch (e2) { toast(`Bewaard, maar niet doorgegeven aan de server: ${e2.message}`, 'err'); }
-      }
       toast('Bewaard', 'ok');
       this.entity(view, name);
     };
@@ -184,12 +205,27 @@ export class Admin {
         const r = mm[name].find((x) => x.id === id);
         if (r) Object.assign(r, { deleted: true, updated: Date.now() });
       });
-      if (name === 'employees' && this.ctx.serverUrl() && this.ctx.adminKey()) {
+      if (name === 'employees' && this.hasServer()) {
         try { await this.server(`/api/admin/employees/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* server niet bereikbaar */ }
       }
       this.entity(view, name);
     });
     view.querySelectorAll('[data-link]').forEach((b) => b.onclick = () => this.showLink(view.querySelector('#entExtra'), b.dataset.link));
+    if (name === 'employees' && !edit) this.syncAdminFlags(view);
+  }
+
+  /** Beheerrecht staat op de server: neem het over in de lijst als het verschilt */
+  async syncAdminFlags(view) {
+    if (!this.hasServer()) return;
+    let list;
+    try { list = await this.server('/api/admin/employees'); } catch { return; }
+    const srv = new Map(list.map((e) => [e.username, !!e.is_admin]));
+    const differ = alive(this.ctx.master().employees).filter((e) => srv.has(e.username) && srv.get(e.username) !== !!e.is_admin);
+    if (!differ.length) return;
+    this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+      for (const e of mm.employees) if (srv.has(e.username) && srv.get(e.username) !== !!e.is_admin) Object.assign(e, { is_admin: srv.get(e.username), updated: Date.now() });
+    });
+    if (view.isConnected) this.entity(view, 'employees');
   }
 
   async showLink(box, username) {
@@ -239,7 +275,7 @@ export class Admin {
     await this.ctx.store.sync(emps.map((e) => PATHS.reg(month, e.username)));
     let raws = {};
     let rawErr = '';
-    if (this.ctx.serverUrl() && this.ctx.adminKey()) {
+    if (this.hasServer()) {
       try { raws = await this.server(`/api/admin/raw?date=${date}`); } catch (e) { rawErr = e.message; }
     } else rawErr = 'Geen server ingesteld: enkel ingegeven/bevestigde uren.';
 
@@ -264,7 +300,7 @@ export class Admin {
       box.scrollIntoView({ behavior: 'smooth' });
     });
 
-    if (this.ctx.serverUrl() && this.ctx.adminKey()) {
+    if (this.hasServer()) {
       try {
         const unknown = await this.server('/api/admin/badges/unknown');
         if (unknown.length) {

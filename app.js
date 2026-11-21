@@ -36,6 +36,17 @@ const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localSt
 const device = () => lsGet(DEVICE);
 const serverUrl = () => (localStorage.getItem(SERVER) || (TEST ? location.origin : SERVER_URL) || '').replace(/\/+$/, '');
 const adminKey = () => localStorage.getItem(ADMIN_KEY) || '';
+const ME = 'enautec.me';
+/** Is de gekoppelde werknemer op dit toestel ook beheerder? (bijgehouden door de server) */
+const isAdminEmployee = () => { const me = lsGet(ME); return !!(me?.isAdmin && me.username === device()?.username); };
+/** Mag dit toestel het beheer openen: beheersleutel, beheerder-werknemer, of testmodus */
+const canAdmin = () => TEST || STORAGE !== 'google' || !!adminKey() || isAdminEmployee();
+/** Headers voor beheerverzoeken aan de server */
+function adminHeaders() {
+  if (adminKey()) return { 'X-Admin-Key': adminKey() };
+  if (isAdminEmployee()) return { Authorization: `Bearer ${device().token}` };
+  return null;
+}
 
 /** Toegangstokens voor Google Drive, verkregen via de verzamelserver */
 function googleTokens(slot) {
@@ -43,10 +54,9 @@ function googleTokens(slot) {
   return async (force = false) => {
     if (!force && cache && Date.now() < cache.exp - 60000) return cache;
     const dev = device();
-    const headers = { 'Content-Type': 'application/json' };
-    if (slot === 'A' && dev?.token) headers.Authorization = `Bearer ${dev.token}`;
-    else if (adminKey()) headers['X-Admin-Key'] = adminKey();
-    else throw Object.assign(new Error('Dit toestel is niet gekoppeld.'), { needsLogin: true });
+    const authHdr = slot === 'A' && dev?.token ? { Authorization: `Bearer ${dev.token}` } : adminHeaders();
+    if (!authHdr) throw Object.assign(new Error('Dit toestel is niet gekoppeld.'), { needsLogin: true });
+    const headers = { 'Content-Type': 'application/json', ...authHdr };
     const res = await fetch(`${serverUrl()}/api/google/token`, { method: 'POST', headers, body: JSON.stringify({ slot }) });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 || res.status === 409) throw Object.assign(new Error(data.error || 'Geen toegang tot Google Drive.'), { needsLogin: true });
@@ -65,7 +75,7 @@ function makeDriveA() {
 }
 function makeDriveB() {
   if (TEST) return localStorage.getItem(BILLING_TEST) ? new TestDrive('B') : null;
-  if (GOOGLE) return serverUrl() && adminKey() ? new GoogleDrive('B', googleTokens('B')) : null;
+  if (GOOGLE) return serverUrl() && adminHeaders() ? new GoogleDrive('B', googleTokens('B')) : null;
   return auth.account('B') ? new OneDrive('B') : null;
 }
 let driveA = makeDriveA();
@@ -89,8 +99,9 @@ function showStatus(s, err) {
 const store = new Store(driveA, showStatus);
 
 async function serverAdmin(path, opts = {}) {
-  if (!serverUrl() || !adminKey()) throw new Error('Serveradres of beheersleutel ontbreekt.');
-  const res = await fetch(serverUrl() + path, { ...opts, headers: { 'X-Admin-Key': adminKey(), 'Content-Type': 'application/json', ...(opts.headers ?? {}) } });
+  const ah = adminHeaders();
+  if (!serverUrl() || !ah) throw new Error('Geen beheerrechten op dit toestel (serveradres of beheersleutel ontbreekt).');
+  const res = await fetch(serverUrl() + path, { ...opts, headers: { ...ah, 'Content-Type': 'application/json', ...(opts.headers ?? {}) } });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Server: fout ${res.status}`);
   return data;
@@ -106,6 +117,9 @@ const ctx = {
   setServerUrl: (u) => (u ? localStorage.setItem(SERVER, u.replace(/\/+$/, '')) : localStorage.removeItem(SERVER)),
   adminKey,
   setAdminKey: (k) => (k ? localStorage.setItem(ADMIN_KEY, k) : localStorage.removeItem(ADMIN_KEY)),
+  adminHeaders,
+  serverAdmin,
+  me: () => lsGet(ME),
   billingDrive: () => driveB,
   /** Google-koppeling (A = gegevens, B = facturatie): status, koppelen, ontkoppelen */
   googleStatus: () => serverAdmin('/api/admin/google/status'),
@@ -190,15 +204,29 @@ function currentDate() {
   return view === 'dag' && isDate(arg) ? arg : today();
 }
 
+const $switch = document.getElementById('modeSwitch');
+
+/** Navigatie: onderaan de werknemerstabs; bovenaan een knop om te wisselen tussen werknemer en beheer */
 function setNav(active) {
   const dev = device();
-  const items = [
-    ['dag', 'Dag', '🕒'], ['planning', 'Planning', '📅'], ['overzicht', 'Overzicht', '📋'], ['meer', 'Meer', '⚙'],
-  ];
-  if (!dev) items.length = 0;
-  if (!GOOGLE || adminKey() || TEST || !dev) items.push(['beheer', 'Beheer', '🔒']);
+  const adminView = active === 'beheer';
+  const items = [['dag', 'Dag', '🕒'], ['planning', 'Planning', '📅'], ['overzicht', 'Overzicht', '📋'], ['meer', 'Meer', '⚙']];
   $nav.innerHTML = items.map(([k, label, icon]) => `<a href="#${k}" class="${k === active ? 'active' : ''}"><span aria-hidden="true">${icon}</span>${label}</a>`).join('');
-  $nav.hidden = !store.drive && !TEST;
+  $nav.hidden = adminView || !dev || (!store.drive && !TEST);
+  document.body.classList.toggle('admin-mode', adminView);
+  if (adminView && dev) {
+    $switch.hidden = false;
+    $switch.href = '#dag';
+    $switch.innerHTML = '<span aria-hidden="true">👤</span> Werknemer';
+    $switch.title = 'Terug naar je eigen uren';
+  } else if (!adminView && dev && canAdmin()) {
+    $switch.hidden = false;
+    $switch.href = '#beheer';
+    $switch.innerHTML = '<span aria-hidden="true">🔒</span> Beheer';
+    $switch.title = 'Naar het beheer';
+  } else {
+    $switch.hidden = true;
+  }
 }
 
 function route() {
@@ -458,10 +486,19 @@ function viewMore() {
   });
 }
 
+/** Pincode van het beheer onthouden voor 12 uur op dit toestel */
+const adminUnlocked = () => (lsGet(ADMIN_OK)?.until ?? 0) > Date.now();
+const unlockAdmin = () => lsSet(ADMIN_OK, { until: Date.now() + 12 * 3600000 });
+
 async function viewAdmin(tab) {
+  if (!canAdmin()) {
+    toast('Je hebt geen beheerrechten op dit toestel.', 'err');
+    location.hash = '#dag';
+    return;
+  }
   setNav('beheer');
   const m = ctx.master();
-  if (sessionStorage.getItem(ADMIN_OK) !== '1') {
+  if (!adminUnlocked()) {
     const first = !m.settings?.adminPinHash;
     $main.innerHTML = `<section class="card narrow"><h1>Beheer</h1>
       <p class="muted">${first ? 'Stel een pincode in voor het beheer (4 tot 8 cijfers). Enkel de beheerder kent deze code.' : 'Geef de pincode van het beheer.'}</p>
@@ -481,7 +518,7 @@ async function viewAdmin(tab) {
         $main.querySelector('#pinErr').innerHTML = '<div class="error">Verkeerde pincode.</div>';
         return;
       }
-      sessionStorage.setItem(ADMIN_OK, '1');
+      unlockAdmin();
       route();
     };
     return;
@@ -490,8 +527,31 @@ async function viewAdmin(tab) {
   admin.render($main.querySelector('#adminRoot'), tab);
 }
 
+/** Bij de server nagaan of de gekoppelde werknemer beheerder is (op de achtergrond) */
+async function refreshMe() {
+  const dev = device();
+  if (!dev?.token || !serverUrl()) return;
+  try {
+    const res = await fetch(`${serverUrl()}/api/me`, { headers: { Authorization: `Bearer ${dev.token}` } });
+    if (!res.ok) return;
+    const me = await res.json();
+    const before = isAdminEmployee();
+    lsSet(ME, me);
+    if (before !== isAdminEmployee()) {
+      if (!driveB) driveB = makeDriveB();
+      const view = location.hash.slice(1).split('/')[0];
+      if (view !== 'beheer') setNav(view || 'dag');
+      else if (!canAdmin()) location.hash = '#dag';
+    }
+  } catch { /* offline: vorige toestand behouden */ }
+}
+
 // ---------- Opstarten ----------
 async function start() {
+  // Altijd eerst de werknemersweergave tonen (behalve bij terugkeer van Google of een koppellink)
+  if (device() && !/^#(google|koppel)=/.test(location.hash) && !/^#(dag|planning|overzicht|meer)/.test(location.hash)) {
+    history.replaceState(null, '', `${location.pathname}${location.search}#dag`);
+  }
   let r = null;
   if (!GOOGLE && !TEST) {
     r = await auth.handleRedirect();
@@ -539,6 +599,7 @@ async function start() {
   await syncNow();
   if (GOOGLE && store.status === 'login' && !device()?.token && !adminKey()) { viewWelcome(); return; }
   route();
+  refreshMe();
 
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60000);
   document.addEventListener('visibilitychange', () => {

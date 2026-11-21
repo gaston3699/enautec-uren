@@ -62,6 +62,15 @@ code { font-size: 13px; word-break: break-all; background: var(--surface2); padd
 .sync.busy::before { background: var(--muted); animation: pulse 1s infinite alternate; }
 @keyframes pulse { to { opacity: .3; } }
 @media (max-width: 420px) { .sync span { display: none; } }
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.mode-switch { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; text-decoration: none;
+  padding: 6px 12px; border-radius: 99px; border: 1.5px solid var(--line); color: var(--fg); background: var(--surface); white-space: nowrap; }
+.mode-switch[hidden] { display: none; }
+.mode-switch:hover { border-color: var(--fg); }
+/* In het beheer: duidelijk zichtbaar dat je niet in je eigen uren zit */
+body.admin-mode .topbar { border-bottom-color: var(--ink); }
+body.admin-mode .mode-switch { background: var(--red); border-color: var(--red); color: #fff; }
+body.admin-mode { padding-bottom: 24px; }
 
 main { max-width: 880px; margin: 0 auto; padding: 16px; }
 .page-title { margin: 6px 2px 14px; }
@@ -186,7 +195,10 @@ html.test .topbar::after { content: 'TEST'; position: absolute; right: 50%; bott
     <img src="logo-mark.svg" alt="">
     <span><b>ENAUTEC</b><small>Urenregistratie</small></span>
   </a>
-  <button id="syncStatus" class="sync" type="button" title=""><span>Laden…</span></button>
+  <div class="top-actions">
+    <a id="modeSwitch" class="mode-switch" href="#beheer" hidden></a>
+    <button id="syncStatus" class="sync" type="button" title=""><span>Laden…</span></button>
+  </div>
 </header>
 <main id="main"><p class="muted center">Laden…</p></main>
 <nav id="nav" aria-label="Hoofdmenu" hidden></nav>
