@@ -1,7 +1,8 @@
 // Enautec Uren – hoofdmodule: opstarten, aanmelden, navigatie en de schermen voor de werknemer.
-import { MS_CLIENT_ID, APP_VERSION } from './config.js';
+import { MS_CLIENT_ID, APP_VERSION, STORAGE, SERVER_URL } from './config.js';
 import * as auth from './auth.js';
 import { OneDrive, TestDrive } from './drive.js';
+import { GoogleDrive } from './gdrive.js';
 import { Store, PATHS, EMPTY_MASTER } from './store.js';
 import { renderDay, emptyReg, rulesFrom } from './day.js';
 import { Admin } from './admin.js';
@@ -15,8 +16,12 @@ const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
 if (LOCAL && params.has('test')) localStorage.setItem('enautec.test', '1');
 const TEST = LOCAL && localStorage.getItem('enautec.test') === '1';
 
+const GOOGLE = STORAGE === 'google';
+const STORE_NAME = TEST ? 'testopslag' : GOOGLE ? 'Google Drive' : 'OneDrive';
+
 const DEVICE = 'enautec.device';
 const ADMIN_KEY = 'enautec.adminKey';
+const SERVER = 'enautec.server';
 const BILLING_TEST = 'enautec.testBilling';
 const ADMIN_OK = 'enautec.adminOk';
 
@@ -28,16 +33,51 @@ const lsGet = (k, d = null) => { try { return JSON.parse(localStorage.getItem(k)
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* geblokkeerd */ } };
 
 // ---------- Opslag ----------
-let driveA = TEST ? new TestDrive('A') : auth.account('A') ? new OneDrive('A') : null;
-let driveB = TEST ? (localStorage.getItem(BILLING_TEST) ? new TestDrive('B') : null) : auth.account('B') ? new OneDrive('B') : null;
+const device = () => lsGet(DEVICE);
+const serverUrl = () => (localStorage.getItem(SERVER) || SERVER_URL || (TEST ? location.origin : '')).replace(/\/+$/, '');
+const adminKey = () => localStorage.getItem(ADMIN_KEY) || '';
+
+/** Toegangstokens voor Google Drive, verkregen via de verzamelserver */
+function googleTokens(slot) {
+  let cache = null;
+  return async (force = false) => {
+    if (!force && cache && Date.now() < cache.exp - 60000) return cache;
+    const dev = device();
+    const headers = { 'Content-Type': 'application/json' };
+    if (slot === 'A' && dev?.token) headers.Authorization = `Bearer ${dev.token}`;
+    else if (adminKey()) headers['X-Admin-Key'] = adminKey();
+    else throw Object.assign(new Error('Dit toestel is niet gekoppeld.'), { needsLogin: true });
+    const res = await fetch(`${serverUrl()}/api/google/token`, { method: 'POST', headers, body: JSON.stringify({ slot }) });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 409) throw Object.assign(new Error(data.error || 'Geen toegang tot Google Drive.'), { needsLogin: true });
+    if (!res.ok) throw new Error(data.error || `Server: fout ${res.status}`);
+    cache = { token: data.access_token, exp: data.expires_at, email: data.email };
+    return cache;
+  };
+}
+
+const hasGoogleAccess = () => !!serverUrl() && !!(device()?.token || adminKey());
+
+function makeDriveA() {
+  if (TEST) return new TestDrive('A');
+  if (GOOGLE) return hasGoogleAccess() ? new GoogleDrive('A', googleTokens('A')) : null;
+  return auth.account('A') ? new OneDrive('A') : null;
+}
+function makeDriveB() {
+  if (TEST) return localStorage.getItem(BILLING_TEST) ? new TestDrive('B') : null;
+  if (GOOGLE) return serverUrl() && adminKey() ? new GoogleDrive('B', googleTokens('B')) : null;
+  return auth.account('B') ? new OneDrive('B') : null;
+}
+let driveA = makeDriveA();
+let driveB = makeDriveB();
 
 const STATUS = {
-  ok: ['ok', 'Bewaard in OneDrive'],
+  ok: ['ok', `Bewaard in ${STORE_NAME}`],
   busy: ['busy', 'Synchroniseren…'],
   idle: ['busy', 'Verbinden…'],
   offline: ['warn', 'Offline · bewaard op toestel'],
-  login: ['err', 'Opnieuw aanmelden'],
-  error: ['err', 'Probleem met OneDrive'],
+  login: ['err', GOOGLE ? 'Google Drive niet gekoppeld' : 'Opnieuw aanmelden'],
+  error: ['err', `Probleem met ${STORE_NAME}`],
   local: ['warn', 'Niet verbonden'],
 };
 function showStatus(s, err) {
@@ -48,21 +88,44 @@ function showStatus(s, err) {
 }
 const store = new Store(driveA, showStatus);
 
-const device = () => lsGet(DEVICE);
+async function serverAdmin(path, opts = {}) {
+  if (!serverUrl() || !adminKey()) throw new Error('Serveradres of beheersleutel ontbreekt.');
+  const res = await fetch(serverUrl() + path, { ...opts, headers: { 'X-Admin-Key': adminKey(), 'Content-Type': 'application/json', ...(opts.headers ?? {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Server: fout ${res.status}`);
+  return data;
+}
 
 const ctx = {
   store,
+  storage: TEST ? 'test' : STORAGE,
+  storeName: STORE_NAME,
   master: () => ({ ...EMPTY_MASTER(), ...store.get(PATHS.master, EMPTY_MASTER()) }),
   planning: () => store.get(PATHS.planning, { items: [] }),
-  serverUrl: () => (ctx.master().settings?.serverUrl || '').replace(/\/+$/, ''),
-  adminKey: () => localStorage.getItem(ADMIN_KEY) || '',
+  serverUrl,
+  setServerUrl: (u) => (u ? localStorage.setItem(SERVER, u.replace(/\/+$/, '')) : localStorage.removeItem(SERVER)),
+  adminKey,
   setAdminKey: (k) => (k ? localStorage.setItem(ADMIN_KEY, k) : localStorage.removeItem(ADMIN_KEY)),
   billingDrive: () => driveB,
+  /** Google-koppeling (A = gegevens, B = facturatie): status, koppelen, ontkoppelen */
+  googleStatus: () => serverAdmin('/api/admin/google/status'),
+  connectGoogle: async (slot) => {
+    if (TEST) {
+      if (slot === 'B') { localStorage.setItem(BILLING_TEST, '1'); driveB = new TestDrive('B'); route(); }
+      return;
+    }
+    const { url } = await serverAdmin('/api/admin/google/start', { method: 'POST', body: JSON.stringify({ slot, returnTo: location.origin + location.pathname }) });
+    location.assign(url);
+  },
+  disconnectGoogle: (slot) => serverAdmin(`/api/admin/google/${slot}`, { method: 'DELETE' }),
   loginBilling: () => {
-    if (TEST) { localStorage.setItem(BILLING_TEST, '1'); driveB = new TestDrive('B'); route(); return; }
+    if (TEST || GOOGLE) return ctx.connectGoogle('B');
     auth.login('B');
   },
-  logoutBilling: () => { if (TEST) localStorage.removeItem(BILLING_TEST); else auth.logout('B'); driveB = null; },
+  logoutBilling: () => {
+    if (TEST) { localStorage.removeItem(BILLING_TEST); driveB = null; }
+    else if (!GOOGLE) { auth.logout('B'); driveB = null; }
+  },
 };
 const admin = new Admin(ctx);
 
@@ -133,7 +196,7 @@ function setNav(active) {
     ['dag', 'Dag', '🕒'], ['planning', 'Planning', '📅'], ['overzicht', 'Overzicht', '📋'], ['meer', 'Meer', '⚙'],
   ];
   if (!dev) items.length = 0;
-  items.push(['beheer', 'Beheer', '🔒']);
+  if (!GOOGLE || adminKey() || TEST || !dev) items.push(['beheer', 'Beheer', '🔒']);
   $nav.innerHTML = items.map(([k, label, icon]) => `<a href="#${k}" class="${k === active ? 'active' : ''}"><span aria-hidden="true">${icon}</span>${label}</a>`).join('');
   $nav.hidden = !store.drive && !TEST;
 }
@@ -143,7 +206,7 @@ function route() {
   if (!driveA) return viewWelcome();
   const dev = device();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
-  if (!dev) return viewWho();
+  if (!dev) return GOOGLE && !TEST ? viewAdmin(rest[0] || 'overzicht') : viewWho();
   if (view === 'planning') return viewPlanning();
   if (view === 'overzicht') return viewHistory();
   if (view === 'meer') return viewMore();
@@ -154,6 +217,8 @@ function route() {
 function viewWelcome(message = '') {
   setNav('');
   $nav.hidden = true;
+  showStatus('local');
+  if (GOOGLE && !TEST) return viewWelcomeGoogle(message);
   $main.innerHTML = `<section class="card welcome">
     <img src="logo.svg" alt="Enautec – Automatisatie &amp; elektrotechnieken" class="welcome-logo">
     <h1>Urenregistratie</h1>
@@ -164,6 +229,53 @@ function viewWelcome(message = '') {
     ${LOCAL ? '<p><a href="?test=1">Testmodus starten (zonder Microsoft)</a></p>' : ''}
   </section>`;
   $main.querySelector('[data-act=login]')?.addEventListener('click', () => auth.login('A'));
+}
+
+/** Startscherm bij opslag in Google Drive: koppellink (werknemer) of beheerder instellen */
+async function viewWelcomeGoogle(message = '') {
+  const isAdmin = !!adminKey() && !!serverUrl();
+  let gs = null;
+  let gsErr = '';
+  if (isAdmin) { try { gs = await ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
+  $main.innerHTML = `<section class="card welcome">
+    <img src="logo.svg" alt="Enautec – Automatisatie &amp; elektrotechnieken" class="welcome-logo">
+    <h1>Urenregistratie</h1>
+    ${message ? `<div class="error">${esc(message)}</div>` : ''}
+    ${isAdmin ? `
+      ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
+      ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Zie HANDLEIDING.md, deel B.</div>' : ''}
+      ${gs?.configured && !gs.A ? `<p>Koppel nu het <b>Google-account van Enautec Uren</b>. Daar worden de uren, planning en het materiaal bewaard.</p>
+        <button class="primary big" data-act="connect">Koppelen met Google Drive</button>
+        <p class="muted small">Kies bij Google het juiste account en vink de toegang tot Google Drive aan.</p>` : ''}
+      ${gs?.A ? `<p>✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google Drive')}</b>.</p><a class="btn primary" href="#beheer">Naar beheer</a>` : ''}
+      <p><button class="link" data-act="forget">Beheerdersgegevens van dit toestel wissen</button></p>`
+    : `<p><b>Werknemer?</b> Open de <b>koppellink</b> die je van de beheerder kreeg, op deze gsm. Daarna werkt de app vanzelf, zonder wachtwoord.</p>
+      <details><summary>Beheerder</summary>
+        <form id="adminSetup" class="form-grid" style="text-align:left">
+          <label><span>Adres van de verzamelserver</span><input name="server" required placeholder="https://enautec-uren.….workers.dev" value="${esc(serverUrl())}"></label>
+          <label><span>Beheersleutel (ADMIN_KEY)</span><input name="key" type="password" required autocomplete="off"></label>
+          <div><button class="primary">Verbinden</button></div>
+        </form><div id="setupErr"></div>
+      </details>`}
+    ${LOCAL ? '<p><a href="?test=1">Testmodus starten</a></p>' : ''}
+  </section>`;
+  $main.querySelector('[data-act=connect]')?.addEventListener('click', () => ctx.connectGoogle('A').catch((e) => toast(e.message, 'err')));
+  $main.querySelector('[data-act=forget]')?.addEventListener('click', () => { ctx.setAdminKey(''); location.reload(); });
+  const form = $main.querySelector('#adminSetup');
+  if (form) form.onsubmit = async (e) => {
+    e.preventDefault();
+    const url = form.elements.server.value.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//.test(url)) { $main.querySelector('#setupErr').innerHTML = '<div class="error">Het adres moet met https:// beginnen.</div>'; return; }
+    ctx.setServerUrl(url);
+    ctx.setAdminKey(form.elements.key.value.trim());
+    try {
+      await ctx.googleStatus();
+      location.reload();
+    } catch (err) {
+      ctx.setAdminKey('');
+      $main.querySelector('#setupErr').innerHTML = `<div class="error">${esc(err.message)}</div>`;
+    }
+  };
 }
 
 function viewWho() {
@@ -267,18 +379,26 @@ function viewMore() {
       <p class="muted">Buiten de werkuren kan je OwnTracks op <b>Rustig</b> zetten. Je locatie wordt enkel gebruikt om je uren voor te stellen en na enkele weken gewist.</p>
       <details><summary>Manueel instellen</summary><p>Modus <b>HTTP</b> · URL <code>${esc(server)}/api/owntracks</code> · gebruiker <code>${esc(dev.username)}</code> · wachtwoord <code>${esc(dev.token)}</code></p></details>
     </section>` : ''}
-    <section class="card"><h2>OneDrive</h2>
-      <p>${TEST ? 'Testmodus: gegevens staan enkel in deze browser.' : acc ? `Aangemeld als <b>${esc(acc.name || acc.username)}</b> <span class="muted">${esc(acc.username)}</span>` : 'Niet aangemeld.'}</p>
+    <section class="card"><h2>Opslag</h2>
+      <p>${TEST ? 'Testmodus: gegevens staan enkel in deze browser.'
+        : acc ? `${esc(STORE_NAME)}: <b>${esc(acc.username || acc.name)}</b>` : GOOGLE ? 'Google Drive (via de koppeling van de beheerder).' : 'Niet aangemeld.'}</p>
       <div class="row"><button class="secondary" data-act="sync">Nu synchroniseren</button>
-      ${TEST ? '<button class="link danger" data-act="testreset">Testgegevens wissen</button>' : '<button class="link danger" data-act="logout">Afmelden</button>'}</div>
+      ${TEST ? '<button class="link danger" data-act="testreset">Testgegevens wissen</button>'
+        : GOOGLE ? '<button class="link danger" data-act="unlink">Dit toestel ontkoppelen</button>' : '<button class="link danger" data-act="logout">Afmelden</button>'}</div>
     </section>
-    <section class="card"><p class="muted small">Enautec Uren versie ${APP_VERSION}</p></section>`;
+    <section class="card"><p class="muted small">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p></section>`;
   $main.querySelector('[data-act=switch]').onclick = () => { if (confirm('Wil je een andere naam kiezen op dit toestel?')) { lsSet(DEVICE, null); location.hash = ''; route(); } };
   $main.querySelector('[data-act=sync]').onclick = async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); };
   $main.querySelector('[data-act=logout]')?.addEventListener('click', () => {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet in OneDrive staan. Toch afmelden?')) return;
     if (!confirm('Afmelden van OneDrive op dit toestel?')) return;
     auth.logout('A'); driveA = null; store.drive = null; route();
+  });
+  $main.querySelector('[data-act=unlink]')?.addEventListener('click', () => {
+    if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet in Google Drive staan. Toch ontkoppelen?')) return;
+    if (!confirm('Dit toestel ontkoppelen? Je hebt daarna opnieuw een koppellink nodig.')) return;
+    lsSet(DEVICE, null);
+    location.href = location.pathname;
   });
   $main.querySelector('[data-act=testreset]')?.addEventListener('click', () => {
     if (!confirm('Alle testgegevens in deze browser wissen?')) return;
@@ -321,36 +441,60 @@ async function viewAdmin(tab) {
 
 // ---------- Opstarten ----------
 async function start() {
-  const r = await auth.handleRedirect();
-  if (r?.ok && r.slot === 'A') { driveA = new OneDrive('A'); store.drive = driveA; }
-  if (r?.ok && r.slot === 'B') { driveB = new OneDrive('B'); toast('Verbonden met OneDrive facturatie', 'ok'); }
-  if (r && !r.ok && !r.silent) toast(r.error, 'err');
-
-  // Koppellink: #koppel=gebruikersnaam.code
-  const km = location.hash.match(/^#koppel=([^.]+)\.(.+)$/);
-  if (km) {
-    lsSet(DEVICE, { username: decodeURIComponent(km[1]), token: km[2] });
-    history.replaceState(null, '', `${location.pathname}${location.search}#meer`);
-    toast('Toestel gekoppeld. Stel nu OwnTracks in.', 'ok');
+  let r = null;
+  if (!GOOGLE && !TEST) {
+    r = await auth.handleRedirect();
+    if (r?.ok && r.slot === 'A') { driveA = new OneDrive('A'); store.drive = driveA; }
+    if (r?.ok && r.slot === 'B') { driveB = new OneDrive('B'); toast('Verbonden met OneDrive facturatie', 'ok'); }
+    if (r && !r.ok && !r.silent) toast(r.error, 'err');
   }
 
-  if (driveA && !TEST && auth.needsInteractive('A')) {
+  // Terug van Google na koppelen: #google=ok|fout&slot=A&msg=…
+  const gm = location.hash.match(/^#google=(ok|fout)&slot=([AB])(?:&msg=(.*))?$/);
+  if (gm) {
+    history.replaceState(null, '', `${location.pathname}${location.search}${gm[2] === 'B' ? '#beheer/export' : '#beheer/instellingen'}`);
+    if (gm[1] === 'ok') toast(gm[2] === 'A' ? 'Google Drive gekoppeld' : 'Google Drive facturatie gekoppeld', 'ok');
+    else toast(`Koppelen mislukt: ${decodeURIComponent(gm[3] ?? '')}`, 'err');
+  }
+
+  // Koppellink: #koppel=gebruikersnaam.code&s=<serveradres>
+  const km = location.hash.match(/^#koppel=([^.&]+)\.([^&]+)(?:&s=(.+))?$/);
+  if (km) {
+    lsSet(DEVICE, { username: decodeURIComponent(km[1]), token: km[2] });
+    if (km[3]) ctx.setServerUrl(decodeURIComponent(km[3]));
+    history.replaceState(null, '', `${location.pathname}${location.search}#meer`);
+    toast('Toestel gekoppeld. Stel nu OwnTracks in.', 'ok');
+    driveA = makeDriveA();
+    store.drive = driveA;
+  }
+
+  if (!GOOGLE && driveA && !TEST && auth.needsInteractive('A')) {
     if (r?.silent && !r.ok) showStatus('login');
     else if (await auth.trySilentRenew('A')) return; // pagina gaat even naar Microsoft
   }
 
   if (!driveA) { viewWelcome(r && !r.ok && r.slot === 'A' ? r.error : ''); return; }
 
+  // Beheerder zonder werknemerskoppeling: eerst Google Drive koppelen als dat nog niet gebeurd is
+  if (GOOGLE && !TEST && !device()) {
+    try {
+      const gs = await ctx.googleStatus();
+      if (!gs.A) { viewWelcome(); return; }
+    } catch (e) { viewWelcome(e.message); return; }
+  }
+
   window.addEventListener('hashchange', route);
-  if (!store.has(PATHS.master)) $main.innerHTML = '<p class="muted center">Gegevens ophalen uit OneDrive…</p>';
+  if (!store.has(PATHS.master)) $main.innerHTML = `<p class="muted center">Gegevens ophalen uit ${esc(STORE_NAME)}…</p>`;
   await syncNow();
+  if (GOOGLE && store.status === 'login' && !device()?.token && !adminKey()) { viewWelcome(); return; }
   route();
 
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { rawCache.clear(); syncNow(); } });
   window.addEventListener('online', syncNow);
   $status.onclick = () => {
-    if (store.status === 'login') auth.login('A');
+    if (store.status === 'login' && !GOOGLE) auth.login('A');
+    else if (store.status === 'login') toast(store.lastError || 'Google Drive is niet gekoppeld. Vraag het aan de beheerder.', 'err');
     else syncNow();
   };
 }

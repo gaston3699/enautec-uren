@@ -2,8 +2,8 @@
    - De app zelf: eerst online proberen (nieuwe versie komt meteen binnen), anders de bewaarde kopie.
    - Lettertypes en de Excel-module: bewaarde kopie gebruiken.
    - Microsoft (aanmelden, OneDrive) en de verzamelserver: nooit bewaren, altijd rechtstreeks. */
-const CACHE = 'enautec-uren-v1';
-const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './store.js', './day.js', './admin.js', './export.js',
+const CACHE = 'enautec-uren-v2';
+const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './store.js', './day.js', './admin.js', './export.js', './gdrive.js',
   './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './manifest.webmanifest',
   './logo.svg', './logo-mark.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 const STATIC_ORIGINS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];

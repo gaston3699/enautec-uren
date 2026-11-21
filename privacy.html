@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Enautec Uren</title>
+<link rel="icon" href="logo-mark.svg" type="image/svg+xml">
+<style>
+  :root { --bg: #f4f4f3; --surface: #fff; --fg: #141414; --muted: #5d5d5b; --line: #dad9d6; --red: #c62828; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #101010; --surface: #1b1b1b; --fg: #f1f1f0; --muted: #a5a5a2; --line: #333331; --red: #ff8a80; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--surface); border-bottom: 3px solid #e23b3b; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+  header img { width: 34px; height: 32px; }
+  @media (prefers-color-scheme: dark) { header img { filter: invert(1) hue-rotate(180deg); } }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 26px; margin: 0 0 6px; } h2 { font-size: 19px; margin: 28px 0 8px; }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--line); vertical-align: top; }
+  a { color: var(--red); }
+</style>
+</head>
+<body>
+<header><img src="logo-mark.svg" alt=""><b>ENAUTEC</b>&nbsp;Uren</header>
+<main>
+  <h1>Privacy: Enautec Uren</h1>
+  <p class="muted">Laatst bijgewerkt: 21 november 2026</p>
+
+  <p>Enautec Uren is de urenregistratie van Enautec (automatisatie &amp; elektrotechnieken). De app wordt enkel gebruikt door werknemers en de beheerder van Enautec. Op deze pagina staat welke gegevens de app gebruikt, waarvoor, waar ze bewaard worden en hoe lang.</p>
+
+  <h2>Welke gegevens en waarvoor</h2>
+  <table>
+    <tr><th>Gegevens</th><th>Waarvoor</th></tr>
+    <tr><td>Naam en gebruikersnaam van de werknemer</td><td>Registraties aan de juiste persoon koppelen</td></tr>
+    <tr><td>Gewerkte uren, verplaatsingen (tijd en kilometers), pauzes en projecten</td><td>Loonadministratie en facturatie aan klanten</td></tr>
+    <tr><td>Gebruikt materiaal per project</td><td>Facturatie aan klanten</td></tr>
+    <tr><td>Locatie van de gsm (via de app OwnTracks)</td><td>Automatisch voorstellen van de dagstaat: aankomst en vertrek bij klanten, het atelier en verplaatsingen</td></tr>
+    <tr><td>Badges aan de deur van het atelier (Loxone)</td><td>Begin en einde van werk in het atelier</td></tr>
+  </table>
+  <p>Locatiegegevens worden <b>enkel</b> gebruikt om de uren voor te stellen. De werknemer kijkt die voorstellen zelf na en bevestigt ze. Buiten de werkuren kan de werknemer OwnTracks op "Rustig" zetten; dan wordt er niets doorgestuurd.</p>
+
+  <h2>Waar de gegevens bewaard worden</h2>
+  <ul>
+    <li><b>Google Drive</b> van Enautec, in de map "Enautec Uren": bevestigde uren, planning, materiaal, klanten en projecten. De Excel-export voor de facturatie komt in de Google Drive van de facturatie.</li>
+    <li><b>Cloudflare</b> (database in West-Europa): ruwe gsm-locaties en badges, tot de app ze verwerkt heeft, en de koppeling met Google Drive (versleuteld).</li>
+    <li><b>Op de gsm</b> van de werknemer: een kopie van de eigen gegevens, zodat de app ook zonder internet werkt.</li>
+  </ul>
+
+  <h2>Hoe lang</h2>
+  <ul>
+    <li>Ruwe gsm-locaties: automatisch gewist na <b>60 dagen</b>.</li>
+    <li>Badges: automatisch gewist na <b>400 dagen</b>.</li>
+    <li>Bevestigde uren en materiaal: zolang nodig voor de loon- en boekhoudkundige verplichtingen van Enautec.</li>
+  </ul>
+
+  <h2>Wie heeft toegang</h2>
+  <p>Een werknemer ziet enkel zijn eigen gegevens. De beheerder van Enautec ziet de gegevens van alle werknemers. Gegevens worden niet verkocht en niet gedeeld met andere partijen, behalve de dienstverleners hierboven (Google en Cloudflare) die ze voor Enautec bewaren.</p>
+
+  <h2>Toegang tot Google Drive</h2>
+  <p>De app vraagt enkel toegang tot de bestanden die ze zelf aanmaakt in Google Drive (toegang "drive.file"), niet tot de andere bestanden in die Drive. Het gebruik van gegevens die via Google API's verkregen worden, volgt het <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>, inclusief de vereisten rond beperkt gebruik ("Limited Use").</p>
+
+  <h2>Je rechten</h2>
+  <p>Je kan je gegevens altijd inkijken, laten verbeteren of laten verwijderen (voor zover Enautec ze niet wettelijk moet bewaren). Neem daarvoor contact op met de zaakvoerder van Enautec.</p>
+</main>
+</body>
+</html>

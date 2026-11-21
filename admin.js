@@ -201,7 +201,7 @@ export class Admin {
         const rec = alive(this.ctx.master().employees).find((x) => x.username === username);
         e = await this.server(`/api/admin/employees/${encodeURIComponent(username)}`, { method: 'PUT', body: JSON.stringify({ name: rec?.name, loxone_user: rec?.loxone_user }) });
       }
-      const link = `${location.origin}${location.pathname}#koppel=${encodeURIComponent(username)}.${e.token}`;
+      const link = `${location.origin}${location.pathname}#koppel=${encodeURIComponent(username)}.${e.token}&s=${encodeURIComponent(this.ctx.serverUrl())}`;
       box.innerHTML = `<div class="callout">
         <h3>Koppellink voor ${esc(e.name)}</h3>
         <p>Stuur deze link naar de werknemer (bv. via WhatsApp) en laat hem openen op zijn gsm. De app onthoudt dan wie hij is en toont de knop om OwnTracks in te stellen.</p>
@@ -341,8 +341,16 @@ export class Admin {
   async exportView(view) {
     const m = this.ctx.master();
     const first = `${today().slice(0, 7)}-01`;
-    const accB = this.ctx.billingDrive()?.account;
     const folder = m.settings?.billingFolder || 'Facturatie/Uren Enautec';
+    const google = this.ctx.storage === 'google';
+    const billName = google ? 'Google Drive facturatie' : this.ctx.storage === 'test' ? 'testopslag facturatie' : 'OneDrive facturatie';
+    let accB = this.ctx.billingDrive()?.account;
+    if (google) {
+      try {
+        const gs = await this.ctx.googleStatus();
+        accB = gs.B ? { name: gs.B.email ?? 'Google-account', username: gs.B.email ?? '' } : null;
+      } catch { accB = null; }
+    }
     view.innerHTML = `<section class="card">
       <h2>Export naar de facturatie</h2>
       <p class="muted">Enkel bevestigde dagen. Het Excel-bestand bevat: per project (uren, km, materiaal), materiaal, uren in detail, per werknemer per dag (voor het loon) en de dagen die nog niet bevestigd zijn.</p>
@@ -350,12 +358,12 @@ export class Admin {
         <label><span>Van</span><input type="date" id="exFrom" value="${first}"></label>
         <label><span>Tot</span><input type="date" id="exTo" value="${today()}"></label>
       </div>
-      <h3>OneDrive facturatie</h3>
-      ${accB ? `<p>Verbonden met <b>${esc(accB.name || accB.username)}</b> <span class="muted">${esc(accB.username)}</span> · map <code>${esc(folder)}</code></p>`
-        : '<p class="muted">Nog niet verbonden. Meld je aan met het account van de facturatie. Dat gebeurt enkel op dit toestel.</p>'}
+      <h3>${esc(billName[0].toUpperCase() + billName.slice(1))}</h3>
+      ${accB ? `<p>Verbonden met <b>${esc(accB.name || accB.username)}</b> · map <code>${esc(folder)}</code></p>`
+        : `<p class="muted">Nog niet verbonden. ${google ? 'Koppel het Google-account van de facturatie. Werknemers krijgen daar nooit toegang toe.' : 'Meld je aan met het account van de facturatie. Dat gebeurt enkel op dit toestel.'}</p>`}
       <div class="row">
-        ${accB ? '<button class="primary" data-act="export">Exporteren naar OneDrive facturatie</button><button class="link" data-act="logoutB">Afmelden facturatie</button>'
-          : '<button class="primary" data-act="loginB">Verbinden met OneDrive facturatie</button>'}
+        ${accB ? `<button class="primary" data-act="export">Exporteren naar ${esc(billName)}</button><button class="link" data-act="logoutB">${google ? 'Ontkoppelen' : 'Afmelden facturatie'}</button>`
+          : `<button class="primary" data-act="loginB">Verbinden met ${esc(billName)}</button>`}
         <button class="secondary" data-act="download">Enkel downloaden</button>
       </div>
       <div id="exOut"></div></section>`;
@@ -364,14 +372,18 @@ export class Admin {
       const from = view.querySelector('#exFrom').value;
       const to = view.querySelector('#exTo').value;
       if (!isDate(from) || !isDate(to) || from > to) throw new Error('Kies een geldige periode.');
-      out.innerHTML = '<p class="muted">Gegevens ophalen uit OneDrive…</p>';
+      out.innerHTML = `<p class="muted">Gegevens ophalen uit ${esc(this.ctx.storeName)}…</p>`;
       const regs = await this.loadRegs(from, to);
       out.innerHTML = '<p class="muted">Excel maken…</p>';
       const wb = await buildWorkbook(this.ctx.master(), regs, from, to);
       return { ...wb, name: `Uren Enautec ${from} tot ${to}.xlsx` };
     };
-    view.querySelector('[data-act=loginB]')?.addEventListener('click', () => this.ctx.loginBilling());
-    view.querySelector('[data-act=logoutB]')?.addEventListener('click', () => { this.ctx.logoutBilling(); this.exportView(view); });
+    view.querySelector('[data-act=loginB]')?.addEventListener('click', () => Promise.resolve(this.ctx.loginBilling()).catch((e) => { out.innerHTML = `<div class="error">${esc(e.message)}</div>`; }));
+    view.querySelector('[data-act=logoutB]')?.addEventListener('click', async () => {
+      if (!confirm(`${billName} ontkoppelen?`)) return;
+      try { if (google) await this.ctx.disconnectGoogle('B'); else this.ctx.logoutBilling(); } catch (e) { toast(e.message, 'err'); }
+      this.exportView(view);
+    });
     view.querySelector('[data-act=download]').onclick = async () => {
       try {
         const r = await make();
@@ -384,13 +396,13 @@ export class Admin {
     view.querySelector('[data-act=export]')?.addEventListener('click', async () => {
       try {
         const r = await make();
-        out.innerHTML = '<p class="muted">Uploaden naar OneDrive facturatie…</p>';
+        out.innerHTML = `<p class="muted">Uploaden naar ${esc(billName)}…</p>`;
         const res = await this.ctx.billingDrive().upload(`${folder}/${r.name}`, r.blob, r.blob.type);
-        out.innerHTML = `<p class="ok-text">✔ Bewaard in OneDrive facturatie: <b>${esc(folder)}/${esc(r.name)}</b>
+        out.innerHTML = `<p class="ok-text">✔ Bewaard in ${esc(billName)}: <b>${esc(folder)}/${esc(r.name)}</b>
           (${r.counts.projects} projecten, ${r.counts.rows} urenregels, ${r.counts.mats} materiaalregels${r.counts.open ? `, <b>${r.counts.open} dag(en) nog niet bevestigd</b>` : ''}).</p>
-          ${res.webUrl ? `<p><a href="${esc(res.webUrl)}" target="_blank" rel="noopener">Openen in OneDrive</a></p>` : ''}`;
+          ${res.webUrl ? `<p><a href="${esc(res.webUrl)}" target="_blank" rel="noopener">Openen</a></p>` : ''}`;
       } catch (e) {
-        if (e.needsLogin) { out.innerHTML = '<div class="error">De aanmelding bij OneDrive facturatie is verlopen. Verbind opnieuw.</div>'; return; }
+        if (e.needsLogin) { out.innerHTML = `<div class="error">De koppeling met ${esc(billName)} is verlopen of ontbreekt. Verbind opnieuw.</div>`; return; }
         out.innerHTML = `<div class="error">${esc(e.message)}</div>`;
       }
     });
@@ -424,11 +436,26 @@ export class Admin {
     const m = this.ctx.master();
     const s = m.settings ?? {};
     const rules = s.rules ?? {};
-    view.innerHTML = `<section class="card">
+    const google = this.ctx.storage === 'google';
+    let gs = null;
+    let gsErr = '';
+    if (google) { try { gs = await this.ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
+    const since = (c) => (c?.connectedAt ? ` · sinds ${new Date(c.connectedAt).toLocaleDateString('nl-BE')}` : '');
+    view.innerHTML = `
+    ${google ? `<section class="card">
+      <h2>Google Drive (gegevens)</h2>
+      <p class="muted">Hier staan de uren, planning, het materiaal en de stamgegevens, in de map <code>Enautec Uren</code>. De verzamelserver bewaart de koppeling; werknemers melden zich nooit aan bij Google.</p>
+      ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
+      ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).</div>' : ''}
+      ${gs?.A ? `<p>✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google-account')}</b>${since(gs.A)}</p>` : gs ? '<p class="warn-text">Nog niet gekoppeld.</p>' : ''}
+      <div class="row">${gs?.configured ? `<button class="primary" data-act="gconnect">${gs.A ? 'Opnieuw koppelen' : 'Koppelen met Google Drive'}</button>` : ''}
+        ${gs?.A ? '<button class="link danger" data-act="gdisconnect">Ontkoppelen</button>' : ''}</div>
+    </section>` : ''}
+    <section class="card">
       <h2>Verzamelserver (Cloudflare)</h2>
-      <p class="muted">De server ontvangt de gsm-locaties (OwnTracks) en de badges (Loxone). Het adres geldt voor alle toestellen, de beheersleutel wordt enkel op dit toestel bewaard.</p>
+      <p class="muted">De server ontvangt de gsm-locaties (OwnTracks) en de badges (Loxone)${google ? ' en bewaart de koppeling met Google Drive' : ''}. Het adres en de beheersleutel worden enkel op dit toestel bewaard; werknemers krijgen het adres via hun koppellink.</p>
       <form class="form-grid" id="srvForm">
-        <label><span>Adres van de server</span><input name="serverUrl" placeholder="https://enautec-uren.…workers.dev" value="${esc(s.serverUrl ?? '')}"></label>
+        <label><span>Adres van de server</span><input name="serverUrl" placeholder="https://enautec-uren.…workers.dev" value="${esc(this.ctx.serverUrl())}"></label>
         <label><span>Beheersleutel (ADMIN_KEY)</span><input name="adminKey" type="password" autocomplete="off" value="${esc(this.ctx.adminKey())}"></label>
         <div class="row"><button class="primary">Opslaan</button><button type="button" class="secondary" data-act="test">Verbinding testen</button></div>
       </form><div id="srvOut"></div>
@@ -439,19 +466,19 @@ export class Admin {
         <label><span>Minimale tijd op een locatie (min)</span><input type="number" name="minStayMin" value="${rules.minStayMin ?? 10}" min="3" max="60"></label>
         <label><span>Stilstand op onbekende plek telt vanaf (min)</span><input type="number" name="unknownMinStayMin" value="${rules.unknownMinStayMin ?? 20}" min="5" max="120"></label>
         <label class="check"><input type="checkbox" name="homeTravelIsWork" ${rules.homeTravelIsWork ? 'checked' : ''}> Woon-werkverkeer telt als arbeidstijd</label>
-        <label><span>Map in OneDrive facturatie</span><input name="billingFolder" value="${esc(s.billingFolder ?? 'Facturatie/Uren Enautec')}"></label>
+        <label><span>Map voor de export (facturatie)</span><input name="billingFolder" value="${esc(s.billingFolder ?? 'Facturatie/Uren Enautec')}"></label>
         <div><button class="primary">Opslaan</button></div>
       </form>
     </section>
     <section class="card">
       <h2>Beheer-pincode</h2>
-      <p class="muted">Beschermt het beheer in de app. Let op: iedereen met het gedeelde Microsoft-account kan de bestanden in OneDrive wel openen.</p>
+      <p class="muted">Beschermt het beheer in de app op een toestel waar de beheersleutel staat.${google ? '' : ' Let op: iedereen met het gedeelde Microsoft-account kan de bestanden in OneDrive wel openen.'}</p>
       <form class="row" id="pinForm"><input name="pin" type="password" inputmode="numeric" placeholder="Nieuwe pincode (min. 4 cijfers)" autocomplete="new-password"><button class="secondary">Wijzigen</button></form>
     </section>
     <section class="card">
       <h2>Loxone</h2>
       <p>Virtuele uitgang in Loxone Config:</p>
-      <ul><li>Adres: <code>${esc(s.serverUrl || 'https://enautec-uren.…workers.dev')}</code></li>
+      <ul><li>Adres: <code>${esc(this.ctx.serverUrl() || 'https://enautec-uren.…workers.dev')}</code></li>
       <li>Opdracht bij AAN: <code>/api/loxone/badge?key=&lt;LOXONE_KEY&gt;&amp;user=&lt;v&gt;</code></li></ul>
       <p class="muted">Zie HANDLEIDING.md voor de volledige uitleg.</p>
     </section>`;
@@ -462,9 +489,15 @@ export class Admin {
       const url = f.serverUrl.value.trim().replace(/\/+$/, '');
       if (url && !/^https?:\/\//.test(url)) { out.innerHTML = '<div class="error">Het adres moet met https:// beginnen.</div>'; return; }
       this.ctx.setAdminKey(f.adminKey.value.trim());
-      this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => { mm.settings = { ...mm.settings, serverUrl: url, updated: Date.now() }; });
-      toast('Bewaard', 'ok');
+      this.ctx.setServerUrl(url);
+      toast('Bewaard op dit toestel', 'ok');
     };
+    view.querySelector('[data-act=gconnect]')?.addEventListener('click', () => this.ctx.connectGoogle('A').catch((e) => toast(e.message, 'err')));
+    view.querySelector('[data-act=gdisconnect]')?.addEventListener('click', async () => {
+      if (!confirm('Google Drive ontkoppelen? Niemand kan dan nog uren bewaren tot je opnieuw koppelt. De bestanden in Google Drive blijven bestaan.')) return;
+      try { await this.ctx.disconnectGoogle('A'); toast('Ontkoppeld'); } catch (e) { toast(e.message, 'err'); }
+      this.settings(view);
+    });
     view.querySelector('[data-act=test]').onclick = async () => {
       out.innerHTML = '<p class="muted">Testen…</p>';
       try {

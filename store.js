@@ -105,7 +105,7 @@ export class Store {
   }
 
   _handleError(e) {
-    if (e?.needsLogin) this._setStatus('login');
+    if (e?.needsLogin) this._setStatus('login', e.message);
     else if (!navigator.onLine || e instanceof TypeError) this._setStatus('offline');
     else this._setStatus('error', e.message);
   }
