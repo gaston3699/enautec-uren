@@ -134,7 +134,8 @@ function badgeIntervals(badges, gpsSegs, rules, openEnd) {
   if (open) {
     const left = gpsSegs.find((s) => s.start >= open.start && s.kind !== 'atelier');
     if (left) intervals.push({ start: open.start, end: left.start, closedBy: 'gps' });
-    else intervals.push({ start: open.start, end: Math.max(open.start, openEnd), closedBy: 'open' });
+    // nog binnen: blok loopt tot nu (minstens 1 minuut, zodat een verse badge meteen zichtbaar is)
+    else intervals.push({ start: open.start, end: Math.max(open.start + MIN, openEnd), closedBy: 'open' });
   }
   return intervals.filter((iv) => iv.end > iv.start);
 }

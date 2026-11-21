@@ -34,7 +34,7 @@ const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localSt
 
 // ---------- Opslag ----------
 const device = () => lsGet(DEVICE);
-const serverUrl = () => (localStorage.getItem(SERVER) || SERVER_URL || (TEST ? location.origin : '')).replace(/\/+$/, '');
+const serverUrl = () => (localStorage.getItem(SERVER) || (TEST ? location.origin : SERVER_URL) || '').replace(/\/+$/, '');
 const adminKey = () => localStorage.getItem(ADMIN_KEY) || '';
 
 /** Toegangstokens voor Google Drive, verkregen via de verzamelserver */
@@ -303,14 +303,52 @@ async function viewDay(date) {
       <div><b>${esc(fmtDate(date))}</b>${date === today() ? ' <span class="pill red">vandaag</span>' : ''}
         <input type="date" id="dayPick" value="${date}" max="${today()}" aria-label="Kies een datum"></div>
       ${date < today() ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true"></span>'}
-    </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}</section>
+    </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}
+    <div class="row spread small muted" style="margin-top:8px"><span id="rawInfo"></span><button class="link" data-act="refresh">↻ Vernieuwen</button></div></section>
     <div id="dayBody"><p class="muted center">Laden…</p></div>`;
   $main.querySelector('#dayPick').onchange = (e) => { if (isDate(e.target.value)) location.hash = `#dag/${e.target.value}`; };
+  $main.querySelector('[data-act=refresh]').onclick = () => { rawCache.delete(date); viewDay(date); };
   if (!store.has(PATHS.reg(date.slice(0, 7), dev.username))) await store.sync([PATHS.reg(date.slice(0, 7), dev.username)]);
   const { raw, error } = await fetchRaw(date);
   const body = $main.querySelector('#dayBody');
   if (!body) return;
   renderDay(body, { ctx, username: dev.username, date, raw, rawError: error });
+  showRawInfo(raw);
+  watchDay(date, raw);
+}
+
+/** Toon wanneer de automatische gegevens laatst opgehaald zijn en wat de laatste badge was */
+function showRawInfo(raw) {
+  const el = $main.querySelector('#rawInfo');
+  if (!el) return;
+  if (!raw) { el.textContent = ''; return; }
+  const last = raw.badges?.at(-1)?.ts;
+  el.textContent = `Bijgewerkt ${fmtClock(Date.now())}${last ? ` · laatste badge ${fmtClock(last)}` : ''}`;
+}
+const fmtClock = (ts) => new Intl.DateTimeFormat('nl-BE', { timeZone: 'Europe/Brussels', hour: '2-digit', minute: '2-digit' }).format(new Date(ts));
+
+/** Vandaag: elke minuut nieuwe badges en locaties ophalen en het dagscherm bijwerken als er iets veranderde */
+let dayTimer = null;
+function watchDay(date, raw) {
+  clearInterval(dayTimer);
+  if (date !== today() || !raw) return;
+  const key = (r) => `${r?.points?.length ?? 0}|${r?.badges?.length ?? 0}|${r?.badges?.at(-1)?.ts ?? 0}`;
+  let seen = key(raw);
+  dayTimer = setInterval(async () => {
+    if (location.hash.slice(1).split('/')[0] !== 'dag' || currentDate() !== date) { clearInterval(dayTimer); return; }
+    if (document.visibilityState !== 'visible') return;
+    const a = document.activeElement;
+    if (a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName)) return; // niet storen tijdens typen
+    rawCache.delete(date);
+    const { raw: fresh, error } = await fetchRaw(date);
+    if (!fresh) return;
+    const body = $main.querySelector('#dayBody');
+    if (!body) return;
+    // ook zonder nieuwe badges opnieuw tekenen: een open atelierblok groeit mee met de tijd
+    seen = key(fresh);
+    renderDay(body, { ctx, username: device().username, date, raw: fresh, rawError: error });
+    showRawInfo(fresh);
+  }, 60000);
 }
 
 function viewPlanning() {
@@ -377,7 +415,14 @@ function viewMore() {
       <li>Tik hier: <a class="btn primary" href="${esc(owntracksLink(dev))}">OwnTracks instellen</a></li>
       <li>Geef OwnTracks locatietoegang <b>"Altijd"</b> en zet batterijbesparing voor OwnTracks uit.</li></ol>
       <p class="muted">Buiten de werkuren kan je OwnTracks op <b>Rustig</b> zetten. Je locatie wordt enkel gebruikt om je uren voor te stellen en na enkele weken gewist.</p>
-      <details><summary>Manueel instellen</summary><p>Modus <b>HTTP</b> · URL <code>${esc(server)}/api/owntracks</code> · gebruiker <code>${esc(dev.username)}</code> · wachtwoord <code>${esc(dev.token)}</code></p></details>
+      <details><summary>Manueel instellen</summary>
+        <p class="muted small">Werkt de knop niet (bv. op iPhone)? Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> aan en kopieer deze gegevens één voor één. Laat "Geheime coderingssleutel" leeg.</p>
+        <div class="copy-list">
+          ${[['URL', `${server}/api/owntracks`], ['Gebruikersnaam', dev.username], ['Wachtwoord', dev.token], ['Apparaat ID', 'gsm']].map(([label, value]) => `
+          <div class="copy-row"><span class="muted small">${label}</span><code>${esc(value)}</code>
+            <button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}
+        </div>
+      </details>
     </section>` : ''}
     <section class="card"><h2>Opslag</h2>
       <p>${TEST ? 'Testmodus: gegevens staan enkel in deze browser.'
@@ -387,6 +432,12 @@ function viewMore() {
         : GOOGLE ? '<button class="link danger" data-act="unlink">Dit toestel ontkoppelen</button>' : '<button class="link danger" data-act="logout">Afmelden</button>'}</div>
     </section>
     <section class="card"><p class="muted small">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p></section>`;
+  $main.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
+    await copyText(b.dataset.copy);
+    const old = b.textContent;
+    b.textContent = '✔ Gekopieerd';
+    setTimeout(() => { b.textContent = old; }, 1500);
+  });
   $main.querySelector('[data-act=switch]').onclick = () => { if (confirm('Wil je een andere naam kiezen op dit toestel?')) { lsSet(DEVICE, null); location.hash = ''; route(); } };
   $main.querySelector('[data-act=sync]').onclick = async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); };
   $main.querySelector('[data-act=logout]')?.addEventListener('click', () => {
@@ -490,7 +541,13 @@ async function start() {
   route();
 
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { rawCache.clear(); syncNow(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    rawCache.clear();
+    syncNow();
+    // terug in de app op het dagscherm: meteen de nieuwste badges en locaties tonen
+    if (location.hash.slice(1).split('/')[0] === 'dag' || location.hash === '' || location.hash === '#') route();
+  });
   window.addEventListener('online', syncNow);
   $status.onclick = () => {
     if (store.status === 'login' && !GOOGLE) auth.login('A');
