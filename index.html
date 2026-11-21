@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
+<title>Enautec Uren</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="logo-mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --font-body: 'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-head: 'Space Grotesk', 'Atkinson Hyperlegible', system-ui, sans-serif;
+  /* Huisstijl Enautec: zwart, rood, wit */
+  --bg: #f4f4f3; --surface: #ffffff; --surface2: #ececea; --fg: #141414; --muted: #5d5d5b; --line: #dad9d6;
+  --ink: #141414; --ink-on: #ffffff;
+  --red: #e23b3b; --red-text: #c62828; --red-soft: #fde6e4;
+  --ok: #1f7a45; --ok-soft: #e1f2e7; --warn: #8a5a00; --warn-soft: #fff1d0;
+  --shadow: 0 1px 2px rgba(0,0,0,.05), 0 8px 22px rgba(0,0,0,.06);
+  --radius: 12px;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101010; --surface: #1b1b1b; --surface2: #262626; --fg: #f1f1f0; --muted: #a5a5a2; --line: #333331;
+    --ink: #f1f1f0; --ink-on: #141414;
+    --red: #f05a55; --red-text: #ff8a80; --red-soft: #3a1b1a;
+    --ok: #6fcf97; --ok-soft: #16301f; --warn: #f2c56b; --warn-soft: #382c12;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101010; --surface: #1b1b1b; --surface2: #262626; --fg: #f1f1f0; --muted: #a5a5a2; --line: #333331;
+  --ink: #f1f1f0; --ink-on: #141414; --red: #f05a55; --red-text: #ff8a80; --red-soft: #3a1b1a;
+  --ok: #6fcf97; --ok-soft: #16301f; --warn: #f2c56b; --warn-soft: #382c12;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.5 var(--font-body); padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+h1, h2, h3 { font-family: var(--font-head); line-height: 1.2; margin: 0 0 10px; }
+h1 { font-size: 24px; } h2 { font-size: 18px; } h3 { font-size: 16px; }
+a { color: var(--red-text); }
+code { font-size: 13px; word-break: break-all; background: var(--surface2); padding: 1px 5px; border-radius: 5px; }
+
+/* Kopbalk */
+.topbar { position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 3px solid var(--red);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; padding-top: calc(10px + env(safe-area-inset-top)); }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--fg); }
+.brand img { width: 34px; height: 32px; }
+.brand b { font-family: var(--font-head); letter-spacing: .18em; font-size: 17px; }
+.brand small { display: block; color: var(--red-text); font-size: 11px; letter-spacing: .02em; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brand img { filter: invert(1) hue-rotate(180deg); } }
+.sync { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; background: var(--surface); color: var(--fg); cursor: pointer; }
+.sync::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.sync.ok::before { background: var(--ok); } .sync.warn::before { background: #d9a400; } .sync.err::before { background: var(--red); }
+.sync.busy::before { background: var(--muted); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: .3; } }
+@media (max-width: 420px) { .sync span { display: none; } }
+
+main { max-width: 880px; margin: 0 auto; padding: 16px; }
+.page-title { margin: 6px 2px 14px; }
+.section-title { margin: 22px 2px 10px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+.card.narrow { max-width: 440px; margin-left: auto; margin-right: auto; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.spread { justify-content: space-between; }
+.muted { color: var(--muted); } .small { font-size: 13px; } .center { text-align: center; }
+.ok-text { color: var(--ok); } .warn-text { color: var(--warn); font-size: 14px; }
+
+/* Knoppen en velden */
+button, .btn { font: inherit; font-weight: 700; border-radius: 10px; padding: 9px 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid transparent; min-height: 42px; }
+.primary { background: var(--ink); color: var(--ink-on); }
+.primary:hover { background: var(--red); color: #fff; }
+.secondary { background: var(--surface); color: var(--fg); border-color: var(--line); }
+.secondary:hover { border-color: var(--fg); }
+.link { background: none; border: none; color: var(--red-text); padding: 6px 4px; min-height: 0; font-weight: 700; }
+.link.danger, .danger { color: var(--red-text); }
+.big { width: 100%; justify-content: center; padding: 14px; font-size: 17px; margin-top: 10px; }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 3px solid var(--red); outline-offset: 2px; }
+input, select, textarea { font: inherit; color: var(--fg); background: var(--surface); border: 1.5px solid var(--line); border-radius: 9px; padding: 8px 10px; min-height: 42px; max-width: 100%; }
+input:focus, select:focus, textarea:focus { border-color: var(--fg); outline: none; }
+textarea { width: 100%; min-height: 70px; }
+input:disabled, select:disabled { background: var(--surface2); color: var(--fg); opacity: 1; }
+
+.pill { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 13px; font-weight: 700; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.red { background: var(--red-soft); color: var(--red-text); }
+.notice { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 14px 10px 30px; margin: 12px 0 0; }
+.error { background: var(--red-soft); color: var(--red-text); border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
+.callout { border-left: 4px solid var(--red); background: var(--surface2); border-radius: 0 10px 10px 0; padding: 12px 14px; margin-top: 12px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; margin-top: 12px; }
+.stat { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.stat span { color: var(--muted); font-size: 13px; }
+.stat b { display: block; font-family: var(--font-head); font-size: 22px; }
+
+.datebar { display: grid; grid-template-columns: 48px 1fr 48px; align-items: center; text-align: center; gap: 8px; }
+.datebar b { font-family: var(--font-head); font-size: 18px; text-transform: capitalize; }
+.datebar input { display: block; margin: 6px auto 0; }
+.icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 1.5px solid var(--line); font-size: 24px; text-decoration: none; color: var(--fg); background: var(--surface); }
+
+/* Tijdlijn */
+.seg { border: 1px solid var(--line); border-left: 5px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0; }
+.seg[data-kind="werk"] { border-left-color: var(--ink); }
+.seg[data-kind="atelier"] { border-left-color: var(--red); }
+.seg[data-kind="leverancier"] { border-left-color: #a06a3c; }
+.seg[data-kind="verplaatsing"], .seg[data-kind="woon-werk"] { border-left-color: #9a9a96; border-left-style: dashed; }
+.seg[data-kind="pauze"] { border-left-color: var(--ok); }
+.seg[data-kind="onbekend"] { border-left-color: #d9a400; background: var(--warn-soft); }
+.seg-grid { display: grid; grid-template-columns: 7.5em 7.5em 1fr; gap: 8px; align-items: center; }
+.seg-grid .full, .seg-grid select.full, .seg-grid input.full { grid-column: 1 / -1; width: 100%; }
+.seg-grid .full-right { grid-column: 1 / -1; justify-self: end; }
+.seg-grid .km input { width: 6em; }
+@media (max-width: 540px) {
+  .seg-grid { grid-template-columns: 1fr 1fr; }
+  .seg-grid select[data-f="kind"] { grid-column: 1 / -1; }
+  .seg-grid input[type=time] { width: 100%; }
+}
+
+/* Materiaal */
+.mat, .mat-head { display: grid; grid-template-columns: 1fr 5em 4.5em 1fr 36px; gap: 6px; align-items: center; margin: 6px 0; }
+.mat-head { font-size: 13px; margin-bottom: 0; }
+.mat input, .mat select { width: 100%; }
+@media (max-width: 640px) {
+  .mat-head { display: none; }
+  .mat { grid-template-columns: 1fr 1fr 40px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+  .mat-desc { grid-column: 1 / -1; } .mat-proj { grid-column: 1 / -1; grid-row: 3; }
+}
+
+/* Tabellen en formulieren */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 13px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+tr.click { cursor: pointer; } tr.click:hover { background: var(--surface2); }
+td.actions { white-space: nowrap; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; align-items: end; margin-top: 8px; }
+.form-grid label { display: flex; flex-direction: column; gap: 4px; }
+.form-grid label > span { font-size: 13px; color: var(--muted); font-weight: 700; }
+.form-grid input, .form-grid select { width: 100%; }
+label.check { flex-direction: row !important; align-items: center; gap: 8px; min-height: 42px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tabs a { padding: 7px 13px; border-radius: 99px; border: 1.5px solid var(--line); text-decoration: none; color: var(--fg); font-weight: 700; font-size: 14px; background: var(--surface); }
+.tabs a.active { background: var(--ink); color: var(--ink-on); border-color: var(--ink); }
+
+.who { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
+.plan-item { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.plan-item:first-of-type { border-top: none; }
+.welcome { text-align: center; max-width: 480px; margin: 30px auto; padding: 28px 22px; }
+.welcome-logo { width: min(320px, 90%); margin: 0 auto 10px; display: block; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .welcome-logo { background: #fff; border-radius: 12px; padding: 10px; } }
+details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
+
+/* Navigatie onderaan */
+#nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: center; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+#nav a { flex: 1; max-width: 140px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px 9px; text-decoration: none; color: var(--muted); font-size: 12px; font-weight: 700; border-top: 3px solid transparent; }
+#nav a span { font-size: 19px; line-height: 1.1; filter: grayscale(1); }
+#nav a.active { color: var(--fg); border-top-color: var(--red); }
+#nav a.active span { filter: none; }
+
+#toast { position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
+  background: var(--ink); color: var(--ink-on); padding: 10px 16px; border-radius: 10px; font-weight: 700; transition: .2s; max-width: calc(100% - 32px); z-index: 20; }
+#toast.show { opacity: 1; transform: translateX(-50%); }
+#toast.err { background: var(--red); color: #fff; }
+html.test .topbar { border-bottom-style: dashed; }
+html.test .topbar::after { content: 'TEST'; position: absolute; right: 50%; bottom: -12px; transform: translateX(50%); background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 99px; letter-spacing: .1em; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#dag" aria-label="Enautec Uren, naar vandaag">
+    <img src="logo-mark.svg" alt="">
+    <span><b>ENAUTEC</b><small>Urenregistratie</small></span>
+  </a>
+  <button id="syncStatus" class="sync" type="button" title=""><span>Laden…</span></button>
+</header>
+<main id="main"><p class="muted center">Laden…</p></main>
+<nav id="nav" aria-label="Hoofdmenu" hidden></nav>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="138 50 442 440" role="img" aria-label="Enautec">
+  <!-- Zwart: driehoek met de letter E (rug links, drie armen naar rechts) -->
+  <polygon fill="#111111" points="358,60 448,240 343.8,240 409.4,370 272,370 272,405 427,405 465,480 148,480"/>
+  <!-- Rood: schuine balk langs de rechterzijde -->
+  <polygon fill="#E23B3B" points="395,292 474.7,292 569.3,480 490,480"/>
+</svg>
