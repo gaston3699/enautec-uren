@@ -10,6 +10,7 @@ import { summarize } from './engine.js';
 import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
 import { esc, alive, byName, projectLabel, toast, sha256, copyText } from './ui.js';
 import { seedDemo } from './demo.js';
+import { initUpdates } from './update.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -195,7 +196,12 @@ store.onChange((path, source) => {
   const a = document.activeElement;
   if (a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName)) return; // niet storen tijdens typen
   clearTimeout(rerenderTimer);
-  rerenderTimer = setTimeout(route, 300);
+  rerenderTimer = setTimeout(() => {
+    // In het dagoverzicht van het beheer: enkel de tabel bijwerken, niet het hele scherm
+    const view = location.hash.slice(1).split('/')[0];
+    if (view === 'beheer' && admin.remoteChanged()) return;
+    route();
+  }, 300);
 });
 
 // ---------- Navigatie ----------
@@ -277,7 +283,14 @@ async function viewWelcomeGoogle(message = '') {
         <p class="muted small">Kies bij Google het juiste account en vink de toegang tot Google Drive aan.</p>` : ''}
       ${gs?.A ? `<p>✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google Drive')}</b>.</p><a class="btn primary" href="#beheer">Naar beheer</a>` : ''}
       <p><button class="link" data-act="forget">Beheerdersgegevens van dit toestel wissen</button></p>`
-    : `<p><b>Werknemer?</b> Open de <b>koppellink</b> die je van de beheerder kreeg, op deze gsm. Daarna werkt de app vanzelf, zonder wachtwoord.</p>
+    : `<p><b>Werknemer?</b> ${isStandalone() ? 'Plak hieronder de <b>koppellink</b> die je van de beheerder kreeg.' : 'Open de <b>koppellink</b> die je van de beheerder kreeg, op deze gsm, of plak ze hieronder.'} Daarna werkt de app vanzelf, zonder wachtwoord.</p>
+      <form id="linkForm" class="link-form">
+        <input name="link" placeholder="Plak hier je koppellink" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Koppellink">
+        <div class="row">
+          ${navigator.clipboard?.readText ? '<button type="button" class="secondary" data-act="paste">Plakken</button>' : ''}
+          <button class="primary">Koppelen</button>
+        </div>
+      </form><div id="linkErr"></div>
       <details><summary>Beheerder</summary>
         <form id="adminSetup" class="form-grid" style="text-align:left">
           <label><span>Adres van de verzamelserver</span><input name="server" required placeholder="https://enautec-uren.….workers.dev" value="${esc(serverUrl())}"></label>
@@ -289,6 +302,20 @@ async function viewWelcomeGoogle(message = '') {
   </section>`;
   $main.querySelector('[data-act=connect]')?.addEventListener('click', () => ctx.connectGoogle('A').catch((e) => toast(e.message, 'err')));
   $main.querySelector('[data-act=forget]')?.addEventListener('click', () => { ctx.setAdminKey(''); location.reload(); });
+  const lf = $main.querySelector('#linkForm');
+  if (lf) {
+    const tryLink = (text) => {
+      const k = parseKoppel(text);
+      if (!k) { $main.querySelector('#linkErr').innerHTML = '<div class="error">Dit is geen geldige koppellink. Kopieer de volledige link die je kreeg (met "#koppel=" erin).</div>'; return; }
+      linkDevice(k);
+      location.hash = '#meer';
+      location.reload();
+    };
+    lf.onsubmit = (e) => { e.preventDefault(); tryLink(lf.elements.link.value); };
+    $main.querySelector('[data-act=paste]')?.addEventListener('click', async () => {
+      try { const t = await navigator.clipboard.readText(); lf.elements.link.value = t; tryLink(t); } catch { lf.elements.link.focus(); }
+    });
+  }
   const form = $main.querySelector('#adminSetup');
   if (form) form.onsubmit = async (e) => {
     e.preventDefault();
@@ -438,6 +465,16 @@ function viewMore() {
     <section class="card"><h2>Ik ben</h2><p><b>${esc(emp?.name ?? dev.username)}</b> <span class="muted">(${esc(dev.username)})</span></p>
       <p class="muted">${dev.token ? '✔ Gekoppeld met de automatische registratie.' : 'Niet gekoppeld met de automatische registratie. Vraag de beheerder om je koppellink.'}</p>
       <button class="link" data-act="switch">Iemand anders kiezen</button></section>
+    ${dev.token && !isStandalone() ? `<section class="card"><h2>App op je beginscherm</h2>
+      ${isIOS() ? `<ol>
+        <li>Tik in Safari onderaan op <b>Deel</b> (vierkantje met pijl) → <b>Zet op beginscherm</b>.</li>
+        <li>Tik hieronder op <b>Kopieer koppellink</b>.</li>
+        <li>Open de app via het nieuwe icoon op je beginscherm en tik op <b>Plakken</b> → <b>Koppelen</b>.</li>
+      </ol>
+      <p class="muted small">Op iPhone heeft de app op het beginscherm een eigen geheugen, los van Safari. Daarom moet je ze daar één keer opnieuw koppelen.</p>`
+      : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Lukt het koppelen daarna niet, kopieer dan je koppellink en plak ze in de app.</p>'}
+      <button class="secondary" data-act="copylink">Kopieer koppellink</button>
+    </section>` : ''}
     ${dev.token && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)</h2>
       <ol><li>Installeer de gratis app <b>OwnTracks</b> (App Store / Google Play).</li>
       <li>Tik hier: <a class="btn primary" href="${esc(owntracksLink(dev))}">OwnTracks instellen</a></li>
@@ -460,6 +497,11 @@ function viewMore() {
         : GOOGLE ? '<button class="link danger" data-act="unlink">Dit toestel ontkoppelen</button>' : '<button class="link danger" data-act="logout">Afmelden</button>'}</div>
     </section>
     <section class="card"><p class="muted small">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p></section>`;
+  $main.querySelector('[data-act=copylink]')?.addEventListener('click', async (e) => {
+    await copyText(myKoppelLink());
+    e.target.textContent = '✔ Gekopieerd';
+    setTimeout(() => { e.target.textContent = 'Kopieer koppellink'; }, 1500);
+  });
   $main.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
     await copyText(b.dataset.copy);
     const old = b.textContent;
@@ -527,6 +569,32 @@ async function viewAdmin(tab) {
   admin.render($main.querySelector('#adminRoot'), tab);
 }
 
+/** Koppellink herkennen: "…#koppel=gebruiker.code&s=<server>" (ook als volledige link geplakt) */
+function parseKoppel(text) {
+  const m = String(text ?? '').trim().match(/#?koppel=([^.&\s]+)\.([^&\s]+)(?:&s=([^\s]+))?/);
+  if (!m) return null;
+  return { username: decodeURIComponent(m[1]), token: m[2], server: m[3] ? decodeURIComponent(m[3]) : null };
+}
+
+/** Dit toestel koppelen aan een werknemer */
+function linkDevice({ username, token, server }) {
+  lsSet(DEVICE, { username, token });
+  lsSet(ME, null);
+  if (server) ctx.setServerUrl(server);
+  driveA = makeDriveA();
+  store.drive = driveA;
+}
+
+/** Koppellink van dit toestel (om de app op het beginscherm te koppelen) */
+function myKoppelLink() {
+  const dev = device();
+  if (!dev?.token) return '';
+  return `${location.origin}${location.pathname}#koppel=${encodeURIComponent(dev.username)}.${dev.token}&s=${encodeURIComponent(serverUrl())}`;
+}
+
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 /** Bij de server nagaan of de gekoppelde werknemer beheerder is (op de achtergrond) */
 async function refreshMe() {
   const dev = device();
@@ -569,14 +637,11 @@ async function start() {
   }
 
   // Koppellink: #koppel=gebruikersnaam.code&s=<serveradres>
-  const km = location.hash.match(/^#koppel=([^.&]+)\.([^&]+)(?:&s=(.+))?$/);
+  const km = parseKoppel(location.hash);
   if (km) {
-    lsSet(DEVICE, { username: decodeURIComponent(km[1]), token: km[2] });
-    if (km[3]) ctx.setServerUrl(decodeURIComponent(km[3]));
+    linkDevice(km);
     history.replaceState(null, '', `${location.pathname}${location.search}#meer`);
     toast('Toestel gekoppeld. Stel nu OwnTracks in.', 'ok');
-    driveA = makeDriveA();
-    store.drive = driveA;
   }
 
   if (!GOOGLE && driveA && !TEST && auth.needsInteractive('A')) {
@@ -617,7 +682,8 @@ async function start() {
   };
 }
 
-if ('serviceWorker' in navigator && !LOCAL) navigator.serviceWorker.register('sw.js').catch(() => {});
+// Offline-module + updates (op localhost enkel als 'enautec.swtest' aan staat, om te testen)
+if (!LOCAL || localStorage.getItem('enautec.swtest') === '1') initUpdates();
 if (TEST) document.documentElement.classList.add('test');
 start().catch((e) => { $main.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
 

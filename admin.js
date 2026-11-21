@@ -107,6 +107,8 @@ export class Admin {
 
   render(el, tab = 'overzicht') {
     this.el = el;
+    this.tab = tab;
+    if (tab !== 'overzicht') clearInterval(this.ovTimer);
     const tabs = { overzicht: 'Dagoverzicht', planning: 'Planning', employees: 'Werknemers', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
     el.innerHTML = `<nav class="tabs" aria-label="Beheer">${Object.entries(tabs).map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav><div id="adminView"></div>`;
     const view = el.querySelector('#adminView');
@@ -267,21 +269,57 @@ export class Admin {
         <button class="icon" data-act="next" aria-label="Volgende dag">›</button></div></section>
       <section class="card table-wrap" id="ovTable"><p class="muted">Laden…</p></section>
       <div id="ovDay"></div><div id="ovBadges"></div>`;
-    view.querySelector('[data-act=prev]').onclick = () => { this.date = shiftDate(date, -1); this.overview(view); };
-    view.querySelector('[data-act=next]').onclick = () => { this.date = shiftDate(date, 1); this.overview(view); };
-    view.querySelector('#ovDate').onchange = (e) => { if (isDate(e.target.value)) { this.date = e.target.value; this.overview(view); } };
+    view.querySelector('[data-act=prev]').onclick = () => { this.date = shiftDate(date, -1); this.openEmp = null; this.overview(view); };
+    view.querySelector('[data-act=next]').onclick = () => { this.date = shiftDate(date, 1); this.openEmp = null; this.overview(view); };
+    view.querySelector('#ovDate').onchange = (e) => { if (isDate(e.target.value)) { this.date = e.target.value; this.openEmp = null; this.overview(view); } };
+    this.ovView = view;
+    await this.refreshOverview(view, { pull: true });
 
+    // Live: elke 20 seconden nieuwe registraties (Google Drive) en badges/locaties (server) ophalen
+    clearInterval(this.ovTimer);
+    this.ovTimer = setInterval(() => {
+      if (!view.isConnected) { clearInterval(this.ovTimer); return; }
+      if (document.visibilityState !== 'visible') return;
+      this.refreshOverview(view, { pull: true });
+    }, 20000);
+  }
+
+  /** Iets veranderde in de opslag (bv. een werknemer bevestigde zijn dag): het open beheerscherm bijwerken */
+  remoteChanged() {
+    if (this.tab === 'overzicht' && this.ovView?.isConnected) { this.refreshOverview(this.ovView, { pull: false }); return true; }
+    return false;
+  }
+
+  /** Tabel van het dagoverzicht (en de open dag) opnieuw opbouwen, zonder de rest van het scherm te storen */
+  async refreshOverview(view, { pull }) {
+    if (this.ovBusy) return;
+    this.ovBusy = true;
+    try {
+      await this._refreshOverview(view, pull);
+    } finally {
+      this.ovBusy = false;
+    }
+  }
+
+  async _refreshOverview(view, pull) {
+    const date = this.date;
+    const m = this.ctx.master();
+    const emps = alive(m.employees).filter((e) => e.active !== false).sort(byName);
     const month = date.slice(0, 7);
-    await this.ctx.store.sync(emps.map((e) => PATHS.reg(month, e.username)));
+    if (pull) await this.ctx.store.sync([PATHS.master, PATHS.planning, ...emps.map((e) => PATHS.reg(month, e.username))]);
     let raws = {};
     let rawErr = '';
     if (this.hasServer()) {
       try { raws = await this.server(`/api/admin/raw?date=${date}`); } catch (e) { rawErr = e.message; }
     } else rawErr = 'Geen server ingesteld: enkel ingegeven/bevestigde uren.';
+    if (!view.isConnected || date !== this.date) return;
+    const typing = () => { const a = document.activeElement; return a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName) && view.contains(a); };
+    if (typing()) return; // niet storen tijdens het typen; volgende ronde opnieuw
 
     const rows = emps.map((e) => ({ e, st: dayState(this.ctx, e.username, date, raws[e.username]) }));
     view.querySelector('#ovTable').innerHTML = `
       ${rawErr ? `<p class="muted">⚠ ${esc(rawErr)}</p>` : ''}
+      <p class="muted small live-note">● Live · bijgewerkt ${localTime(Date.now())}</p>
       <table><thead><tr><th>Werknemer</th><th>Status</th><th>Van – tot</th><th>Arbeidstijd</th><th>Km</th><th>Materiaal</th><th>Aandachtspunten</th></tr></thead><tbody>
       ${rows.map(({ e, st }) => `<tr class="click" data-emp="${esc(e.username)}">
         <td>${esc(e.name)}</td>
@@ -292,13 +330,15 @@ export class Admin {
         <td>${st.material.length || ''}</td>
         <td class="muted">${st.status !== 'bevestigd' && st.segments.length ? esc(st.summary.warnings.join(' ')) : ''}</td></tr>`).join('')}
       </tbody></table>`;
-    view.querySelectorAll('[data-emp]').forEach((tr) => tr.onclick = () => {
-      const u = tr.dataset.emp;
+    const showDay = (u, scroll) => {
       const box = view.querySelector('#ovDay');
       box.innerHTML = `<h2 class="section-title">${esc(alive(m.employees).find((x) => x.username === u)?.name ?? u)} · ${esc(fmtDate(date))}</h2><div></div>`;
       renderDay(box.lastElementChild, { ctx: this.ctx, username: u, date, raw: raws[u], asAdmin: true });
-      box.scrollIntoView({ behavior: 'smooth' });
-    });
+      if (scroll) box.scrollIntoView({ behavior: 'smooth' });
+    };
+    view.querySelectorAll('[data-emp]').forEach((tr) => tr.onclick = () => { this.openEmp = tr.dataset.emp; showDay(tr.dataset.emp, true); });
+    // Was er een werknemer open? Die dag ook bijwerken (de scrollpositie blijft behouden)
+    if (this.openEmp) showDay(this.openEmp, false);
 
     if (this.hasServer()) {
       try {

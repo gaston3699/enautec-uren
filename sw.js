@@ -1,15 +1,25 @@
-/* Offline-module van Enautec Uren (zelfde aanpak als Leervoortgang).
-   - De app zelf: eerst online proberen (nieuwe versie komt meteen binnen), anders de bewaarde kopie.
+/* Offline-module van Enautec Uren.
+   - De app draait altijd uit de bewaarde versie (ook na lange tijd niet gebruikt).
+   - Een nieuwe versie wordt op de achtergrond klaargezet en pas gebruikt als
+     de gebruiker in de app op "Bijwerken" drukt en bevestigt.
    - Lettertypes en de Excel-module: bewaarde kopie gebruiken.
-   - Microsoft (aanmelden, OneDrive) en de verzamelserver: nooit bewaren, altijd rechtstreeks. */
-const CACHE = 'enautec-uren-v2';
-const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './store.js', './day.js', './admin.js', './export.js', './gdrive.js',
-  './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './manifest.webmanifest',
-  './logo.svg', './logo-mark.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
+   - Google, de verzamelserver (/api/) en Microsoft: nooit bewaren, altijd rechtstreeks.
+   VERSION wordt automatisch aangepast door scripts/stamp-version.js bij elke publicatie. */
+const VERSION = '13514423459b';
+const CACHE = `enautec-uren-${VERSION}`;
+const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './gdrive.js', './store.js', './day.js', './admin.js',
+  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './manifest.webmanifest',
+  './privacy.html', './logo.svg', './logo-mark.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 const STATIC_ORIGINS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Altijd verse kopieën ophalen voor deze versie; NIET meteen activeren (wacht op de gebruiker)
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))));
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
+  if (e.data?.type === 'VERSION') e.source?.postMessage({ type: 'VERSION', version: VERSION });
 });
 
 self.addEventListener('activate', (e) => {
@@ -32,14 +42,14 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  if (url.origin !== self.location.origin) return; // Microsoft, OneDrive, server: altijd rechtstreeks
+  if (url.origin !== self.location.origin) return; // Google, Microsoft, server: altijd rechtstreeks
   if (url.pathname.includes('/api/')) return;
 
-  const net = req.mode === 'navigate' ? fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }) : fetch(req, { cache: 'no-cache' });
-  e.respondWith(net.then((res) => {
-    if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
-    return res;
-  }).catch(() => caches.match(req, { ignoreSearch: true })
-    .then((hit) => hit || (req.mode === 'navigate' ? caches.match('./index.html') : undefined))
-    .then((hit) => hit || Response.error())));
+  // De app zelf: eerst de bewaarde versie (zo verandert er niets zonder bevestiging)
+  e.respondWith(caches.open(CACHE).then(async (c) => {
+    const hit = await c.match(req, { ignoreSearch: true })
+      || (req.mode === 'navigate' ? await c.match('./index.html') : undefined);
+    if (hit) return hit;
+    return fetch(req);
+  }));
 });
