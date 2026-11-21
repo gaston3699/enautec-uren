@@ -8,7 +8,8 @@ const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
 
 export const DEFAULT_RULES = {
   minStayMin: 10, unknownMinStayMin: 20, maxAccuracyM: 250, clusterRadiusM: 200,
-  avgSpeedKmh: 50, roadFactor: 1.3, homeTravelIsWork: false, badgeDebounceSec: 60,
+  // Badges binnen 10 minuten na elkaar tellen als één (bv. eerst de poort, dan de deur)
+  avgSpeedKmh: 50, roadFactor: 1.3, homeTravelIsWork: false, badgeDebounceSec: 600,
 };
 export const rulesFrom = (master) => ({ ...DEFAULT_RULES, ...(master.settings?.rules ?? {}) });
 
