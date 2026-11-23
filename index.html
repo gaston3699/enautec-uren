@@ -298,6 +298,27 @@ tr.total td { font-weight: 700; background: var(--surface2); }
 .q-field select { width: 100%; }
 .q-actions { display: grid; gap: 8px; margin-top: 16px; } .q-actions .big { margin-top: 0; }
 
+/* Zoekbare keuzelijsten (combo.js) */
+.combo { position: relative; display: inline-block; min-width: 11em; max-width: 100%; vertical-align: middle; }
+.combo-native { position: absolute !important; inset: 0; opacity: 0; pointer-events: none; width: 100% !important; height: 100%; margin: 0; }
+.combo-input { width: 100%; padding-right: 30px; text-overflow: ellipsis;
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23888' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 11px center; }
+.combo.open .combo-input { border-color: var(--fg); }
+.combo.bad .combo-input { border-color: var(--c-werf); background-color: var(--red-soft); }
+.combo-list { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px); max-height: min(300px, 55vh); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface); border: 1.5px solid var(--fg); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; min-width: 14em; }
+.combo.up .combo-list { top: auto; bottom: calc(100% + 4px); }
+.combo-opt { padding: 9px 10px; border-radius: 7px; cursor: pointer; line-height: 1.3; }
+.combo-opt.act { background: var(--surface2); }
+.combo-opt.sel { font-weight: 700; }
+.combo-opt.new { color: var(--red-text); font-weight: 700; border-top: 1px solid var(--line); margin-top: 4px; }
+.combo-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; padding: 8px 10px 2px; }
+.combo-none { padding: 10px; color: var(--muted); font-size: 14px; }
+.form-grid .combo, .blk-more .combo, .q-field .combo, .q-more .combo, .link-form .combo, .combo.full, .mat .combo, .seg-grid .combo { display: block; width: 100%; min-width: 0; }
+.blk-more > *, .blk-time > * { min-width: 0; }
+@media (max-width: 420px) { .blk-more { grid-template-columns: 1fr; } }
+.review .combo { flex: 1; min-width: 200px; }
+
 /* Materiaal */
 .mat, .mat-head { display: grid; grid-template-columns: 1fr 5em 4.5em 1fr 36px; gap: 6px; align-items: center; margin: 6px 0; }
 .mat-head { font-size: 13px; margin-bottom: 0; }

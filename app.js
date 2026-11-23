@@ -12,6 +12,7 @@ import { esc, alive, byName, projectLabel, toast, sha256, copyText } from './ui.
 import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths } from './report.js';
+import { initCombos } from './combo.js';
 import { weekStart } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, renderQuestion } from './questions.js';
 
@@ -1016,6 +1017,8 @@ async function start() {
 // Offline-module + updates (op localhost enkel als 'enautec.swtest' aan staat, om te testen)
 if (!LOCAL || localStorage.getItem('enautec.swtest') === '1') initUpdates();
 if (TEST) document.documentElement.classList.add('test');
+// alle keuzelijsten zoekbaar maken (typen om de lijst te verkleinen)
+initCombos(document.body);
 start().catch((e) => { $main.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
 
 export { copyText };
