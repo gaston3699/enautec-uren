@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="118 -44 484 534" role="img" aria-label="Enautec">
+  <!-- Logo met kerstmuts (kopbalk tijdens de feestdagen). Paden uit logo-mark.svg en icon-kerst.svg. -->
+  <defs>
+    <linearGradient id="hat" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5a5f"/><stop offset="1" stop-color="#c41f26"/></linearGradient>
+  </defs>
+  <g transform="translate(0,675) scale(0.1,-0.1)">
+    <path fill="#111111" d="M3441 5878 c-274 -544 -1971 -3938 -1971 -3943 0 -3 691 -5 1535 -5 844 0 1535 2 1535 5 0 3 -82 169 -182 370 -135 269 -187 365 -203 369 -11 3 -343 6 -737 6 -395 0 -718 3 -718 8 1 4 50 104 109 222 l109 215 508 5 c421 4 509 7 506 19 -1 7 -75 159 -164 337 l-162 324 -162 0 c-93 0 -165 4 -169 10 -7 12 306 641 318 637 5 -1 30 -43 55 -92 l47 -90 409 -3 c227 -1 414 2 419 7 7 7 -909 1849 -932 1874 -4 4 -72 -120 -150 -275z"/>
+    <path fill="#E23B3B" d="M4052 3802 l-113 -3 60 -117 c33 -64 144 -286 247 -492 103 -206 286 -574 408 -817 l221 -443 407 0 c247 0 408 4 408 9 0 9 -94 206 -118 246 -10 17 -242 482 -619 1240 -58 116 -123 247 -146 292 l-42 83 -255 1 c-140 1 -275 2 -300 3 -25 0 -96 0 -158 -2z"/>
+  </g>
+  <g transform="translate(138 50) scale(0.7142857) translate(-224 -240) translate(28 -6)">
+    <path d="M392 318 C410 230 470 150 560 128 C620 114 676 150 700 214 C664 186 624 178 600 196 C572 218 584 270 590 318 Z" fill="url(#hat)"/>
+    <rect x="370" y="300" width="244" height="58" rx="29" fill="#ffffff" stroke="#c9d1da" stroke-width="5"/>
+    <circle cx="704" cy="222" r="38" fill="#ffffff" stroke="#c9d1da" stroke-width="5"/>
+  </g>
+</svg>
