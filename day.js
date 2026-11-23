@@ -1,5 +1,5 @@
 // Dagstaat: automatisch voorstel, aanpassen, materiaal en bevestigen.
-import { buildTimeline, summarize, KINDS } from './engine.js';
+import { buildTimeline, summarize, roundSegments, KINDS } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today } from './time.js';
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, byName, toast } from './ui.js';
@@ -10,6 +10,8 @@ export const DEFAULT_RULES = {
   minStayMin: 10, unknownMinStayMin: 20, maxAccuracyM: 250, clusterRadiusM: 200,
   // Badges binnen 10 minuten na elkaar tellen als één (bv. eerst de poort, dan de deur)
   avgSpeedKmh: 50, roadFactor: 1.3, homeTravelIsWork: false, badgeDebounceSec: 600,
+  // Afronden per kwartier: begin tot 5 min erna naar beneden, einde tot 8 min erna naar beneden
+  roundMinutes: 15, roundStartDownMax: 5, roundEndDownMax: 8,
 };
 export const rulesFrom = (master) => ({ ...DEFAULT_RULES, ...(master.settings?.rules ?? {}) });
 
@@ -163,6 +165,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       <section class="card">
         <div class="row spread"><h2>Tijdlijn</h2>${!readonly && cur.edited ? '<button class="link" data-act="reset">↺ Automatisch voorstel</button>' : ''}</div>
         ${segs.length ? segs.map(segHtml).join('') : '<p class="muted">Nog geen activiteiten voor deze dag.</p>'}
+        ${readonly ? '' : '<p class="muted small">Tijden worden per kwartier afgerond: begin tot 5 min na het kwartier naar beneden, einde tot 8 min na het kwartier naar beneden.</p>'}
         ${readonly ? '' : '<button class="secondary" data-act="add-seg">+ Regel toevoegen</button>'}
       </section>
       <section class="card">
@@ -249,6 +252,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       material.splice(Number(e.target.closest('.mat').dataset.m), 1);
       persistMaterial(); draw();
     } else if (act === 'confirm') {
+      // bij bevestigen altijd per kwartier afronden (ook manueel aangepaste tijden)
+      segs = roundSegments(segs.map(({ openBadge, ...s }) => s), rulesFrom(master));
       const err = validate(segs, date) || (material.some((m) => m.description && !m.projectId) ? 'Kies bij elk materiaal een project.' : null);
       const slot = el.querySelector('.err-slot');
       if (err) { slot.innerHTML = `<div class="error">${esc(err)}</div>`; return; }

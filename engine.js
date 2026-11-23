@@ -229,7 +229,46 @@ export function buildTimeline({ points, badges = [], sites, projects = [], plann
   }
   segs = mergeAdjacent(segs.filter((s) => s.end - s.start >= MIN));
   assignProjects(segs, { sitesById, projects, planning });
-  return segs;
+  return roundSegments(segs, rules);
+}
+
+/**
+ * Afronden per kwartier (instelbaar). Een verblijf/verplaatsing die op de vorige aansluit,
+ * deelt dezelfde afgeronde grens. Regels (standaard):
+ *  - begin (start van de dag of na een pauze): tot 5 min na het kwartier naar beneden, daarna naar boven
+ *    (8:00–8:05 → 8:00, 8:06–8:15 → 8:15)
+ *  - einde (einde van de dag of voor een pauze): tot 8 min na het kwartier naar beneden
+ *    (17:00–17:08 → 17:00, 17:09–17:15 → 17:15)
+ *  - aansluitende grens tussen twee regels: naar het dichtstbijzijnde kwartier
+ * Een atelierblok dat nog loopt (ingebadged, nog niet weg) wordt niet afgerond.
+ */
+export function roundSegments(segs, rules) {
+  const q = (rules.roundMinutes ?? 0) * MIN;
+  if (!q) return segs;
+  const startDown = rules.roundStartDownMax ?? 5;
+  const endDown = rules.roundEndDownMax ?? 8;
+  const rnd = (t, downMax) => {
+    const r = ((t % q) + q) % q;
+    if (r === 0) return t;
+    return Math.floor(r / MIN) <= downMax ? t - r : t - r + q;
+  };
+  const sorted = [...segs].sort((a, b) => a.start - b.start).map((s) => ({ ...s }));
+  const out = sorted.map((s) => ({ ...s }));
+  for (let i = 0; i < sorted.length; i++) {
+    const s = sorted[i];
+    if (s.openBadge) continue;
+    const prev = sorted[i - 1];
+    const next = sorted[i + 1];
+    const joinedPrev = prev && Math.abs(s.start - prev.end) < MIN;
+    const joinedNext = next && Math.abs(next.start - s.end) < MIN;
+    out[i].start = joinedPrev ? rnd(s.start, Math.floor(rules.roundMinutes / 2)) : rnd(s.start, startDown);
+    out[i].end = joinedNext ? rnd(next.start, Math.floor(rules.roundMinutes / 2)) : rnd(s.end, endDown);
+  }
+  // aansluitende regels: einde van de vorige = begin van de volgende
+  for (let i = 1; i < out.length; i++) {
+    if (!out[i].openBadge && Math.abs(sorted[i].start - sorted[i - 1].end) < MIN) out[i].start = out[i - 1].end;
+  }
+  return out.filter((s) => s.end > s.start);
 }
 
 /** Totalen en waarschuwingen voor een lijst segmenten (voorstel of bevestigd) */

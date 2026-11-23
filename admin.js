@@ -12,12 +12,14 @@ const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Le
 const ENTITIES = {
   employees: {
     title: 'Werknemers', newLabel: 'Nieuwe werknemer',
-    help: 'De gebruikersnaam wordt ook gebruikt in OwnTracks. "Loxone-gebruiker" = exact dezelfde naam als in Loxone Config. Voeg daarna bij Locaties het thuisadres toe. Een <b>beheerder</b> is ook gewoon werknemer, maar kan via de knop "Beheer" bovenaan in de app ook het beheer openen.',
+    help: 'Iedereen opent dezelfde link (de app) en meldt zich aan met <b>gebruikersnaam</b> en <b>wachtwoord</b>. Geef bij een nieuwe werknemer een startwachtwoord (min. 8 tekens); de werknemer kan het zelf wijzigen bij Meer. "Nieuw wachtwoord" leeg laten = ongewijzigd; een nieuw wachtwoord meldt die werknemer overal af. "Loxone-gebruiker" = exact dezelfde naam als in Loxone Config. Een <b>beheerder</b> is ook gewoon werknemer, maar kan via de knop "Beheer" bovenaan ook het beheer openen.',
     fields: [
       { k: 'name', label: 'Naam', req: true },
       { k: 'username', label: 'Gebruikersnaam', req: true, help: 'kleine letters, bv. ruben' },
+      { k: 'password', label: 'Nieuw wachtwoord', type: 'password', noList: true, help: 'leeg = ongewijzigd' },
       { k: 'loxone_user', label: 'Loxone-gebruiker' },
       { k: 'is_admin', label: 'Beheerder', type: 'bool', def: false },
+      { k: 'has_password', label: 'Wachtwoord', type: 'bool', def: false, noForm: true },
       { k: 'active', label: 'Actief', type: 'bool' },
     ],
   },
@@ -84,6 +86,7 @@ function fieldInput(f, row, m) {
   if (f.type === 'coords') {
     return `<span class="row"><input name="coords" placeholder="50.8631, 3.0694" value="${row?.lat != null ? `${row.lat}, ${row.lon}` : ''}"><button type="button" class="secondary" data-act="here">Mijn locatie</button></span>`;
   }
+  if (f.type === 'password') return `<input name="${f.k}" type="password" autocomplete="new-password" minlength="8" placeholder="${esc(f.help ?? '')}">`;
   return `<input name="${f.k}" ${f.type === 'number' ? 'type="number" step="any"' : ''} value="${esc(v ?? f.def ?? '')}" ${f.req ? 'required' : ''} placeholder="${esc(f.help ?? '')}">`;
 }
 
@@ -109,10 +112,10 @@ export class Admin {
     this.el = el;
     this.tab = tab;
     if (tab !== 'overzicht') clearInterval(this.ovTimer);
-    const tabs = { overzicht: 'Dagoverzicht', planning: 'Planning', employees: 'Werknemers', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
+    const tabs = { overzicht: 'Dagoverzicht', planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
     el.innerHTML = `<nav class="tabs" aria-label="Beheer">${Object.entries(tabs).map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav><div id="adminView"></div>`;
     const view = el.querySelector('#adminView');
-    const fn = { overzicht: this.overview, planning: this.planning, export: this.exportView, instellingen: this.settings }[tab];
+    const fn = { overzicht: this.overview, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
     Promise.resolve().then(() => (fn ? fn.call(this, view) : this.entity(view, tab)))
       .catch((e) => { view.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
   }
@@ -128,7 +131,7 @@ export class Admin {
         <h2>${edit ? 'Wijzigen' : ent.newLabel}</h2>
         ${ent.help ? `<p class="muted">${ent.help}</p>` : ''}
         <form class="form-grid" id="entForm">
-          ${ent.fields.map((f) => `<label><span>${f.label}</span>${fieldInput(f, edit, m)}</label>`).join('')}
+          ${ent.fields.filter((f) => !f.noForm).map((f) => `<label><span>${f.label}</span>${fieldInput(f, edit, m)}</label>`).join('')}
           <div class="row"><button class="primary">${edit ? 'Opslaan' : 'Toevoegen'}</button>${edit ? '<button type="button" class="secondary" data-act="cancel">Annuleren</button>' : ''}</div>
         </form>
         <div id="entErr"></div>
@@ -136,9 +139,9 @@ export class Admin {
       </section>
       <section class="card table-wrap">
         <h2>${ent.title} (${rows.length})</h2>
-        <table><thead><tr>${ent.fields.map((f) => `<th>${f.label}</th>`).join('')}<th></th></tr></thead>
-        <tbody>${rows.map((r) => `<tr>${ent.fields.map((f) => `<td>${fieldValue(f, r, m)}</td>`).join('')}
-          <td class="actions">${name === 'employees' ? `<button class="link" data-link="${esc(r.username)}">Koppellink</button>` : ''}<button class="link" data-edit="${esc(r.id)}">Wijzig</button><button class="link danger" data-del="${esc(r.id)}">Verwijder</button></td></tr>`).join('')}</tbody></table>
+        <table><thead><tr>${ent.fields.filter((f) => !f.noList).map((f) => `<th>${f.label}</th>`).join('')}<th></th></tr></thead>
+        <tbody>${rows.map((r) => `<tr>${ent.fields.filter((f) => !f.noList).map((f) => `<td>${fieldValue(f, r, m)}</td>`).join('')}
+          <td class="actions"><button class="link" data-edit="${esc(r.id)}">Wijzig</button><button class="link danger" data-del="${esc(r.id)}">Verwijder</button></td></tr>`).join('')}</tbody></table>
       </section>`;
 
     const form = view.querySelector('#entForm');
@@ -146,7 +149,7 @@ export class Admin {
     form.onsubmit = async (e) => {
       e.preventDefault();
       const rec = { ...(edit ?? { id: uid() }) };
-      for (const f of ent.fields) {
+      for (const f of ent.fields.filter((x) => !x.noForm)) {
         const inp = form.elements[f.k];
         if (f.type === 'bool') rec[f.k] = inp.checked;
         else if (f.type === 'coords') {
@@ -168,19 +171,25 @@ export class Admin {
         const me = this.ctx.me();
         if (me?.username === rec.username && me.isAdmin && !rec.is_admin && !this.ctx.adminKey()
           && !confirm('Je neemt je eigen beheerrecht af. Daarna kan je het beheer op dit toestel niet meer openen. Doorgaan?')) return;
-        // beheerrecht wordt door de server bewaakt: eerst daar bewaren
+        // wachtwoord en beheerrecht worden door de server bewaakt: eerst daar bewaren (wachtwoord nooit in de opslag)
+        const password = rec.password;
+        delete rec.password;
+        if (password && password.length < 8) return err('Het wachtwoord moet minstens 8 tekens lang zijn.');
+        if (password && edit && !confirm(`Nieuw wachtwoord instellen voor ${rec.name}? Die wordt dan op al zijn/haar toestellen afgemeld.`)) return;
         if (this.hasServer()) {
           try {
-            await this.server(`/api/admin/employees/${encodeURIComponent(rec.username)}`, {
-              method: 'PUT', body: JSON.stringify({ name: rec.name, loxone_user: rec.loxone_user, is_admin: !!rec.is_admin }),
+            const out = await this.server(`/api/admin/employees/${encodeURIComponent(rec.username)}`, {
+              method: 'PUT', body: JSON.stringify({ name: rec.name, loxone_user: rec.loxone_user, is_admin: !!rec.is_admin, ...(password ? { password } : {}) }),
             });
+            rec.has_password = !!out?.has_password;
           } catch (e2) {
-            if (rec.is_admin !== boolOf(edit?.is_admin, { def: false })) return err(`Beheerrecht niet gewijzigd: ${e2.message}`);
+            if (password || rec.is_admin !== boolOf(edit?.is_admin, { def: false })) return err(`Niet bewaard: ${e2.message}`);
             toast(`Bewaard, maar niet doorgegeven aan de server: ${e2.message}`, 'err');
           }
-        } else if (rec.is_admin) {
-          return err('Beheerders aanduiden kan enkel als de server bereikbaar is.');
+        } else if (rec.is_admin || password) {
+          return err('Beheerders en wachtwoorden instellen kan enkel als de server bereikbaar is.');
         }
+        if (!edit && !rec.has_password) toast('Let op: zonder wachtwoord kan deze werknemer zich niet aanmelden.', 'err');
       }
       rec.updated = Date.now();
       this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
@@ -212,49 +221,41 @@ export class Admin {
       }
       this.entity(view, name);
     });
-    view.querySelectorAll('[data-link]').forEach((b) => b.onclick = () => this.showLink(view.querySelector('#entExtra'), b.dataset.link));
     if (name === 'employees' && !edit) this.syncAdminFlags(view);
   }
 
-  /** Beheerrecht staat op de server: neem het over in de lijst als het verschilt */
+  /** Beheerrecht en "wachtwoord ingesteld" staan op de server: neem ze over in de lijst als ze verschillen */
   async syncAdminFlags(view) {
     if (!this.hasServer()) return;
     let list;
     try { list = await this.server('/api/admin/employees'); } catch { return; }
-    const srv = new Map(list.map((e) => [e.username, !!e.is_admin]));
-    const differ = alive(this.ctx.master().employees).filter((e) => srv.has(e.username) && srv.get(e.username) !== !!e.is_admin);
-    if (!differ.length) return;
+    const srv = new Map(list.map((e) => [e.username, { is_admin: !!e.is_admin, has_password: !!e.has_password }]));
+    const differs = (e) => srv.has(e.username) && (srv.get(e.username).is_admin !== !!e.is_admin || srv.get(e.username).has_password !== !!e.has_password);
+    if (!alive(this.ctx.master().employees).some(differs)) return;
     this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
-      for (const e of mm.employees) if (srv.has(e.username) && srv.get(e.username) !== !!e.is_admin) Object.assign(e, { is_admin: srv.get(e.username), updated: Date.now() });
+      for (const e of mm.employees) if (differs(e)) Object.assign(e, srv.get(e.username), { updated: Date.now() });
     });
     if (view.isConnected) this.entity(view, 'employees');
   }
 
-  async showLink(box, username) {
-    box.innerHTML = '<p class="muted">Koppellink ophalen…</p>';
+  // ---------- Toestellen: waar is iedereen aangemeld ----------
+  async devices(view) {
+    view.innerHTML = `<section class="card"><h2>Aangemelde toestellen</h2>
+      <p class="muted">Alle toestellen waarop een werknemer aangemeld is. Een toestel afmelden: de werknemer moet zich daar opnieuw aanmelden. Gsm kwijt? Meld het toestel af én geef bij Werknemers een nieuw wachtwoord.</p>
+      <div id="devList"><p class="muted">Laden…</p></div></section>`;
+    const box = view.querySelector('#devList');
+    if (!this.hasServer()) { box.innerHTML = '<p class="muted">Geen verbinding met de server ingesteld.</p>'; return; }
     try {
-      const all = await this.server('/api/admin/employees');
-      let e = all.find((x) => x.username === username);
-      if (!e) {
-        const rec = alive(this.ctx.master().employees).find((x) => x.username === username);
-        e = await this.server(`/api/admin/employees/${encodeURIComponent(username)}`, { method: 'PUT', body: JSON.stringify({ name: rec?.name, loxone_user: rec?.loxone_user }) });
-      }
-      const link = `${location.origin}${location.pathname}#koppel=${encodeURIComponent(username)}.${e.token}&s=${encodeURIComponent(this.ctx.serverUrl())}`;
-      box.innerHTML = `<div class="callout">
-        <h3>Koppellink voor ${esc(e.name)}</h3>
-        <p>Stuur deze link naar de werknemer (bv. via WhatsApp) en laat hem openen op zijn gsm. De app onthoudt dan wie hij is en toont de knop om OwnTracks in te stellen.</p>
-        <p><code>${esc(link)}</code></p>
-        <div class="row"><button class="secondary" data-act="copy">Kopiëren</button>${navigator.share ? '<button class="secondary" data-act="share">Delen…</button>' : ''}<button class="link danger" data-act="renew">Nieuwe link (oude wordt ongeldig)</button></div>
-      </div>`;
-      box.querySelector('[data-act=copy]').onclick = () => copyText(link);
-      box.querySelector('[data-act=share]')?.addEventListener('click', () => navigator.share({ title: 'Enautec uren', text: `Koppellink urenregistratie voor ${e.name}`, url: link }).catch(() => {}));
-      box.querySelector('[data-act=renew]').onclick = async () => {
-        if (!confirm('De oude link en het OwnTracks-wachtwoord van deze werknemer worden ongeldig. Doorgaan?')) return;
-        await this.server(`/api/admin/employees/${encodeURIComponent(username)}/token`, { method: 'POST' });
-        this.showLink(box, username);
-      };
-    } catch (err) {
-      box.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+      const list = await this.server('/api/admin/sessions');
+      const people = new Set(list.map((s) => s.username)).size;
+      box.innerHTML = `<p class="muted small">${list.length} toestel(len) voor ${people} werknemer(s).</p>${this.ctx.sessionsHtml(list, { showUser: true })}`;
+      box.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
+        if (!confirm('Dit toestel afmelden?')) return;
+        try { await this.server(`/api/admin/sessions/${b.dataset.revoke}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'err'); }
+        this.devices(view);
+      });
+    } catch (e) {
+      box.innerHTML = `<div class="error">${esc(e.message)}</div>`;
     }
   }
 

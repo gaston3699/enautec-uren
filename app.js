@@ -45,7 +45,7 @@ const canAdmin = () => TEST || STORAGE !== 'google' || !!adminKey() || isAdminEm
 /** Headers voor beheerverzoeken aan de server */
 function adminHeaders() {
   if (adminKey()) return { 'X-Admin-Key': adminKey() };
-  if (isAdminEmployee()) return { Authorization: `Bearer ${device().token}` };
+  if (isAdminEmployee()) return { Authorization: `Bearer ${device().session}` };
   return null;
 }
 
@@ -55,7 +55,7 @@ function googleTokens(slot) {
   return async (force = false) => {
     if (!force && cache && Date.now() < cache.exp - 60000) return cache;
     const dev = device();
-    const authHdr = slot === 'A' && dev?.token ? { Authorization: `Bearer ${dev.token}` } : adminHeaders();
+    const authHdr = slot === 'A' && dev?.session ? { Authorization: `Bearer ${dev.session}` } : adminHeaders();
     if (!authHdr) throw Object.assign(new Error('Dit toestel is niet gekoppeld.'), { needsLogin: true });
     const headers = { 'Content-Type': 'application/json', ...authHdr };
     const res = await fetch(`${serverUrl()}/api/google/token`, { method: 'POST', headers, body: JSON.stringify({ slot }) });
@@ -67,7 +67,7 @@ function googleTokens(slot) {
   };
 }
 
-const hasGoogleAccess = () => !!serverUrl() && !!(device()?.token || adminKey());
+const hasGoogleAccess = () => !!serverUrl() && !!(device()?.session || adminKey());
 
 function makeDriveA() {
   if (TEST) return new TestDrive('A');
@@ -121,6 +121,7 @@ const ctx = {
   adminHeaders,
   serverAdmin,
   me: () => lsGet(ME),
+  sessionsHtml: (list, opts) => sessionsHtml(list, opts),
   billingDrive: () => driveB,
   /** Google-koppeling (A = gegevens, B = facturatie): status, koppelen, ontkoppelen */
   googleStatus: () => serverAdmin('/api/admin/google/status'),
@@ -149,12 +150,12 @@ const rawCache = new Map();
 async function fetchRaw(date) {
   const dev = device();
   const url = ctx.serverUrl();
-  if (!dev?.token || !url) return { raw: null, error: '' };
+  if (!dev?.session || !url) return { raw: null, error: '' };
   const hit = rawCache.get(date);
   if (hit && Date.now() - hit.at < 60000) return hit.value;
   let value;
   try {
-    const res = await fetch(`${url}/api/raw?date=${date}`, { headers: { Authorization: `Bearer ${dev.token}` } });
+    const res = await fetch(`${url}/api/raw?date=${date}`, { headers: { Authorization: `Bearer ${dev.session}` } });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) value = { raw: null, error: 'De koppeling met de server is niet meer geldig. Vraag een nieuwe koppellink.' };
     else if (!res.ok) value = { raw: null, error: data.error ?? `Server: fout ${res.status}` };
@@ -167,11 +168,12 @@ async function fetchRaw(date) {
 }
 
 // ---------- OwnTracks ----------
-function owntracksLink(dev) {
+/** OwnTracks heeft een eigen wachtwoord (niet het app-wachtwoord); de app krijgt het van de server */
+function owntracksLink(ot) {
   const conf = {
     _type: 'configuration', mode: 3, url: `${ctx.serverUrl()}/api/owntracks`, auth: true,
-    username: dev.username, password: dev.token, deviceId: 'gsm',
-    tid: dev.username.replace(/[^a-z]/gi, '').slice(0, 2).toUpperCase() || 'XX',
+    username: ot.username, password: ot.password, deviceId: 'gsm',
+    tid: ot.username.replace(/[^a-z]/gi, '').slice(0, 2).toUpperCase() || 'XX',
     monitoring: 1, locatorDisplacement: 100, locatorInterval: 180, pubExtendedData: true,
   };
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(conf))));
@@ -239,8 +241,12 @@ function route() {
   const [view = '', ...rest] = location.hash.slice(1).split('/');
   if (!driveA) return viewWelcome();
   const dev = device();
+  const hasSession = !!dev?.session;
+  if (GOOGLE || TEST) {
+    // niet aangemeld: enkel een beheerder met beheersleutel mag (naar het beheer); anders aanmelden
+    if (!hasSession) return adminKey() && (view === 'beheer' || !TEST) ? viewAdmin(rest[0] || 'overzicht') : viewLogin();
+  } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
-  if (!dev) return GOOGLE && !TEST ? viewAdmin(rest[0] || 'overzicht') : viewWho();
   if (view === 'planning') return viewPlanning();
   if (view === 'overzicht') return viewHistory();
   if (view === 'meer') return viewMore();
@@ -252,7 +258,7 @@ function viewWelcome(message = '') {
   setNav('');
   $nav.hidden = true;
   showStatus('local');
-  if (GOOGLE && !TEST) return viewWelcomeGoogle(message);
+  if (GOOGLE || TEST) return viewLogin(message);
   $main.innerHTML = `<section class="card welcome">
     <img src="logo.svg" alt="Enautec – Automatisatie &amp; elektrotechnieken" class="welcome-logo">
     <h1>Urenregistratie</h1>
@@ -265,57 +271,126 @@ function viewWelcome(message = '') {
   $main.querySelector('[data-act=login]')?.addEventListener('click', () => auth.login('A'));
 }
 
-/** Startscherm bij opslag in Google Drive: koppellink (werknemer) of beheerder instellen */
-async function viewWelcomeGoogle(message = '') {
-  const isAdmin = !!adminKey() && !!serverUrl();
+/** Beschrijving van dit toestel voor de lijst "aangemelde toestellen", bv. "iPhone · Safari (app)" */
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'iPad'
+    : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Onbekend';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Firefox|FxiOS/.test(ua) ? 'Firefox'
+    : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  return `${os} · ${browser}${isStandalone() ? ' (app)' : ''}`;
+}
+const isMobile = () => isIOS() || /Android|Mobile/.test(navigator.userAgent);
+const deviceInfo = () => ({ device: deviceLabel(), type: isMobile() ? 'mobiel' : 'computer' });
+
+async function postJson(path, body, token) {
+  const res = await fetch(`${serverUrl()}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error ?? `Server: fout ${res.status}`), { status: res.status, data });
+  return data;
+}
+
+/** Aangemeld: sessie op dit toestel bewaren */
+function signedIn({ session, username, name, isAdmin }) {
+  lsSet(DEVICE, { username, session });
+  lsSet(ME, { username, name, isAdmin });
+  lsSet(ADMIN_OK, null);
+  location.hash = '#dag';
+  location.reload();
+}
+
+/** Afmelden op dit toestel */
+async function signOut() {
+  const dev = device();
+  try { if (dev?.session) await postJson('/api/logout', {}, dev.session); } catch { /* offline: toch lokaal afmelden */ }
+  lsSet(DEVICE, null);
+  lsSet(ME, null);
+  lsSet(ADMIN_OK, null);
+  location.hash = '';
+  location.reload();
+}
+
+/** Startscherm: aanmelden met gebruikersnaam en wachtwoord (of beheerder met beheersleutel) */
+async function viewLogin(message = '') {
+  setNav('');
+  $nav.hidden = true;
+  showStatus('local');
+  const dev = device();
+  const legacy = dev?.token && !dev.session; // toestel van vóór het aanmelden met wachtwoord
+  const isKeyAdmin = !!adminKey() && !!serverUrl() && !dev;
   let gs = null;
   let gsErr = '';
-  if (isAdmin) { try { gs = await ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
+  if (isKeyAdmin && !TEST) { try { gs = await ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
+
   $main.innerHTML = `<section class="card welcome">
     <img src="logo.svg" alt="Enautec – Automatisatie &amp; elektrotechnieken" class="welcome-logo">
     <h1>Urenregistratie</h1>
     ${message ? `<div class="error">${esc(message)}</div>` : ''}
-    ${isAdmin ? `
+    ${legacy ? `
+      <p>Hallo <b>${esc(dev.username)}</b>. Vanaf nu meld je je aan met je gebruikersnaam en een <b>wachtwoord</b>. Kies hier je wachtwoord (minstens 8 tekens).</p>
+      <form id="pwForm" class="link-form">
+        <input name="pw1" type="password" autocomplete="new-password" placeholder="Nieuw wachtwoord" required minlength="8" aria-label="Nieuw wachtwoord">
+        <input name="pw2" type="password" autocomplete="new-password" placeholder="Herhaal wachtwoord" required minlength="8" aria-label="Herhaal wachtwoord">
+        <div class="row"><button class="primary">Wachtwoord instellen</button></div>
+      </form><div id="pwErr"></div>`
+    : isKeyAdmin && !TEST ? `
       ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
-      ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Zie HANDLEIDING.md, deel B.</div>' : ''}
+      ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Zie HANDLEIDING.md.</div>' : ''}
       ${gs?.configured && !gs.A ? `<p>Koppel nu het <b>Google-account van Enautec Uren</b>. Daar worden de uren, planning en het materiaal bewaard.</p>
-        <button class="primary big" data-act="connect">Koppelen met Google Drive</button>
-        <p class="muted small">Kies bij Google het juiste account en vink de toegang tot Google Drive aan.</p>` : ''}
+        <button class="primary big" data-act="connect">Koppelen met Google Drive</button>` : ''}
       ${gs?.A ? `<p>✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google Drive')}</b>.</p><a class="btn primary" href="#beheer">Naar beheer</a>` : ''}
-      <p><button class="link" data-act="forget">Beheerdersgegevens van dit toestel wissen</button></p>`
-    : `<p><b>Werknemer?</b> ${isStandalone() ? 'Plak hieronder de <b>koppellink</b> die je van de beheerder kreeg.' : 'Open de <b>koppellink</b> die je van de beheerder kreeg, op deze gsm, of plak ze hieronder.'} Daarna werkt de app vanzelf, zonder wachtwoord.</p>
-      <form id="linkForm" class="link-form">
-        <input name="link" placeholder="Plak hier je koppellink" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Koppellink">
-        <div class="row">
-          ${navigator.clipboard?.readText ? '<button type="button" class="secondary" data-act="paste">Plakken</button>' : ''}
-          <button class="primary">Koppelen</button>
-        </div>
-      </form><div id="linkErr"></div>
-      <details><summary>Beheerder</summary>
+      <p><button class="link" data-act="forget">Beheersleutel van dit toestel wissen</button></p>`
+    : `
+      <form id="loginForm" class="link-form">
+        <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Gebruikersnaam" required aria-label="Gebruikersnaam">
+        <input name="password" type="password" autocomplete="current-password" placeholder="Wachtwoord" required aria-label="Wachtwoord">
+        <button class="primary big">Aanmelden</button>
+      </form><div id="loginErr"></div>
+      <p class="muted small">Je blijft aangemeld op dit toestel tot je zelf afmeldt. Wachtwoord vergeten? Vraag de beheerder om een nieuw.</p>
+      ${TEST ? '<p class="muted small">Testmodus: gebruiker <b>tomas</b>, <b>ruben</b> of <b>philippe</b>, wachtwoord <b>demo1234</b>.</p>' : ''}
+      <details><summary>Beheerder met beheersleutel</summary>
         <form id="adminSetup" class="form-grid" style="text-align:left">
           <label><span>Adres van de verzamelserver</span><input name="server" required placeholder="https://enautec-uren.….workers.dev" value="${esc(serverUrl())}"></label>
           <label><span>Beheersleutel (ADMIN_KEY)</span><input name="key" type="password" required autocomplete="off"></label>
           <div><button class="primary">Verbinden</button></div>
         </form><div id="setupErr"></div>
       </details>`}
-    ${LOCAL ? '<p><a href="?test=1">Testmodus starten</a></p>' : ''}
+    ${LOCAL && !TEST ? '<p><a href="?test=1">Testmodus starten</a></p>' : ''}
   </section>`;
+
   $main.querySelector('[data-act=connect]')?.addEventListener('click', () => ctx.connectGoogle('A').catch((e) => toast(e.message, 'err')));
   $main.querySelector('[data-act=forget]')?.addEventListener('click', () => { ctx.setAdminKey(''); location.reload(); });
-  const lf = $main.querySelector('#linkForm');
-  if (lf) {
-    const tryLink = (text) => {
-      const k = parseKoppel(text);
-      if (!k) { $main.querySelector('#linkErr').innerHTML = '<div class="error">Dit is geen geldige koppellink. Kopieer de volledige link die je kreeg (met "#koppel=" erin).</div>'; return; }
-      linkDevice(k);
-      location.hash = '#meer';
-      location.reload();
-    };
-    lf.onsubmit = (e) => { e.preventDefault(); tryLink(lf.elements.link.value); };
-    $main.querySelector('[data-act=paste]')?.addEventListener('click', async () => {
-      try { const t = await navigator.clipboard.readText(); lf.elements.link.value = t; tryLink(t); } catch { lf.elements.link.focus(); }
-    });
-  }
+
+  const lf = $main.querySelector('#loginForm');
+  if (lf) lf.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = lf.querySelector('button');
+    btn.disabled = true;
+    try {
+      signedIn(await postJson('/api/login', { username: lf.elements.username.value.trim(), password: lf.elements.password.value, ...deviceInfo() }));
+    } catch (err) {
+      $main.querySelector('#loginErr').innerHTML = `<div class="error">${esc(err.status ? err.message : 'De server is niet bereikbaar. Controleer je internetverbinding.')}</div>`;
+      btn.disabled = false;
+    }
+  };
+
+  const pf = $main.querySelector('#pwForm');
+  if (pf) pf.onsubmit = async (e) => {
+    e.preventDefault();
+    const err = (m) => { $main.querySelector('#pwErr').innerHTML = `<div class="error">${esc(m)}</div>`; };
+    if (pf.elements.pw1.value !== pf.elements.pw2.value) return err('De twee wachtwoorden zijn niet gelijk.');
+    try {
+      signedIn(await postJson('/api/password', { new: pf.elements.pw1.value, ...deviceInfo() }, dev.token));
+    } catch (e2) {
+      if (e2.data?.needLogin) { lsSet(DEVICE, null); viewLogin(e2.message); return; }
+      err(e2.message);
+    }
+  };
+
   const form = $main.querySelector('#adminSetup');
   if (form) form.onsubmit = async (e) => {
     e.preventDefault();
@@ -332,7 +407,6 @@ async function viewWelcomeGoogle(message = '') {
     }
   };
 }
-
 function viewWho() {
   setNav('');
   const emps = alive(ctx.master().employees).filter((e) => e.active !== false).sort(byName);
@@ -455,79 +529,132 @@ function viewHistory() {
   $main.querySelectorAll('[data-date]').forEach((tr) => tr.onclick = () => { location.hash = `#dag/${tr.dataset.date}`; });
 }
 
-function viewMore() {
+/** Lijst van aangemelde toestellen (eigen of, voor de beheerder, van iedereen) */
+function sessionsHtml(list, { showUser = false } = {}) {
+  const fmt = (ts) => new Date(ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  if (!list.length) return '<p class="muted">Geen aangemelde toestellen.</p>';
+  return `<div class="table-wrap"><table><thead><tr>${showUser ? '<th>Werknemer</th>' : ''}<th>Toestel</th><th>Aangemeld sinds</th><th>Laatst actief</th><th></th></tr></thead><tbody>
+    ${list.map((s) => `<tr>${showUser ? `<td>${esc(s.name ?? s.username)}</td>` : ''}
+      <td>${s.type === 'mobiel' ? '📱' : '💻'} ${esc(s.device ?? 'Onbekend')}${s.current ? ' <span class="pill ok">dit toestel</span>' : ''}</td>
+      <td>${fmt(s.createdAt)}</td><td>${fmt(s.lastSeen)}</td>
+      <td>${s.current ? '' : `<button class="link danger" data-revoke="${s.id}">Afmelden</button>`}</td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+async function viewMore() {
   setNav('meer');
   const dev = device();
+  const me = lsGet(ME) ?? {};
   const emp = alive(ctx.master().employees).find((e) => e.username === dev.username);
   const acc = driveA?.account;
   const server = ctx.serverUrl();
+  const ot = me.owntracks;
+  const mobile = isMobile();
   $main.innerHTML = `<h1 class="page-title">Meer</h1>
-    <section class="card"><h2>Ik ben</h2><p><b>${esc(emp?.name ?? dev.username)}</b> <span class="muted">(${esc(dev.username)})</span></p>
-      <p class="muted">${dev.token ? '✔ Gekoppeld met de automatische registratie.' : 'Niet gekoppeld met de automatische registratie. Vraag de beheerder om je koppellink.'}</p>
-      <button class="link" data-act="switch">Iemand anders kiezen</button></section>
-    ${dev.token && !isStandalone() ? `<section class="card"><h2>App op je beginscherm</h2>
-      ${isIOS() ? `<ol>
-        <li>Tik in Safari onderaan op <b>Deel</b> (vierkantje met pijl) → <b>Zet op beginscherm</b>.</li>
-        <li>Tik hieronder op <b>Kopieer koppellink</b>.</li>
-        <li>Open de app via het nieuwe icoon op je beginscherm en tik op <b>Plakken</b> → <b>Koppelen</b>.</li>
-      </ol>
-      <p class="muted small">Op iPhone heeft de app op het beginscherm een eigen geheugen, los van Safari. Daarom moet je ze daar één keer opnieuw koppelen.</p>`
-      : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Lukt het koppelen daarna niet, kopieer dan je koppellink en plak ze in de app.</p>'}
-      <button class="secondary" data-act="copylink">Kopieer koppellink</button>
+    <section class="card"><h2>Mijn account</h2>
+      <p><b>${esc(emp?.name ?? me.name ?? dev.username)}</b> <span class="muted">(gebruikersnaam: ${esc(dev.username)})</span>${me.isAdmin ? ' <span class="pill red">beheerder</span>' : ''}</p>
+      <div class="row"><button class="secondary" data-act="signout">Afmelden op dit toestel</button></div>
+      <details><summary>Wachtwoord wijzigen</summary>
+        <form id="pwChange" class="link-form">
+          <input name="current" type="password" autocomplete="current-password" placeholder="Huidig wachtwoord" required aria-label="Huidig wachtwoord">
+          <input name="pw1" type="password" autocomplete="new-password" placeholder="Nieuw wachtwoord (min. 8 tekens)" required minlength="8" aria-label="Nieuw wachtwoord">
+          <input name="pw2" type="password" autocomplete="new-password" placeholder="Herhaal nieuw wachtwoord" required minlength="8" aria-label="Herhaal nieuw wachtwoord">
+          <div class="row"><button class="primary">Wachtwoord wijzigen</button></div>
+          <p class="muted small">Na het wijzigen word je op je andere toestellen afgemeld.</p>
+        </form><div id="pwMsg"></div>
+      </details>
+    </section>
+    <section class="card"><h2>Mijn toestellen</h2>
+      <p class="muted small">Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.</p>
+      <div id="mySessions"><p class="muted">Laden…</p></div>
+    </section>
+    ${mobile && !isStandalone() ? `<section class="card"><h2>App op je beginscherm</h2>
+      ${isIOS() ? '<p>Tik in Safari onderaan op <b>Deel</b> (vierkantje met pijl) → <b>Zet op beginscherm</b>. Open de app daarna via het icoon en meld je daar één keer aan.</p>'
+        : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Open de app daarna via het icoon.</p>'}
     </section>` : ''}
-    ${dev.token && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)</h2>
+    ${mobile && ot && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)</h2>
       <ol><li>Installeer de gratis app <b>OwnTracks</b> (App Store / Google Play).</li>
-      <li>Tik hier: <a class="btn primary" href="${esc(owntracksLink(dev))}">OwnTracks instellen</a></li>
+      <li>Tik hier: <a class="btn primary" href="${esc(owntracksLink(ot))}">OwnTracks instellen</a></li>
       <li>Geef OwnTracks locatietoegang <b>"Altijd"</b> en zet batterijbesparing voor OwnTracks uit.</li></ol>
       <p class="muted">Buiten de werkuren kan je OwnTracks op <b>Rustig</b> zetten. Je locatie wordt enkel gebruikt om je uren voor te stellen en na enkele weken gewist.</p>
       <details><summary>Manueel instellen</summary>
-        <p class="muted small">Werkt de knop niet (bv. op iPhone)? Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> aan en kopieer deze gegevens één voor één. Laat "Geheime coderingssleutel" leeg.</p>
+        <p class="muted small">Werkt de knop niet (bv. op iPhone)? Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> aan en kopieer deze gegevens één voor één. Laat "Geheime coderingssleutel" leeg. Het OwnTracks-wachtwoord is een aparte code, niet je app-wachtwoord.</p>
         <div class="copy-list">
-          ${[['URL', `${server}/api/owntracks`], ['Gebruikersnaam', dev.username], ['Wachtwoord', dev.token], ['Apparaat ID', 'gsm']].map(([label, value]) => `
+          ${[['URL', `${server}/api/owntracks`], ['Gebruikersnaam', ot.username], ['Wachtwoord', ot.password], ['Apparaat ID', 'gsm']].map(([label, value]) => `
           <div class="copy-row"><span class="muted small">${label}</span><code>${esc(value)}</code>
             <button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}
         </div>
       </details>
     </section>` : ''}
+    ${!mobile ? '<section class="card"><p class="muted">💻 Je gebruikt een computer. De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p></section>' : ''}
     <section class="card"><h2>Opslag</h2>
       <p>${TEST ? 'Testmodus: gegevens staan enkel in deze browser.'
         : acc ? `${esc(STORE_NAME)}: <b>${esc(acc.username || acc.name)}</b>` : GOOGLE ? 'Google Drive (via de koppeling van de beheerder).' : 'Niet aangemeld.'}</p>
       <div class="row"><button class="secondary" data-act="sync">Nu synchroniseren</button>
-      ${TEST ? '<button class="link danger" data-act="testreset">Testgegevens wissen</button>'
-        : GOOGLE ? '<button class="link danger" data-act="unlink">Dit toestel ontkoppelen</button>' : '<button class="link danger" data-act="logout">Afmelden</button>'}</div>
+      ${TEST ? '<button class="link danger" data-act="testreset">Testgegevens wissen</button>' : ''}</div>
     </section>
     <section class="card"><p class="muted small">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p></section>`;
-  $main.querySelector('[data-act=copylink]')?.addEventListener('click', async (e) => {
-    await copyText(myKoppelLink());
-    e.target.textContent = '✔ Gekopieerd';
-    setTimeout(() => { e.target.textContent = 'Kopieer koppellink'; }, 1500);
-  });
+
   $main.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
     await copyText(b.dataset.copy);
     const old = b.textContent;
     b.textContent = '✔ Gekopieerd';
     setTimeout(() => { b.textContent = old; }, 1500);
   });
-  $main.querySelector('[data-act=switch]').onclick = () => { if (confirm('Wil je een andere naam kiezen op dit toestel?')) { lsSet(DEVICE, null); location.hash = ''; route(); } };
+  $main.querySelector('[data-act=signout]').onclick = () => {
+    if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;
+    if (confirm('Afmelden op dit toestel?')) signOut();
+  };
   $main.querySelector('[data-act=sync]').onclick = async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); };
-  $main.querySelector('[data-act=logout]')?.addEventListener('click', () => {
-    if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet in OneDrive staan. Toch afmelden?')) return;
-    if (!confirm('Afmelden van OneDrive op dit toestel?')) return;
-    auth.logout('A'); driveA = null; store.drive = null; route();
-  });
-  $main.querySelector('[data-act=unlink]')?.addEventListener('click', () => {
-    if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet in Google Drive staan. Toch ontkoppelen?')) return;
-    if (!confirm('Dit toestel ontkoppelen? Je hebt daarna opnieuw een koppellink nodig.')) return;
-    lsSet(DEVICE, null);
-    location.href = location.pathname;
-  });
   $main.querySelector('[data-act=testreset]')?.addEventListener('click', () => {
     if (!confirm('Alle testgegevens in deze browser wissen?')) return;
     Object.keys(localStorage).filter((k) => k.startsWith('enautec.')).forEach((k) => localStorage.removeItem(k));
     location.href = location.pathname;
   });
+
+  const pc = $main.querySelector('#pwChange');
+  pc.onsubmit = async (e) => {
+    e.preventDefault();
+    const msg = (t, cls = 'error') => { $main.querySelector('#pwMsg').innerHTML = `<div class="${cls}">${esc(t)}</div>`; };
+    if (pc.elements.pw1.value !== pc.elements.pw2.value) return msg('De twee nieuwe wachtwoorden zijn niet gelijk.');
+    try {
+      await postJson('/api/password', { current: pc.elements.current.value, new: pc.elements.pw1.value }, dev.session);
+      pc.reset();
+      msg('✔ Wachtwoord gewijzigd. Je andere toestellen zijn afgemeld.', 'ok-text');
+      loadMySessions();
+    } catch (err) { msg(err.message); }
+  };
+
+  async function loadMySessions() {
+    const box = $main.querySelector('#mySessions');
+    if (!box) return;
+    try {
+      const res = await fetch(`${server}/api/sessions`, { headers: { Authorization: `Bearer ${dev.session}` } });
+      if (res.status === 401) { signOutLocal('Je bent afgemeld op dit toestel. Meld je opnieuw aan.'); return; }
+      const list = await res.json();
+      box.innerHTML = sessionsHtml(list);
+      box.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
+        if (!confirm('Dit toestel afmelden?')) return;
+        await fetch(`${server}/api/sessions/${b.dataset.revoke}`, { method: 'DELETE', headers: { Authorization: `Bearer ${dev.session}` } });
+        loadMySessions();
+      });
+    } catch {
+      box.innerHTML = '<p class="muted">De lijst kon niet geladen worden (geen verbinding met de server).</p>';
+    }
+  }
+  loadMySessions();
 }
 
+/** Sessie ongeldig (afgemeld vanop een ander toestel of nieuw wachtwoord): lokaal afmelden */
+function signOutLocal(message) {
+  lsSet(DEVICE, null);
+  lsSet(ME, null);
+  lsSet(ADMIN_OK, null);
+  driveA = makeDriveA();
+  store.drive = driveA;
+  location.hash = '';
+  viewLogin(message);
+}
 /** Pincode van het beheer onthouden voor 12 uur op dit toestel */
 const adminUnlocked = () => (lsGet(ADMIN_OK)?.until ?? 0) > Date.now();
 const unlockAdmin = () => lsSet(ADMIN_OK, { until: Date.now() + 12 * 3600000 });
@@ -569,27 +696,11 @@ async function viewAdmin(tab) {
   admin.render($main.querySelector('#adminRoot'), tab);
 }
 
-/** Koppellink herkennen: "…#koppel=gebruiker.code&s=<server>" (ook als volledige link geplakt) */
+/** Oude koppellink "…#koppel=gebruiker.code&s=<server>": nog enkel om een eerste wachtwoord te kiezen */
 function parseKoppel(text) {
   const m = String(text ?? '').trim().match(/#?koppel=([^.&\s]+)\.([^&\s]+)(?:&s=([^\s]+))?/);
   if (!m) return null;
   return { username: decodeURIComponent(m[1]), token: m[2], server: m[3] ? decodeURIComponent(m[3]) : null };
-}
-
-/** Dit toestel koppelen aan een werknemer */
-function linkDevice({ username, token, server }) {
-  lsSet(DEVICE, { username, token });
-  lsSet(ME, null);
-  if (server) ctx.setServerUrl(server);
-  driveA = makeDriveA();
-  store.drive = driveA;
-}
-
-/** Koppellink van dit toestel (om de app op het beginscherm te koppelen) */
-function myKoppelLink() {
-  const dev = device();
-  if (!dev?.token) return '';
-  return `${location.origin}${location.pathname}#koppel=${encodeURIComponent(dev.username)}.${dev.token}&s=${encodeURIComponent(serverUrl())}`;
 }
 
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -598,9 +709,10 @@ const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.p
 /** Bij de server nagaan of de gekoppelde werknemer beheerder is (op de achtergrond) */
 async function refreshMe() {
   const dev = device();
-  if (!dev?.token || !serverUrl()) return;
+  if (!dev?.session || !serverUrl()) return;
   try {
-    const res = await fetch(`${serverUrl()}/api/me`, { headers: { Authorization: `Bearer ${dev.token}` } });
+    const res = await fetch(`${serverUrl()}/api/me`, { headers: { Authorization: `Bearer ${dev.session}` } });
+    if (res.status === 401) { signOutLocal('Je bent afgemeld op dit toestel (vanop een ander toestel of door een nieuw wachtwoord). Meld je opnieuw aan.'); return; }
     if (!res.ok) return;
     const me = await res.json();
     const before = isAdminEmployee();
@@ -636,13 +748,17 @@ async function start() {
     else toast(`Koppelen mislukt: ${decodeURIComponent(gm[3] ?? '')}`, 'err');
   }
 
-  // Koppellink: #koppel=gebruikersnaam.code&s=<serveradres>
+  // Oude koppellink geopend: dit toestel laat de werknemer een eerste wachtwoord kiezen
   const km = parseKoppel(location.hash);
   if (km) {
-    linkDevice(km);
-    history.replaceState(null, '', `${location.pathname}${location.search}#meer`);
-    toast('Toestel gekoppeld. Stel nu OwnTracks in.', 'ok');
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
+    if (!device()?.session) {
+      lsSet(DEVICE, { username: km.username, token: km.token });
+      if (km.server) ctx.setServerUrl(km.server);
+    }
   }
+  // Toestel van vóór het aanmelden met wachtwoord, of niet aangemeld → aanmeldscherm
+  if (GOOGLE && !device()?.session && device()?.token) { viewLogin(); return; }
 
   if (!GOOGLE && driveA && !TEST && auth.needsInteractive('A')) {
     if (r?.silent && !r.ok) showStatus('login');
@@ -662,7 +778,7 @@ async function start() {
   window.addEventListener('hashchange', route);
   if (!store.has(PATHS.master)) $main.innerHTML = `<p class="muted center">Gegevens ophalen uit ${esc(STORE_NAME)}…</p>`;
   await syncNow();
-  if (GOOGLE && store.status === 'login' && !device()?.token && !adminKey()) { viewWelcome(); return; }
+  if (GOOGLE && store.status === 'login' && !device()?.session && !adminKey()) { viewWelcome(); return; }
   route();
   refreshMe();
 
