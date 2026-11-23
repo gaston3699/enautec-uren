@@ -294,8 +294,21 @@ async function postJson(path, body, token) {
   return data;
 }
 
+/** Gebruikers die zich op dit toestel aanmeldden (keuzelijst op het aanmeldscherm; geen wachtwoorden) */
+const USERS = 'enautec.users';
+const knownUsers = () => (Array.isArray(lsGet(USERS)) ? lsGet(USERS) : []);
+function rememberUser(username, name) {
+  if (!username) return;
+  const old = knownUsers().find((u) => u.username === username);
+  lsSet(USERS, [{ username, name: name ?? old?.name ?? username }, ...knownUsers().filter((u) => u.username !== username)].slice(0, 20));
+}
+function forgetUser(username) {
+  lsSet(USERS, knownUsers().filter((u) => u.username !== username));
+}
+
 /** Aangemeld: sessie op dit toestel bewaren */
 function signedIn({ session, username, name, isAdmin }) {
+  rememberUser(username, name);
   lsSet(DEVICE, { username, session });
   lsSet(ME, { username, name, isAdmin });
   lsSet(ADMIN_OK, null);
@@ -319,9 +332,25 @@ async function viewLogin(message = '') {
   setNav('');
   $nav.hidden = true;
   showStatus('local');
-  const dev = device();
-  const legacy = dev?.token && !dev.session; // toestel van vóór het aanmelden met wachtwoord
-  const isKeyAdmin = !!adminKey() && !!serverUrl() && !dev;
+  let dev = device();
+  let legacy = dev?.token && !dev.session; // toestel van vóór het aanmelden met wachtwoord
+  if (legacy) {
+    // al een wachtwoord gekozen (bv. op een ander toestel)? Dan gewoon aanmelden, niet opnieuw kiezen.
+    try {
+      const res = await fetch(`${serverUrl()}/api/password`, { headers: { Authorization: `Bearer ${dev.token}` } });
+      const st = await res.json().catch(() => ({}));
+      if (res.status === 401 || st.hasPassword) {
+        dev = { username: dev.username };
+        lsSet(DEVICE, dev);
+        legacy = false;
+        if (!message && st.hasPassword) message = 'Je hebt al een wachtwoord. Meld je hier aan met je gebruikersnaam en wachtwoord.';
+      }
+    } catch { /* geen verbinding: formulier tonen, de server controleert bij het bewaren */ }
+  }
+  const isKeyAdmin = !!adminKey() && !!serverUrl() && !dev?.session && !legacy;
+  if (dev?.username) rememberUser(dev.username);
+  const users = knownUsers();
+  const pick = dev?.username ?? users[0]?.username;
   let gs = null;
   let gsErr = '';
   if (isKeyAdmin && !TEST) { try { gs = await ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
@@ -346,11 +375,17 @@ async function viewLogin(message = '') {
       <p><button class="link" data-act="forget">Beheersleutel van dit toestel wissen</button></p>`
     : `
       <form id="loginForm" class="link-form">
-        <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Gebruikersnaam" required aria-label="Gebruikersnaam">
+        ${users.length ? `<select name="pick" aria-label="Gebruiker">
+          ${users.map((u) => `<option value="${esc(u.username)}" ${u.username === pick ? 'selected' : ''}>${esc(u.name && u.name !== u.username ? `${u.name} (${u.username})` : u.username)}</option>`).join('')}
+          <option value="">Andere gebruiker…</option>
+        </select>` : ''}
+        <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Gebruikersnaam" aria-label="Gebruikersnaam" ${users.length ? 'hidden' : 'required'}>
         <input name="password" type="password" autocomplete="current-password" placeholder="Wachtwoord" required aria-label="Wachtwoord">
         <button class="primary big">Aanmelden</button>
       </form><div id="loginErr"></div>
-      <p class="muted small">Je blijft aangemeld op dit toestel tot je zelf afmeldt. Wachtwoord vergeten? Vraag de beheerder om een nieuw.</p>
+      ${users.length ? '<p class="small"><button type="button" class="link" data-act="forgetuser">Deze gebruiker uit de lijst verwijderen</button></p>' : ''}
+      <p class="muted small">Je blijft aangemeld op dit toestel tot je zelf afmeldt (Meer → Afmelden). Gebruik je het toestel van een collega? Meld je daarna af.</p>
+      <p class="muted small">Wachtwoord vergeten? Vraag een beheerder om een nieuw wachtwoord. Daarna kan je het zelf wijzigen via Meer → Wachtwoord wijzigen.</p>
       ${TEST ? '<p class="muted small">Testmodus: gebruiker <b>tomas</b>, <b>ruben</b> of <b>philippe</b>, wachtwoord <b>demo1234</b>.</p>' : ''}
       <details><summary>Beheerder met beheersleutel</summary>
         <form id="adminSetup" class="form-grid" style="text-align:left">
@@ -366,12 +401,31 @@ async function viewLogin(message = '') {
   $main.querySelector('[data-act=forget]')?.addEventListener('click', () => { ctx.setAdminKey(''); location.reload(); });
 
   const lf = $main.querySelector('#loginForm');
+  const sel = lf?.elements.pick;
+  if (sel) {
+    const other = () => {
+      const isOther = sel.value === '';
+      lf.elements.username.hidden = !isOther;
+      lf.elements.username.required = isOther;
+      if (isOther) lf.elements.username.focus(); else lf.elements.password.focus();
+      $main.querySelector('[data-act=forgetuser]').hidden = isOther;
+    };
+    sel.onchange = other;
+    $main.querySelector('[data-act=forgetuser]').onclick = () => {
+      if (!sel.value || !confirm(`${sel.selectedOptions[0].textContent} uit de lijst op dit toestel verwijderen?`)) return;
+      forgetUser(sel.value);
+      if (device()?.username === sel.value) lsSet(DEVICE, null);
+      viewLogin();
+    };
+  }
   if (lf) lf.onsubmit = async (e) => {
     e.preventDefault();
-    const btn = lf.querySelector('button');
+    const btn = lf.querySelector('button.primary');
+    const username = (sel?.value || lf.elements.username.value).trim().toLowerCase();
+    if (!username) { lf.elements.username.hidden = false; lf.elements.username.focus(); return; }
     btn.disabled = true;
     try {
-      signedIn(await postJson('/api/login', { username: lf.elements.username.value.trim(), password: lf.elements.password.value, ...deviceInfo() }));
+      signedIn(await postJson('/api/login', { username, password: lf.elements.password.value, ...deviceInfo() }));
     } catch (err) {
       $main.querySelector('#loginErr').innerHTML = `<div class="error">${esc(err.status ? err.message : 'De server is niet bereikbaar. Controleer je internetverbinding.')}</div>`;
       btn.disabled = false;
@@ -386,7 +440,7 @@ async function viewLogin(message = '') {
     try {
       signedIn(await postJson('/api/password', { new: pf.elements.pw1.value, ...deviceInfo() }, dev.token));
     } catch (e2) {
-      if (e2.data?.needLogin) { lsSet(DEVICE, null); viewLogin(e2.message); return; }
+      if (e2.data?.needLogin) { lsSet(DEVICE, { username: dev.username }); viewLogin(e2.message); return; }
       err(e2.message);
     }
   };
@@ -553,7 +607,7 @@ async function viewMore() {
   $main.innerHTML = `<h1 class="page-title">Meer</h1>
     <section class="card"><h2>Mijn account</h2>
       <p><b>${esc(emp?.name ?? me.name ?? dev.username)}</b> <span class="muted">(gebruikersnaam: ${esc(dev.username)})</span>${me.isAdmin ? ' <span class="pill red">beheerder</span>' : ''}</p>
-      <div class="row"><button class="secondary" data-act="signout">Afmelden op dit toestel</button></div>
+      <div class="row"><button class="secondary" data-act="signout">Afmelden / andere gebruiker</button></div>
       <details><summary>Wachtwoord wijzigen</summary>
         <form id="pwChange" class="link-form">
           <input name="current" type="password" autocomplete="current-password" placeholder="Huidig wachtwoord" required aria-label="Huidig wachtwoord">
@@ -603,7 +657,7 @@ async function viewMore() {
   });
   $main.querySelector('[data-act=signout]').onclick = () => {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;
-    if (confirm('Afmelden op dit toestel?')) signOut();
+    if (confirm('Afmelden op dit toestel? Daarna kan je (of een collega) je opnieuw aanmelden.')) signOut();
   };
   $main.querySelector('[data-act=sync]').onclick = async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); };
   $main.querySelector('[data-act=testreset]')?.addEventListener('click', () => {
@@ -768,7 +822,7 @@ async function start() {
   if (!driveA) { viewWelcome(r && !r.ok && r.slot === 'A' ? r.error : ''); return; }
 
   // Beheerder zonder werknemerskoppeling: eerst Google Drive koppelen als dat nog niet gebeurd is
-  if (GOOGLE && !TEST && !device()) {
+  if (GOOGLE && !TEST && !device()?.session) {
     try {
       const gs = await ctx.googleStatus();
       if (!gs.A) { viewWelcome(); return; }

@@ -80,7 +80,8 @@ body.update-ready .brand small { color: #7a2020; }
 @media (prefers-reduced-motion: reduce) { .update-btn svg { animation: none; } }
 @media (max-width: 420px) { .update-btn span { display: none; } }
 .link-form { display: grid; gap: 8px; margin: 12px 0; text-align: left; }
-.link-form input { width: 100%; }
+.link-form input, .link-form select { width: 100%; }
+.link-form [hidden], .small [hidden], button[hidden] { display: none; }
 .link-form .row { justify-content: flex-end; }
 .live-note { margin: 0 0 6px; }
 .live-note::first-letter { color: var(--ok); }

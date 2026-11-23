@@ -16,7 +16,7 @@ const ENTITIES = {
     fields: [
       { k: 'name', label: 'Naam', req: true },
       { k: 'username', label: 'Gebruikersnaam', req: true, help: 'kleine letters, bv. ruben' },
-      { k: 'password', label: 'Nieuw wachtwoord', type: 'password', noList: true, help: 'leeg = ongewijzigd' },
+      { k: 'password', label: 'Nieuw wachtwoord', type: 'password', noList: true, help: 'leeg = ongewijzigd (vergeten? stel hier een nieuw in)' },
       { k: 'loxone_user', label: 'Loxone-gebruiker' },
       { k: 'is_admin', label: 'Beheerder', type: 'bool', def: false },
       { k: 'has_password', label: 'Wachtwoord', type: 'bool', def: false, noForm: true },
@@ -86,7 +86,10 @@ function fieldInput(f, row, m) {
   if (f.type === 'coords') {
     return `<span class="row"><input name="coords" placeholder="50.8631, 3.0694" value="${row?.lat != null ? `${row.lat}, ${row.lon}` : ''}"><button type="button" class="secondary" data-act="here">Mijn locatie</button></span>`;
   }
-  if (f.type === 'password') return `<input name="${f.k}" type="password" autocomplete="new-password" minlength="8" placeholder="${esc(f.help ?? '')}">`;
+  if (f.type === 'password') {
+    // zichtbaar voor de beheerder, zodat die het meteen kan doorgeven
+    return `<span class="row"><input name="${f.k}" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" minlength="8" placeholder="${esc(f.help ?? '')}"><button type="button" class="secondary" data-act="genpw">Genereer</button></span>`;
+  }
   return `<input name="${f.k}" ${f.type === 'number' ? 'type="number" step="any"' : ''} value="${esc(v ?? f.def ?? '')}" ${f.req ? 'required' : ''} placeholder="${esc(f.help ?? '')}">`;
 }
 
@@ -167,6 +170,7 @@ export class Admin {
         rec.id = rec.username;
       }
       if (name === 'sites' && rec.type === 'thuis' && !rec.employee_id) return err('Kies de werknemer bij een thuisadres.');
+      let newPassword = null;
       if (name === 'employees') {
         const me = this.ctx.me();
         if (me?.username === rec.username && me.isAdmin && !rec.is_admin && !this.ctx.adminKey()
@@ -182,6 +186,7 @@ export class Admin {
               method: 'PUT', body: JSON.stringify({ name: rec.name, loxone_user: rec.loxone_user, is_admin: !!rec.is_admin, ...(password ? { password } : {}) }),
             });
             rec.has_password = !!out?.has_password;
+            newPassword = password || null;
           } catch (e2) {
             if (password || rec.is_admin !== boolOf(edit?.is_admin, { def: false })) return err(`Niet bewaard: ${e2.message}`);
             toast(`Bewaard, maar niet doorgegeven aan de server: ${e2.message}`, 'err');
@@ -198,7 +203,24 @@ export class Admin {
       });
       toast('Bewaard', 'ok');
       this.entity(view, name);
+      if (name === 'employees' && newPassword) {
+        // eenmalig tonen: het wachtwoord wordt nergens leesbaar bewaard
+        const box = view.querySelector('#entExtra');
+        box.innerHTML = `<div class="notice"><p><b>Geef deze gegevens door aan ${esc(rec.name ?? rec.username)}</b> (worden maar één keer getoond):</p>
+          <div class="copy-list">${[['Link', location.origin + location.pathname], ['Gebruikersnaam', rec.username], ['Wachtwoord', newPassword]].map(([l, v]) => `
+            <div class="copy-row"><span class="muted small">${l}</span><code>${esc(v)}</code><button class="secondary" data-copy="${esc(v)}">Kopieer</button></div>`).join('')}</div></div>`;
+        box.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
+          try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '✔ Gekopieerd'; } catch { /* niet toegelaten */ }
+        });
+        box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     };
+    form.querySelector('[data-act=genpw]')?.addEventListener('click', () => {
+      // goed leesbaar en makkelijk over te typen: geen 0/O, 1/l/I
+      const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+      const rnd = crypto.getRandomValues(new Uint32Array(10));
+      form.elements.password.value = Array.from(rnd, (n) => chars[n % chars.length]).join('').replace(/^(.{5})/, '$1-');
+    });
     form.querySelector('[data-act=here]')?.addEventListener('click', () => {
       if (!navigator.geolocation) return err('Locatie niet beschikbaar op dit toestel.');
       navigator.geolocation.getCurrentPosition(
