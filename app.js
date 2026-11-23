@@ -13,6 +13,7 @@ import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths } from './report.js';
 import { weekStart } from './periods.js';
+import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, renderQuestion } from './questions.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -123,6 +124,18 @@ const ctx = {
   adminHeaders,
   serverAdmin,
   me: () => lsGet(ME),
+  /** Standaardpauze (minuten) van de aangemelde werknemer: lokaal meteen, op de server voor de meldingen */
+  setPauseMin: (min) => {
+    lsSet(ME, { ...(lsGet(ME) ?? {}), pauseMin: min });
+    const s = device()?.session;
+    if (s) postJson('/api/me/pause', { minutes: min }, s).catch((e) => toast(e.message, 'err'));
+  },
+  /** Dag als "niet gewerkt" (of terug open) doorgeven: dan stuurt de server die dag geen vragen meer */
+  notWorked: (date, on) => {
+    const s = device()?.session;
+    if (s) postJson('/api/questions/day', { date, notWorked: !!on }, s).catch(() => {});
+    rawCache.delete(date);
+  },
   sessionsHtml: (list, opts) => sessionsHtml(list, opts),
   billingDrive: () => driveB,
   /** Google-koppeling (A = gegevens, B = facturatie): status, koppelen, ontkoppelen */
@@ -192,9 +205,30 @@ function myPaths(date = today()) {
   }
   return paths;
 }
-const syncNow = () => store.sync(myPaths(currentDate()));
+const syncNow = () => store.sync(myPaths(currentDate())).then((r) => { pushPlaces(); return r; });
+
+/** Zones/klanten/projecten naar de server (voor het herkennen van aankomsten) */
+function pushPlaces() {
+  const hdr = device()?.session ? { Authorization: `Bearer ${device().session}` } : adminHeaders();
+  if (store.has(PATHS.master)) syncPlaces(ctx.master(), ctx.serverUrl(), hdr);
+}
 
 let rerenderTimer;
+// tik op een pushmelding terwijl de app al open staat → naar de vraag
+navigator.serviceWorker?.addEventListener('message', (e) => {
+  if (e.data?.type === 'OPEN' && typeof e.data.url === 'string') {
+    const u = new URL(e.data.url, location.href);
+    if (u.origin === location.origin) location.hash = u.hash;
+  }
+});
+
+// stamgegevens gewijzigd (hier of elders) → zones ook naar de server
+let placesTimer = null;
+store.onChange((path) => {
+  if (path !== PATHS.master) return;
+  clearTimeout(placesTimer);
+  placesTimer = setTimeout(pushPlaces, 3000);
+});
 store.onChange((path, source) => {
   if (source !== 'remote') return;
   const a = document.activeElement;
@@ -254,6 +288,7 @@ function route() {
   if (view === 'planning') return viewPlanning();
   if (view === 'overzicht') return viewHistory(rest);
   if (view === 'meer') return viewMore();
+  if (view === 'vraag') return viewQuestion(rest[0]);
   return viewDay(isDate(rest[0]) ? rest[0] : today());
 }
 
@@ -493,7 +528,10 @@ async function viewDay(date) {
       ${date < today() ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true"></span>'}
     </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}
     <div class="row spread small muted" style="margin-top:8px"><span id="rawInfo"></span><button class="link" data-act="refresh">↻ Vernieuwen</button></div></section>
+    <div id="openQuestions"></div>
+    ${isMobile() && pushSupport().ok && Notification.permission === 'default' && date === today() ? '<a class="q-banner soft" href="#meer">🔔 <span>Zet de <b>meldingen</b> aan: dan vraagt de app zelf bij wie je bent.</span></a>' : ''}
     <div id="dayBody"><p class="muted center">Laden…</p></div>`;
+  showOpenQuestions(date);
   $main.querySelector('#dayPick').onchange = (e) => { if (isDate(e.target.value)) location.hash = `#dag/${e.target.value}`; };
   $main.querySelector('[data-act=refresh]').onclick = () => { rawCache.delete(date); viewDay(date); };
   if (!store.has(PATHS.reg(date.slice(0, 7), dev.username))) await store.sync([PATHS.reg(date.slice(0, 7), dev.username)]);
@@ -583,6 +621,95 @@ async function viewHistory([kind = 'week', arg] = []) {
   box.querySelectorAll('[data-href]').forEach((tr) => tr.onclick = () => { location.hash = tr.dataset.href; });
 }
 
+/** Vraag van een pushmelding beantwoorden: #vraag/<id> */
+async function viewQuestion(id) {
+  setNav('dag');
+  const dev = device();
+  const server = ctx.serverUrl();
+  $main.innerHTML = '<p class="muted center">Vraag laden…</p>';
+  let q;
+  try {
+    const res = await fetch(`${server}/api/questions/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${dev.session}` } });
+    if (res.status === 401) { signOutLocal('Meld je aan om de vraag te beantwoorden.'); return; }
+    q = await res.json();
+    if (!res.ok) throw new Error(q.error ?? `Server: fout ${res.status}`);
+  } catch (e) {
+    $main.innerHTML = `<section class="card"><div class="error">${esc(e.message || 'Server niet bereikbaar.')}</div><a class="btn secondary" href="#dag">Naar mijn dag</a></section>`;
+    return;
+  }
+  const planned = alive(ctx.planning().items).filter((p) => p.username === dev.username && p.date === q.date).map((p) => p.projectId);
+  renderQuestion($main, {
+    q, ctx, planned,
+    answer: async (body) => {
+      try {
+        await postJson(`/api/questions/${q.id}/answer`, body, dev.session);
+        rawCache.delete(q.date);
+        pushPlaces();
+        toast(q.kind === 'pauze' ? (body.answer === 'nee' ? 'Oké, geen pauze vandaag.' : 'Pauze gestart ☕') : q.kind === 'pauze_einde' ? 'Pauze gestopt, verder werken'
+          : body.answer === 'nee' ? 'Oké, vandaag wordt niets geregistreerd.' : 'Bewaard', 'ok');
+        location.hash = `#dag/${q.date}`;
+      } catch (e) { toast(e.message, 'err'); }
+    },
+  });
+}
+
+/** Openstaande vragen van vandaag tonen bovenaan de dag (handig als een melding gemist werd) */
+async function showOpenQuestions(date) {
+  const dev = device();
+  const server = ctx.serverUrl();
+  if (date !== today() || !dev?.session || !server) return;
+  try {
+    const res = await fetch(`${server}/api/questions?open=1`, { headers: { Authorization: `Bearer ${dev.session}` } });
+    if (!res.ok) return;
+    const list = await res.json();
+    const box = $main.querySelector('#openQuestions');
+    if (!box || !list.length) return;
+    const label = { start: ['Aan het werk?', 'Toegekomen om'], waar: ['Bij wie ben je?', 'Aangekomen om'], pauze: ['☕ Pauze?', 'Gevraagd om'], pauze_einde: ['☕ Pauze voorbij?', 'Gevraagd om'] };
+    box.innerHTML = list.map((q) => `<a class="q-banner" href="#vraag/${q.id}"><b>${label[q.kind]?.[0] ?? 'Vraag'}</b>
+      <span>${label[q.kind]?.[1] ?? ''} ${esc(fmtClock(q.ts))} · tik om te antwoorden</span></a>`).join('');
+  } catch { /* offline */ }
+}
+
+/** Meldingen: kaart in "Meer" */
+async function pushCard(box) {
+  const dev = device();
+  const server = ctx.serverUrl();
+  const sup = pushSupport();
+  const draw = async (msg = '') => {
+    if (!sup.ok) {
+      box.innerHTML = `<h2>Meldingen</h2><p class="muted">${sup.reason === 'ios-home'
+        ? 'Op een iPhone werken meldingen enkel in de app op je beginscherm: Safari → Deel → <b>Zet op beginscherm</b>, open de app via het icoon en zet hier de meldingen aan.'
+        : 'Deze browser ondersteunt geen meldingen.'}</p>`;
+      return;
+    }
+    const sub = await currentSubscription();
+    let on = false;
+    if (sub) {
+      try { on = (await (await fetch(`${server}/api/push/status?endpoint=${encodeURIComponent(sub.endpoint)}`, { headers: { Authorization: `Bearer ${dev.session}` } })).json()).subscribed; } catch { on = true; }
+    }
+    box.innerHTML = `<h2>Meldingen</h2>
+      <p class="muted small">Je krijgt een melding als je ergens toekomt: <b>"Aan het werk?"</b> ('s ochtends), <b>"Bij wie ben je?"</b> (na een verplaatsing) en <b>"Dag bevestigen?"</b> als je thuiskomt. Zo kies je meteen het juiste project.</p>
+      ${Notification.permission === 'denied' ? '<p class="error">Meldingen zijn geblokkeerd voor deze app. Zet ze aan in de instellingen van je toestel of browser.</p>' : ''}
+      <p>${on ? '<span class="pill ok">Aan op dit toestel</span>' : '<span class="pill warn">Uit op dit toestel</span>'}</p>
+      <div class="row">${on ? '<button class="secondary" data-act="ptest">Testmelding sturen</button><button class="link danger" data-act="poff">Uitzetten</button>'
+        : '<button class="primary" data-act="pon">🔔 Meldingen aanzetten</button>'}</div>${msg}`;
+  };
+  box.onclick = async (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+    e.target.disabled = true;
+    try {
+      if (act === 'pon') { await enablePush(server, dev.session, deviceLabel()); await draw('<p class="ok-text">✔ Meldingen staan aan.</p>'); }
+      if (act === 'poff') { await disablePush(server, dev.session); await draw(); }
+      if (act === 'ptest') {
+        const r = await postJson('/api/push/test', {}, dev.session);
+        await draw(r.sent ? '<p class="ok-text">✔ Verstuurd. Je krijgt zo een melding.</p>' : '<p class="error">Niet verstuurd: geen toestellen ingeschreven.</p>');
+      }
+    } catch (err) { await draw(`<p class="error">${esc(err.message)}</p>`); }
+  };
+  await draw();
+}
+
 /** Lijst van aangemelde toestellen (eigen of, voor de beheerder, van iedereen) */
 function sessionsHtml(list, { showUser = false } = {}) {
   const fmt = (ts) => new Date(ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -618,6 +745,7 @@ async function viewMore() {
         </form><div id="pwMsg"></div>
       </details>
     </section>
+    <section class="card" id="pushCard"><h2>Meldingen</h2><p class="muted">Laden…</p></section>
     <section class="card"><h2>Mijn toestellen</h2>
       <p class="muted small">Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.</p>
       <div id="mySessions"><p class="muted">Laden…</p></div>
@@ -705,6 +833,7 @@ async function viewMore() {
     }
   }
   loadMySessions();
+  pushCard($main.querySelector('#pushCard'));
 }
 
 /** Sessie ongeldig (afgemeld vanop een ander toestel of nieuw wachtwoord): lokaal afmelden */

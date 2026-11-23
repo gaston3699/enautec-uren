@@ -5,10 +5,10 @@
    - Lettertypes en de Excel-module: bewaarde kopie gebruiken.
    - Google, de verzamelserver (/api/) en Microsoft: nooit bewaren, altijd rechtstreeks.
    VERSION wordt automatisch aangepast door scripts/stamp-version.js bij elke publicatie. */
-const VERSION = 'eaf45349f271';
+const VERSION = '9a4a200652ac';
 const CACHE = `enautec-uren-${VERSION}`;
 const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './gdrive.js', './store.js', './day.js', './admin.js',
-  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './manifest.webmanifest',
+  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './questions.js', './manifest.webmanifest',
   './privacy.html', './logo.svg', './logo-mark.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 const STATIC_ORIGINS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];
 
@@ -26,6 +26,34 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
     .then((keys) => Promise.all(keys.filter((k) => k.startsWith('enautec-uren-') && k !== CACHE).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
+});
+
+// Pushmelding van de server tonen ("Aan het werk?", "Bij wie ben je?", "Dag bevestigen?")
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { title: 'Enautec Uren', body: e.data?.text() ?? '' }; }
+  const question = ['start', 'waar', 'pauze', 'pauze_einde'].includes(d.kind);
+  e.waitUntil(self.registration.showNotification(d.title || 'Enautec Uren', {
+    body: d.body || '', tag: d.tag || 'enautec', renotify: true, requireInteraction: question,
+    icon: './icon-192.png', badge: './icon-192.png', data: { url: d.url || './' },
+  }));
+});
+
+// Tik op de melding: de app openen (of een open venster gebruiken) op de juiste plek
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL(e.notification.data?.url || './', self.registration.scope).href;
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) {
+      if (w.url.startsWith(self.registration.scope)) {
+        await w.focus();
+        if ('navigate' in w) { try { await w.navigate(target); } catch { w.postMessage({ type: 'OPEN', url: target }); } }
+        return;
+      }
+    }
+    await self.clients.openWindow(target);
+  })());
 });
 
 self.addEventListener('fetch', (e) => {

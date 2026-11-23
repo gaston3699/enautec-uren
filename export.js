@@ -43,6 +43,7 @@ export function collect(master, regs, from, to) {
     for (const [date, d] of Object.entries(reg.days ?? {})) {
       if (!dates.has(date)) continue;
       const name = emp.get(reg.username)?.name ?? reg.username;
+      if (d.status === 'nietgewerkt') continue; // aangeduid als niet gewerkt: niets te factureren
       if (d.status !== 'bevestigd') { open.push({ date, name }); continue; }
       for (const s of d.segments ?? []) {
         const p = proj.get(s.projectId);

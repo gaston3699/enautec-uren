@@ -96,9 +96,9 @@ export function savedDays(ctx, username, dates) {
     const month = date.slice(0, 7);
     const reg = ctx.store.get(PATHS.reg(month, username), emptyReg(username, month));
     const d = reg.days[date];
-    if (!d || !(d.segments?.length || d.status === 'bevestigd')) continue;
+    if (!d || !(d.segments?.length || d.status === 'bevestigd' || d.status === 'nietgewerkt')) continue;
     const segs = (d.segments ?? []).map((s) => ({ ...s, label: labelOf(ctx, s) }));
-    out[date] = { segs, status: d.status === 'bevestigd' ? 'bevestigd' : 'concept', tot: dayTotals(segs, rules), material: (d.material ?? []).length };
+    out[date] = { segs, status: d.status === 'bevestigd' || d.status === 'nietgewerkt' ? d.status : 'concept', tot: dayTotals(segs, rules), material: (d.material ?? []).length };
   }
   return out;
 }
@@ -134,7 +134,7 @@ export function startDate(ctx, username) {
 let START = '0000-00-00';
 const expAt = (date, dayGoal = 480) => (date < START ? 0 : expectedMinutes(date, dayGoal));
 /** Werkdag in het verleden zonder bevestigde uren? */
-const isMissing = (date, day) => date < today() && expAt(date) > 0 && day?.status !== 'bevestigd';
+const isMissing = (date, day) => date < today() && expAt(date) > 0 && day?.status !== 'bevestigd' && day?.status !== 'nietgewerkt';
 
 /** Zorg dat de maandbestanden geladen zijn */
 export async function ensureMonths(ctx, username, months) {
@@ -163,7 +163,7 @@ export function weekHtml(ctx, username, anyDate) {
     return `<a class="wrow ${we || hol ? 'off' : ''} ${date === today() ? 'today' : ''}" href="#dag/${date}">
       <div class="wday"><b>${esc(fmtDate(date, { weekday: 'short' }))}</b> ${esc(fmtDate(date, { day: 'numeric', month: 'numeric' }))}
         ${hol ? `<small>${esc(hol)}</small>` : ''}</div>
-      <div class="wtrack">${d ? trackHtml(d.segs, date, range, { labels: false, status: d.status === 'bevestigd' ? '' : 'concept' })
+      <div class="wtrack">${d?.status === 'nietgewerkt' ? '<div class="track empty"><span>Niet gewerkt</span></div>' : d ? trackHtml(d.segs, date, range, { labels: false, status: d.status === 'bevestigd' ? '' : 'concept' })
         : `<div class="track empty ${miss ? 'missing' : ''}">${miss ? '<span>Niets ingegeven</span>' : ''}</div>`}</div>
       <div class="wtot ${exp && d ? (work >= exp ? 'ok' : 'short') : ''}">${d ? hm(work) : miss ? '<span class="pill red">!</span>' : ''}
         ${d?.status === 'concept' ? '<small>open</small>' : ''}</div></a>`;

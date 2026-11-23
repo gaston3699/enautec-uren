@@ -532,11 +532,9 @@ export class Admin {
     const emps = alive(m.employees).filter((e) => e.active !== false).sort(byName);
     const month = date.slice(0, 7);
     if (pull) await this.ctx.store.sync([PATHS.master, PATHS.planning, ...emps.map((e) => PATHS.reg(month, e.username))]);
-    let raws = {};
-    let rawErr = '';
-    if (this.hasServer()) {
-      try { raws = await this.server(`/api/admin/raw?date=${date}`); } catch (e) { rawErr = e.message; }
-    } else rawErr = 'Geen server ingesteld: enkel ingegeven/bevestigde uren.';
+    // De beheerder ziet enkel bevestigde uren: geen ruwe gegevens en geen voorstellen ophalen
+    const raws = {};
+    const rawErr = '';
     if (!view.isConnected || date !== this.date) return;
     const typing = () => { const a = document.activeElement; return a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName) && view.contains(a); };
     if (typing()) return; // niet storen tijdens het typen; volgende ronde opnieuw
@@ -546,14 +544,17 @@ export class Admin {
       ${rawErr ? `<p class="muted">⚠ ${esc(rawErr)}</p>` : ''}
       <p class="muted small live-note">● Live · bijgewerkt ${localTime(Date.now())}</p>
       <table><thead><tr><th>Werknemer</th><th>Status</th><th>Van – tot</th><th>Arbeidstijd</th><th>Km</th><th>Materiaal</th><th>Aandachtspunten</th></tr></thead><tbody>
-      ${rows.map(({ e, st }) => `<tr class="click" data-emp="${esc(e.username)}">
+      ${rows.map(({ e, st }) => {
+        const ok = st.status === 'bevestigd';
+        return `<tr class="click" data-emp="${esc(e.username)}">
         <td>${esc(e.name)}</td>
-        <td>${st.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>' : st.segments.length ? '<span class="pill warn">Open</span>' : '<span class="muted">—</span>'}</td>
-        <td>${st.summary.start ? `${localTime(st.summary.start)} – ${localTime(st.summary.end)}` : ''}</td>
-        <td>${st.segments.length ? fmtHours(st.summary.workMinutes) : ''}</td>
-        <td>${st.segments.length ? st.summary.km : ''}</td>
-        <td>${st.material.length || ''}</td>
-        <td class="muted">${st.status !== 'bevestigd' && st.segments.length ? esc(st.summary.warnings.join(' ')) : ''}</td></tr>`).join('')}
+        <td>${ok ? '<span class="pill ok">Bevestigd</span>' : st.status === 'nietgewerkt' ? '<span class="pill">Niet gewerkt</span>' : '<span class="pill warn">Nog niet bevestigd</span>'}</td>
+        <td>${ok && st.summary.start ? `${localTime(st.summary.start)} – ${localTime(st.summary.end)}` : ''}</td>
+        <td>${ok ? fmtHours(st.summary.workMinutes) : ''}</td>
+        <td>${ok ? st.summary.km : ''}</td>
+        <td>${ok ? st.material.length || '' : ''}</td>
+        <td class="muted"></td></tr>`;
+      }).join('')}
       </tbody></table>`;
     const showDay = (u, scroll) => {
       const box = view.querySelector('#ovDay');

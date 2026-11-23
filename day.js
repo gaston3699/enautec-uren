@@ -1,8 +1,9 @@
 // Dagstaat: automatisch voorstel, aanpassen (tijdsblokken zoals Atree), materiaal en bevestigen.
-import { buildTimeline, summarize, roundSegments, KINDS } from './engine.js';
+import { buildTimeline, summarize, roundSegments, applyAnswers, KINDS } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, byName, toast } from './ui.js';
+import { confirmDialog } from './update.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
 import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
 
@@ -29,7 +30,7 @@ export const sitesFor = (master, username) =>
 /** Voorstel berekenen uit ruwe gegevens van de server */
 export function proposal(master, planning, username, date, raw) {
   const [, end] = dayRange(date);
-  return buildTimeline({
+  const segs = buildTimeline({
     points: raw?.points ?? [],
     badges: raw?.badges ?? [],
     sites: sitesFor(master, username),
@@ -38,7 +39,13 @@ export function proposal(master, planning, username, date, raw) {
     rules: rulesFrom(master),
     openEnd: date === today() ? Math.min(Date.now(), end) : end,
   });
+  // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken
+  return applyAnswers(segs, raw?.answers ?? []).segs;
 }
+
+/** Antwoordde de werknemer "Nee" op "Aan het werk?" */
+export const declinedAnswer = (raw) => (raw?.answers ?? []).filter((a) => a.kind === 'start' && a.answer).at(-1)?.answer.answer === 'nee'
+  ? (raw.answers ?? []).filter((a) => a.kind === 'start' && a.answer).at(-1) : null;
 
 /** Huidige stand van een dag (bevestigd, aangepast of automatisch voorstel) */
 export function dayState(ctx, username, date, raw) {
@@ -47,11 +54,11 @@ export function dayState(ctx, username, date, raw) {
   const reg = ctx.store.get(PATHS.reg(month, username), emptyReg(username, month));
   const rec = reg.days[date];
   const auto = proposal(master, ctx.planning(), username, date, raw);
-  const useSaved = rec && (rec.status === 'bevestigd' || rec.segmentsEdited);
-  const segments = useSaved ? rec.segments : auto;
+  const useSaved = rec && (rec.status === 'bevestigd' || rec.status === 'nietgewerkt' || rec.segmentsEdited);
+  const segments = rec?.status === 'nietgewerkt' ? [] : useSaved ? rec.segments : auto;
   return {
     date, username, master,
-    status: rec?.status === 'bevestigd' ? 'bevestigd' : 'voorstel',
+    status: rec?.status === 'bevestigd' ? 'bevestigd' : rec?.status === 'nietgewerkt' ? 'nietgewerkt' : 'voorstel',
     edited: !!rec?.segmentsEdited,
     segments,
     material: rec?.material ?? [],
@@ -126,11 +133,34 @@ const SUB = {
  * Teken de dag in `el`.
  * opts: { ctx, username, date, raw, asAdmin }
  */
-export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawError = '' }) {
+export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawError = '', editing = false }) {
   const st = dayState(ctx, username, date, raw);
   const master = st.master;
   const rules = rulesFrom(master);
-  const readonly = st.status === 'bevestigd';
+  const again = (extra = {}) => renderDay(el, { ctx, username, date, raw, asAdmin, rawError, ...extra });
+
+  // De beheerder ziet enkel bevestigde uren (voorstellen en open dagen blijven bij de werknemer)
+  if (asAdmin && st.status !== 'bevestigd' && !editing) {
+    el.innerHTML = `<section class="card"><p class="muted">${st.status === 'nietgewerkt' ? 'Aangeduid als <b>niet gewerkt</b>.'
+      : 'Deze dag is nog <b>niet bevestigd</b>. Voorgestelde uren zijn enkel zichtbaar voor de werknemer zelf.'}</p></section>`;
+    return;
+  }
+  // Niet gewerkt aangevinkt
+  if (st.status === 'nietgewerkt') {
+    el.innerHTML = `<section class="card"><h2>Niet gewerkt</h2>
+      <p class="muted">Deze dag is aangeduid als niet gewerkt. Er wordt niets geregistreerd en je krijgt voor deze dag geen vragen meer.</p>
+      <button class="secondary" data-act="worked">Toch gewerkt: uren ingeven</button></section>`;
+    el.querySelector('[data-act=worked]').onclick = () => {
+      saveDay(ctx, username, date, { status: 'concept', segmentsEdited: false, segments: [] });
+      ctx.notWorked?.(date, false);
+      again();
+    };
+    return;
+  }
+  // Bevestigd = alleen lezen, tot je op "Uren aanpassen" tikt (dan pas bewaren bij opnieuw bevestigen)
+  const editingConfirmed = st.status === 'bevestigd' && editing;
+  const readonly = st.status === 'bevestigd' && !editing;
+  const pauseMin = ctx.me?.()?.pauseMin ?? 30;
   // voorstel van de app: tijden in blauw/schuin tot je ze aanpast
   const allAuto = !st.edited && st.status !== 'bevestigd';
   let segs = st.segments.map((s) => ({ ...s, candidates: s.candidates ?? [], ...(allAuto ? { auto: { start: true, end: true } } : {}) }));
@@ -142,8 +172,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   const dayGoal = (rules.dayHours ?? 8) * 60;
 
   const clean = (list) => list.map(({ auto, ...s }) => s);
-  const persistSegments = () => saveDay(ctx, username, date, { segments: clean(segs), segmentsEdited: true, status: 'concept' });
-  const persistMaterial = () => saveDay(ctx, username, date, { material, ...(st.edited ? {} : { segments: clean(segs) }) });
+  const persistSegments = () => { if (!editingConfirmed) saveDay(ctx, username, date, { segments: clean(segs), segmentsEdited: true, status: 'concept' }); };
+  const persistMaterial = () => { if (!editingConfirmed) saveDay(ctx, username, date, { material, ...(st.edited ? {} : { segments: clean(segs) }) }); };
 
   function projectOptions(sel, candidates = []) {
     const cand = candidates.map((id) => projects.find((p) => p.id === id)).filter(Boolean);
@@ -236,6 +266,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         ${legendHtml()}
         ${rawError ? `<p class="muted">⚠ ${esc(rawError)}</p>` : ''}
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
+        ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
       </section>
       <section class="card">
         <h2>Controle van de dag</h2>
@@ -252,6 +283,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           <button class="secondary" data-act="add" data-kind="atelier">🏭 + Atelier</button>
           <button class="secondary" data-act="add" data-kind="pauze">☕ + Pauze</button>
           <button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button></div>
+          <div class="pause-set"><span>☕ <b>Standaard pauze</b><small>Om 12:00 krijg je een melding om je pauze te starten.</small></span>
+            <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>
           <p class="muted small">Tijden typ je kort: <b>8</b> = 8:00, <b>730</b> of <b>7u30</b> = 7:30, <b>16.45</b>. Blauw en schuin = voorgesteld, gewoon overschrijven. Bij bevestigen wordt per kwartier afgerond (begin tot 5 min, einde tot 8 min na het kwartier naar beneden).</p>`}
       </section>
       <section class="card">
@@ -261,12 +294,14 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         ${readonly ? '' : '<button class="secondary" data-act="add-mat">+ Materiaal</button>'}
       </section>
       <section class="card">
-        ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd${asAdmin ? '' : '. Wil je nog iets wijzigen? Vraag het aan de beheerder'}.</p>
-          ${asAdmin ? '<button class="secondary" data-act="reopen">Heropenen</button>' : ''}`
+        ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd. Klopt er iets niet? Pas de uren aan en bevestig opnieuw.</p>
+          <div class="row"><button class="secondary" data-act="edit">✎ Uren aanpassen</button>${asAdmin ? '<button class="link" data-act="reopen">Terug naar de werknemer (heropenen)</button>' : ''}</div>`
         : `<label class="muted" for="daynote">Opmerking bij deze dag</label>
           <textarea id="daynote" data-f="daynote">${esc(cur.note)}</textarea>
           <div class="err-slot"></div>
-          <button class="primary big" data-act="confirm">Dag bevestigen</button>`}
+          <button class="primary big" data-act="confirm">${editingConfirmed ? 'Opnieuw bevestigen' : 'Dag bevestigen'}</button>
+          ${editingConfirmed ? '<button class="secondary" style="margin-top:8px" data-act="cancel-edit">Annuleren</button>'
+            : asAdmin ? '' : '<p class="center"><button class="link" data-act="notworked">Niet gewerkt op deze dag</button></p>'}`}
       </section>`;
   }
 
@@ -276,13 +311,14 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const last = sorted.at(-1);
     const [, dayEnd] = dayRange(date);
     const kind = kindKey === 'terug' ? 'verplaatsing' : kindKey;
-    const dflt = { verplaatsing: 30, terug: 30, werk: 240, atelier: 240, pauze: 30 }[kindKey];
+    const pz = ctx.me?.()?.pauseMin || 30;
+    const dflt = { verplaatsing: 30, terug: 30, werk: 240, atelier: 240, pauze: pz }[kindKey];
     let start = last ? last.end : localToTs(date, kindKey === 'verplaatsing' ? '07:30' : '08:00');
     const workLike = (k) => k === 'werk' || k === 'atelier';
     if (last && workLike(kind) && workLike(last.kind)) {
-      // tweede periode: eerst een halfuur pauze
-      segs.push({ start, end: start + 30 * MIN, kind: 'pauze', projectId: null, candidates: [], siteId: null, auto: { start: true, end: true } });
-      start += 30 * MIN;
+      // tweede periode: eerst de standaardpauze
+      segs.push({ start, end: start + pz * MIN, kind: 'pauze', projectId: null, candidates: [], siteId: null, auto: { start: true, end: true } });
+      start += pz * MIN;
     }
     const prevWork = [...sorted].reverse().find((s) => workLike(s.kind) && s.projectId);
     const end = Math.min(start + dflt * MIN, dayEnd - MIN);
@@ -313,7 +349,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
 
   el.onchange = (e) => {
     const t = e.target;
-    if (t.dataset.f === 'daynote') { saveDay(ctx, username, date, { note: t.value, ...(st.edited ? {} : { segments: clean(segs) }) }); return; }
+    if (t.dataset.f === 'daynote') { if (!editingConfirmed) saveDay(ctx, username, date, { note: t.value, ...(st.edited ? {} : { segments: clean(segs) }) }); return; }
     const box = t.closest('.blk');
     if (box) {
       const i = Number(box.dataset.i);
@@ -385,7 +421,24 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const act = btn?.dataset.act;
     if (!act) return;
     if (act === 'add') addBlock(btn.dataset.kind);
-    else if (act === 'del-seg') {
+    else if (act === 'edit') again({ editing: true });
+    else if (act === 'cancel-edit') again();
+    else if (act === 'pause-' || act === 'pause+') {
+      const cur = ctx.me?.()?.pauseMin ?? 30;
+      const next = Math.max(0, Math.min(120, cur + (act === 'pause+' ? 5 : -5)));
+      ctx.setPauseMin?.(next);
+      const v = el.querySelector('#pauseVal');
+      if (v) v.textContent = fmtHours(next);
+    } else if (act === 'notworked') {
+      confirmDialog({ title: 'Niet gewerkt?', text: `Deze dag (${fmtDate(date)}) wordt leeggemaakt en telt als niet gewerkt. Je krijgt voor deze dag geen vragen meer. Je kan dit later nog ongedaan maken.`, ok: 'Ja, niet gewerkt', cancel: 'Terug' })
+        .then((ok) => {
+          if (!ok) return;
+          saveDay(ctx, username, date, { status: 'nietgewerkt', segments: [], segmentsEdited: true });
+          ctx.notWorked?.(date, true);
+          toast('Aangeduid als niet gewerkt', 'ok');
+          again();
+        });
+    } else if (act === 'del-seg') {
       segs.splice(Number(e.target.closest('.blk').dataset.i), 1);
       persistSegments(); draw();
     } else if (act === 'reset') {

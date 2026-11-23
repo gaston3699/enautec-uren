@@ -233,6 +233,61 @@ export function buildTimeline({ points, badges = [], sites, projects = [], plann
 }
 
 /**
+ * Antwoorden op de vragen (pushmeldingen) verwerken in het voorstel:
+ *  - "Aan het werk?" Nee → niets registreren voor die dag.
+ *  - "Aan het werk?" Ja bij een klant → de rit van thuis naar de klant telt als werk (verplaatsing);
+ *    in het atelier blijft die rit woon-werkverkeer (telt niet mee).
+ *  - Gekozen klant/project → op het blok waar de werknemer op dat moment was (en de rit ernaartoe).
+ *  - "Geen klant" → dat blok wordt pauze.
+ * Resultaat: { segs, declined } (declined = het antwoord "nee", of null)
+ */
+export function applyAnswers(segs, answers = []) {
+  const start = answers.filter((a) => a.kind === 'start' && a.answer).at(-1);
+  if (start?.answer.answer === 'nee') return { segs: [], declined: start };
+  const out = segs.map((s) => ({ ...s }));
+  const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
+  if (start?.answer.answer === 'ja' && (start.answer.siteType ?? start.siteType) !== 'atelier') {
+    const firstStay = out.find((s) => !TRAVEL.has(s.kind) && s.kind !== 'pauze');
+    for (const s of out) if (s.kind === 'woon-werk' && firstStay && s.end <= firstStay.start + MIN) s.kind = 'verplaatsing';
+  }
+  const picks = answers.filter((a) => a.answer && ((a.kind === 'start' && a.answer.answer === 'ja') || (a.kind === 'waar' && ['klant', 'geen'].includes(a.answer.answer))));
+  for (const a of picks) {
+    // blok waarin de werknemer toen was, of het eerste blok dat kort erna begint
+    let i = out.findIndex((s) => !TRAVEL.has(s.kind) && s.start <= a.ts + 5 * MIN && s.end > a.ts);
+    if (i < 0) i = out.findIndex((s) => !TRAVEL.has(s.kind) && s.start >= a.ts && s.start - a.ts <= 20 * MIN);
+    if (i < 0) continue;
+    const seg = out[i];
+    if (a.answer.answer === 'geen') { Object.assign(seg, { kind: 'pauze', projectId: null, candidates: [] }); continue; }
+    if (seg.kind === 'onbekend' || (a.answer.customerId && seg.kind !== 'atelier')) seg.kind = 'werk';
+    if (a.answer.siteId) seg.siteId = a.answer.siteId;
+    if (a.answer.projectId) {
+      seg.projectId = a.answer.projectId;
+      const prev = out[i - 1];
+      if (prev && TRAVEL.has(prev.kind) && prev.kind !== 'woon-werk') prev.projectId = a.answer.projectId;
+    }
+    seg.answered = true;
+  }
+  // pauze via de melding: van het bevestigen van "Pauze?" tot "Pauze voorbij?" (of de standaardpauze)
+  const p = answers.filter((a) => a.kind === 'pauze' && a.answer).at(-1);
+  if (p?.answer.answer === 'ja') {
+    const start = p.answer.at ?? p.answeredAt ?? p.ts;
+    const endA = answers.filter((a) => a.kind === 'pauze_einde' && a.answer?.answer === 'ja').at(-1);
+    const end = endA ? (endA.answer.at ?? endA.answeredAt) : start + (p.answer.pauseMin ?? 30) * MIN;
+    if (end > start) {
+      const cut = [];
+      for (const s of out) {
+        if (s.end <= start || s.start >= end) { cut.push(s); continue; }
+        if (s.start < start) cut.push({ ...s, end: start });
+        if (s.end > end) cut.push({ ...s, start: end });
+      }
+      cut.push({ start, end, kind: 'pauze', siteId: null, projectId: null, candidates: [], source: 'melding' });
+      return { segs: cut.sort((a, b) => a.start - b.start), declined: null, pause: { start, end } };
+    }
+  }
+  return { segs: out, declined: null };
+}
+
+/**
  * Afronden per kwartier (instelbaar). Een verblijf/verplaatsing die op de vorige aansluit,
  * deelt dezelfde afgeronde grens. Regels (standaard):
  *  - begin (start van de dag of na een pauze): tot 5 min na het kwartier naar beneden, daarna naar boven
