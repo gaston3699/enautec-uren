@@ -273,6 +273,13 @@ tr.total td { font-weight: 700; background: var(--surface2); }
 .check-list li.let { color: var(--warn); } .check-list li.let::before { content: '⚠'; }
 .check-list li.ok { color: var(--ok); } .check-list li.ok::before { content: '✓'; }
 .goal-line { font-size: 14px; margin: 4px 0; }
+.changes { border-left: 4px solid #d9a400; }
+.tab-badge { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 99px; background: var(--c-werf); color: #fff; font-size: 12px; text-align: center; margin-left: 4px; }
+.review { border: 1px solid var(--line); border-left: 4px solid var(--c-werf); border-radius: 10px; padding: 12px; margin-top: 10px; }
+.review select[data-f=target] { flex: 1; min-width: 200px; }
+.change-list { padding-left: 18px; margin: 8px 0 0; font-size: 14px; }
+.change-list li { margin: 3px 0; }
+.change-list li.add b { color: var(--ok); } .change-list li.del b { color: var(--red-text); } .change-list li.mod b:first-child { color: var(--warn); }
 
 /* Vragen (pushmeldingen) */
 .q-banner { display: flex; flex-direction: column; gap: 2px; background: var(--c-werf); color: #fff; text-decoration: none; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; box-shadow: var(--shadow); }

@@ -4,6 +4,7 @@ import { distance } from './geo.js';
 import { localTime, today } from './time.js';
 import { esc, uid, alive, byName, toast, projectLabel } from './ui.js';
 import { confirmDialog } from './update.js';
+import { workTypeOptions, newProjectDialog } from './projects.js';
 
 const b64uToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
 
@@ -111,7 +112,7 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
   if (q.kind === 'pauze' || q.kind === 'pauze_einde') return renderPause(el, { q, ctx, answer });
   const m = ctx.master();
   const customers = alive(m.customers).sort(byName);
-  const projects = alive(m.projects).filter((p) => p.active !== false);
+  let projects = alive(m.projects).filter((p) => p.active !== false);
   const here = q.lat != null ? { lat: q.lat, lon: q.lon } : null;
   // dichtstbijzijnde zone per klant
   const near = new Map();
@@ -134,7 +135,7 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
     const plannedHere = list.filter((p) => planned.includes(p.id));
     const pick = sel ?? plannedHere[0]?.id ?? (list.length === 1 ? list[0].id : null);
     return `<option value="">— ${list.length ? 'kies een project' : 'nog geen project voor deze klant'} —</option>
-      ${list.map((p) => `<option value="${esc(p.id)}" ${p.id === pick ? 'selected' : ''}>${esc(projectLabel(p, m))}${planned.includes(p.id) ? ' (gepland)' : ''}</option>`).join('')}`;
+      ${list.map((p) => `<option value="${esc(p.id)}" ${p.id === pick ? 'selected' : ''}>${esc(projectLabel(p, ctx.master()))}${planned.includes(p.id) ? ' (gepland)' : ''}</option>`).join('')}<option value="__new">+ Nieuw project…</option>`;
   };
 
   const title = q.kind === 'start' ? 'Aan het werk?' : 'Bij wie ben je?';
@@ -157,6 +158,7 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
         <p class="muted small">De app maakt meteen een locatie op de plek waar je nu bent, zodat je de volgende keer herkend wordt.</p>
       </details>
       <label class="q-field"><span>Project</span><select id="qProject">${projOptions(chosen, prev?.projectId)}</select></label>`}
+    <label class="q-field"><span>Type werk</span><select id="qWorkType">${workTypeOptions(m, prev?.workType ?? projects.find((p) => p.id === prev?.projectId)?.work_type)}</select></label>
     <div class="err-slot"></div>
     <div class="q-actions">
       ${q.kind === 'start' ? '<button class="primary big" data-act="ja">✔ Ja, aan het werk</button><button class="secondary" data-act="nee">Nee, ik werk vandaag niet</button>'
@@ -165,6 +167,18 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
   </section>`;
 
   const projSel = el.querySelector('#qProject');
+  const wtSel = el.querySelector('#qWorkType');
+  projSel.onchange = async () => {
+    if (projSel.value === '__new') {
+      const p = await newProjectDialog(ctx, { customerId: inAtelier ? null : chosen, siteId: inAtelier ? null : chosenSite, workType: wtSel.value || null });
+      projects = alive(ctx.master().projects).filter((x) => x.active !== false);
+      projSel.innerHTML = projOptions(inAtelier ? null : chosen, p?.id ?? null);
+      if (p) { projSel.value = p.id; if (p.work_type) wtSel.value = p.work_type; }
+      return;
+    }
+    const p = projects.find((x) => x.id === projSel.value);
+    if (p?.work_type && !wtSel.value) wtSel.value = p.work_type;
+  };
   const setCustomer = (cid, siteId) => {
     chosen = cid || null;
     chosenSite = siteId ?? near.get(chosen)?.site.id ?? null;
@@ -180,9 +194,11 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
     const name = el.querySelector('#qNewName')?.value.trim();
     if (!name) return null;
     const pname = el.querySelector('#qNewProj')?.value.trim();
-    const c = { id: uid(), name, updated: Date.now() };
+    // nieuw vanuit de werknemer: door de beheerder te bevestigen (of samen te voegen met een bestaande klant)
+    const by = ctx.me?.()?.username ?? null;
+    const c = { id: uid(), name, pending: true, created_by: by, created_at: Date.now(), updated: Date.now() };
     const s = here ? { id: uid(), type: 'klant', name, customer_id: c.id, lat: Number(here.lat.toFixed(6)), lon: Number(here.lon.toFixed(6)), radius_m: 150, active: true, from_customer: true, geo: 'gsm', address: '', updated: Date.now() } : null;
-    const p = pname ? { id: uid(), name: pname, customer_id: c.id, site_id: s?.id ?? null, active: true, updated: Date.now() } : null;
+    const p = pname ? { id: uid(), name: pname, customer_id: c.id, site_id: s?.id ?? null, work_type: el.querySelector('#qWorkType')?.value || null, active: true, pending: true, created_by: by, created_at: Date.now(), updated: Date.now() } : null;
     ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
       (mm.customers ??= []).push(c);
       if (s) (mm.sites ??= []).push(s);
@@ -204,7 +220,8 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
     const made = createCustomer();
     const body = {
       answer: act, siteType: inAtelier ? 'atelier' : made || chosen ? 'klant' : q.siteType,
-      customerId: made?.customerId ?? chosen, siteId: made?.siteId ?? (inAtelier ? q.siteId : chosenSite), projectId: made?.projectId ?? (projSel.value || null),
+      customerId: made?.customerId ?? chosen, siteId: made?.siteId ?? (inAtelier ? q.siteId : chosenSite),
+      projectId: made?.projectId ?? (projSel.value && projSel.value !== '__new' ? projSel.value : null), workType: wtSel.value || null,
     };
     if (!inAtelier && !body.customerId) return err('Kies een klant, of maak een nieuwe klant aan.');
     return answer(body);

@@ -1,13 +1,15 @@
 // Dagstaat: automatisch voorstel, aanpassen (tijdsblokken zoals Atree), materiaal en bevestigen.
-import { buildTimeline, summarize, roundSegments, applyAnswers, KINDS } from './engine.js';
+import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
-import { esc, uid, alive, projectLabel, byName, toast } from './ui.js';
+import { esc, uid, alive, projectLabel, byName, toast, resolveId } from './ui.js';
 import { confirmDialog } from './update.js';
+import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
 import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
 
 const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
+const WORKLIKE = new Set(['werk', 'atelier', 'leverancier']);
 const MIN = 60000;
 
 export const DEFAULT_RULES = {
@@ -39,8 +41,9 @@ export function proposal(master, planning, username, date, raw) {
     rules: rulesFrom(master),
     openEnd: date === today() ? Math.min(Date.now(), end) : end,
   });
-  // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken
-  return applyAnswers(segs, raw?.answers ?? []).segs;
+  // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken; samengevoegde projecten doorverwijzen
+  return applyAnswers(segs, raw?.answers ?? []).segs
+    .map((s) => (s.projectId ? { ...s, projectId: resolveId(master.projects, s.projectId) } : s));
 }
 
 /** Antwoordde de werknemer "Nee" op "Aan het werk?" */
@@ -65,6 +68,10 @@ export function dayState(ctx, username, date, raw) {
     note: rec?.note ?? '',
     summary: summarize(segments, rulesFrom(master)),
     hasRaw: !!raw,
+    auto,
+    // voor de beheerder: voorstel zoals het was bij het (eerste) bevestigen, en wie wanneer bevestigde/aanpaste
+    savedProposal: rec?.proposal ?? null,
+    log: rec?.log ?? [],
   };
 }
 
@@ -123,6 +130,38 @@ export function summaryHtml(st) {
     ${s.warnings.length && st.status !== 'bevestigd' && st.segments.length ? `<ul class="notice">${s.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}`;
 }
 
+/** Manuele aanpassingen van een bevestigde dag (voor de beheerder) */
+export function manualChanges(st) {
+  if (st.status !== 'bevestigd' || !st.savedProposal) return null;
+  return diffSegments(st.savedProposal, compactSegments(st.segments));
+}
+
+function changesHtml(st, master) {
+  const list = manualChanges(st);
+  if (!list) return '<section class="card"><h2>Manuele aanpassingen</h2><p class="muted">Geen gegevens: deze dag werd bevestigd vóór deze functie bestond.</p></section>';
+  const proj = (id) => (id ? projectLabel(master.projects.find((p) => p.id === id), master) || '?' : 'geen project');
+  const span = (s) => `${localTime(s.start)}–${localTime(s.end)}`;
+  const line = (c) => {
+    const k = KINDS[c.kind] ?? c.kind;
+    if (c.type === 'toegevoegd') return `<li class="add"><b>Toegevoegd:</b> ${esc(k)} ${span(c.to)}${c.to.projectId ? ` · ${esc(proj(c.to.projectId))}` : ''}</li>`;
+    if (c.type === 'verwijderd') return `<li class="del"><b>Verwijderd:</b> ${esc(KINDS[c.from.kind] ?? c.from.kind)} ${span(c.from)}</li>`;
+    const parts = [];
+    if (c.what.includes('begin')) parts.push(`begin ${localTime(c.from.start)} → <b>${localTime(c.to.start)}</b>`);
+    if (c.what.includes('einde')) parts.push(`einde ${localTime(c.from.end)} → <b>${localTime(c.to.end)}</b>`);
+    if (c.what.includes('soort')) parts.push(`soort ${esc(KINDS[c.from.kind] ?? c.from.kind)} → <b>${esc(k)}</b>`);
+    if (c.what.includes('project')) parts.push(`project ${esc(proj(c.from.projectId))} → <b>${esc(proj(c.to.projectId))}</b>`);
+    if (c.what.includes('km')) parts.push(`km ${c.from.km} → <b>${c.to.km}</b>`);
+    return `<li class="mod"><b>${esc(k)} ${span(c.to)}:</b> ${parts.join(', ')}</li>`;
+  };
+  const noAuto = st.savedProposal && !st.savedProposal.length;
+  return `<section class="card changes"><h2>Manuele aanpassingen ${list.length ? `<span class="pill warn">${list.length}</span>` : '<span class="pill ok">geen</span>'}</h2>
+    <p class="muted small">Vergelijking tussen het automatische voorstel (gsm en badges) en de bevestigde uren. Enkel zichtbaar voor de beheerder.</p>
+    ${noAuto ? '<p class="muted">Er was geen automatisch voorstel voor deze dag: alle uren werden manueel ingegeven.</p>' : ''}
+    ${list.length ? `<ul class="change-list">${list.map(line).join('')}</ul>` : noAuto ? '' : '<p class="ok-text">✓ Bevestigd zoals voorgesteld.</p>'}
+    ${st.log.length ? `<details><summary>Historiek</summary><ul class="change-list">${st.log.map((l) => `<li>${esc(new Date(l.ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}: ${esc(l.action)} door ${esc(l.by)}${l.changes ? ` (${l.changes} aanpassing${l.changes > 1 ? 'en' : ''})` : ''}</li>`).join('')}</ul></details>` : ''}
+  </section>`;
+}
+
 const ICON = { werf: '⛑️', atelier: '🏭', verpl: '🚗', pauze: '☕', onbekend: '❓' };
 const SUB = {
   werk: 'Gewerkte uren bij de klant', atelier: 'Gewerkte uren in het atelier', leverancier: 'Materiaal halen',
@@ -135,9 +174,9 @@ const SUB = {
  */
 export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawError = '', editing = false }) {
   const st = dayState(ctx, username, date, raw);
-  const master = st.master;
+  let master = st.master;
   const rules = rulesFrom(master);
-  const again = (extra = {}) => renderDay(el, { ctx, username, date, raw, asAdmin, rawError, ...extra });
+  const again =(extra = {}) => renderDay(el, { ctx, username, date, raw, asAdmin, rawError, ...extra });
 
   // De beheerder ziet enkel bevestigde uren (voorstellen en open dagen blijven bij de werknemer)
   if (asAdmin && st.status !== 'bevestigd' && !editing) {
@@ -163,10 +202,19 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   const pauseMin = ctx.me?.()?.pauseMin ?? 30;
   // voorstel van de app: tijden in blauw/schuin tot je ze aanpast
   const allAuto = !st.edited && st.status !== 'bevestigd';
-  let segs = st.segments.map((s) => ({ ...s, candidates: s.candidates ?? [], ...(allAuto ? { auto: { start: true, end: true } } : {}) }));
+  const dfltType = defaultWorkType(master);
+  let segs = st.segments.map((s) => ({
+    ...s, candidates: s.candidates ?? [], ...(allAuto ? { auto: { start: true, end: true } } : {}),
+    ...(!readonly && WORKLIKE.has(s.kind) && !s.workType ? { workType: dfltType } : {}),
+  }));
   let material = st.material.map((m) => ({ ...m }));
-  const projects = alive(master.projects).filter((p) => p.active !== false);
+  let projects = alive(master.projects).filter((p) => p.active !== false);
   const sitesById = new Map(master.sites.map((s) => [s.id, s]));
+  /** Na het aanmaken van een project: lijsten opnieuw inlezen */
+  const refreshMaster = () => {
+    master = ctx.master();
+    projects = alive(master.projects).filter((p) => p.active !== false);
+  };
   const articles = alive(master.articles).filter((a) => a.active !== false).sort(byName);
   const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date);
   const dayGoal = (rules.dayHours ?? 8) * 60;
@@ -184,7 +232,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const current = sel && !projects.some((p) => p.id === sel) ? master.projects.find((p) => p.id === sel) : null;
     return `<option value="">— geen project —</option>${current ? opt(current) : ''}
       ${first.length ? `<optgroup label="Voorgesteld">${first.map(opt).join('')}</optgroup>` : ''}
-      <optgroup label="Alle projecten">${rest.map(opt).join('')}</optgroup>`;
+      <optgroup label="Alle projecten">${rest.map(opt).join('')}</optgroup>
+      <option value="__new">+ Nieuw project…</option>`;
   }
 
   function segHtml(s, i) {
@@ -206,7 +255,9 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       <div class="blk-time">${timeInput('start')}<span aria-hidden="true">→</span>${timeInput('end')}
         <span class="dur ${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</span>
         ${TRAVEL.has(s.kind) ? `<label class="muted small km">km <input type="number" inputmode="decimal" step="0.1" min="0" data-f="km" value="${s.km ?? ''}" style="width:5em" ${dis}></label>` : ''}</div>
-      ${readonly || s.kind === 'pauze' ? '' : `<div class="blk-more"><select class="full ${s.kind === 'werk' && !s.projectId ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select></div>`}
+      ${readonly || s.kind === 'pauze' ? '' : `<div class="blk-more"><select class="${WORKLIKE.has(s.kind) ? '' : 'full'} ${s.kind === 'werk' && !s.projectId ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select>
+        ${WORKLIKE.has(s.kind) ? `<select data-f="workType" aria-label="Type werk">${workTypeOptions(master, s.workType)}</select>` : ''}</div>`}
+      ${readonly && s.workType ? `<div class="blk-msg muted">${esc(workTypeName(master, s.workType))}</div>` : ''}
       ${readonly ? '' : `<details class="blk-more-wrap" style="grid-column:1/-1" ${s.kind === 'onbekend' ? 'open' : ''}><summary class="small muted">Soort, opmerking, verwijderen</summary>
         <div class="blk-more">
           <select data-f="kind" aria-label="Soort">${kinds}</select>
@@ -268,6 +319,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
         ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
       </section>
+      ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
       <section class="card">
         <h2>Controle van de dag</h2>
         <div class="goal-line"><b>${fmtHours(tot.work)} netto</b> <span class="muted">(verplaatsing ${fmtHours(tot.verpl)}${tot.pauze ? ` · pauze ${fmtHours(tot.pauze)}` : ''})</span></div>
@@ -325,6 +377,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     segs.push({
       start, end, kind, candidates: [], siteId: null, auto: { start: true, end: true },
       projectId: kind === 'pauze' ? null : prevWork?.projectId ?? planned[0]?.projectId ?? null,
+      workType: WORKLIKE.has(kind) ? [...sorted].reverse().find((s) => s.workType)?.workType ?? dfltType : null,
     });
     persistSegments(); draw();
     const box = el.querySelector(`.blk[data-i="${segs.length - 1}"] input.t[data-f=end]`);
@@ -381,20 +434,48 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           for (const o of segs) if (o !== s && o.end === old && ts > o.start) o.end = ts;
         }
       } else if (f === 'km') s.km = t.value === '' ? null : Number(t.value);
-      else if (f === 'projectId') {
+      else if (f === 'workType') s.workType = t.value || null;
+      else if (f === 'projectId' && t.value === '__new') {
+        const site = sitesById.get(s.siteId);
+        newProjectDialog(ctx, { customerId: site?.customer_id ?? null, siteId: site?.id ?? null, workType: s.workType }).then((p) => {
+          refreshMaster();
+          if (p) {
+            s.projectId = p.id;
+            if (p.work_type && !s.workType && WORKLIKE.has(s.kind)) s.workType = p.work_type;
+            toast(`Project "${p.name}" aangemaakt`, 'ok');
+            persistSegments();
+          }
+          draw();
+        });
+        return;
+      } else if (f === 'projectId') {
         s.projectId = t.value || null;
+        const p = projects.find((x) => x.id === s.projectId);
+        if (p?.work_type && !s.workType && WORKLIKE.has(s.kind)) s.workType = p.work_type;
         if (s.kind === 'werk' && s.projectId) {
           const sorted = [...segs].sort((a, b) => a.start - b.start);
           const k = sorted.indexOf(s);
           for (const n of [sorted[k - 1], sorted[k + 1]]) if (n && TRAVEL.has(n.kind) && !n.projectId) n.projectId = s.projectId;
         }
-      } else if (f === 'kind') s.kind = t.value;
+      } else if (f === 'kind') {
+        s.kind = t.value;
+        if (WORKLIKE.has(s.kind) && !s.workType) s.workType = dfltType;
+      }
       else s[f] = t.value;
       persistSegments();
       if (f !== 'note' && f !== 'km') draw();
       return;
     }
     const m = t.closest('.mat');
+    if (m && t.dataset.mf === 'projectId' && t.value === '__new') {
+      const item = material[Number(m.dataset.m)];
+      newProjectDialog(ctx, {}).then((p) => {
+        refreshMaster();
+        if (p) { item.projectId = p.id; persistMaterial(); }
+        draw();
+      });
+      return;
+    }
     if (m && t.dataset.mf && t.dataset.mf !== 'description') {
       const item = material[Number(m.dataset.m)];
       item[t.dataset.mf] = t.dataset.mf === 'qty' ? (t.value === '' ? null : Number(t.value)) : t.value || null;
@@ -461,10 +542,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       if (err) { slot.innerHTML = `<div class="error">${esc(err)}</div>`; return; }
       if (!segs.length && !confirm('Er staan geen blokken op deze dag. Toch bevestigen?')) return;
       material = material.filter((m) => m.description);
+      const finalSegs = [...segs].sort((a, b) => a.start - b.start).map(({ candidates, ...s }) => s);
+      // automatisch voorstel bewaren (enkel bij de eerste keer bevestigen) om manuele aanpassingen te tonen aan de beheerder
+      const proposalSaved = st.savedProposal ?? compactSegments(st.auto ?? []);
+      const changes = diffSegments(proposalSaved, compactSegments(finalSegs)).length;
+      const me = ctx.me?.() ?? {};
       saveDay(ctx, username, date, {
-        segments: [...segs].sort((a, b) => a.start - b.start).map(({ candidates, ...s }) => s),
+        segments: finalSegs,
         material, segmentsEdited: true, status: 'bevestigd', confirmedAt: Date.now(),
         note: el.querySelector('#daynote')?.value ?? '',
+        proposal: proposalSaved, ...(st.savedProposal ? {} : { autoAvailable: !!raw }),
+        log: [...st.log, { ts: Date.now(), by: me.username ?? (asAdmin ? 'beheerder' : username), action: editingConfirmed ? 'aangepast na bevestiging' : 'bevestigd', changes }].slice(-30),
       });
       toast(`Dag bevestigd: ${fmtDate(date)}`, 'ok');
       renderDay(el, { ctx, username, date, raw, asAdmin, rawError });

@@ -3,6 +3,7 @@ import { KINDS, isWorkKind } from './engine.js';
 import { localTime, datesBetween } from './time.js';
 import { alive } from './ui.js';
 import { rulesFrom } from './day.js';
+import { workTypeName } from './projects.js';
 
 const EXCELJS = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
 
@@ -51,6 +52,7 @@ export function collect(master, regs, from, to) {
           date, employee: name, start: s.start, end: s.end, kind: s.kind, km: s.km ?? null, note: s.note ?? '',
           site: site.get(s.siteId)?.name ?? '', projectCode: p?.code ?? '', project: p?.name ?? '',
           customer: cust.get(p?.customer_id)?.name ?? '',
+          workType: workTypeName(master, s.workType ?? p?.work_type) || '',
         });
       }
       for (const m of d.material ?? []) {
@@ -80,10 +82,10 @@ export async function buildWorkbook(master, regs, from, to) {
 
   // 1. Per project: uren, km en materiaal (facturatie)
   const per = new Map();
-  const keyOf = (r) => `${r.customer}|${r.projectCode}|${r.project}`;
+  const keyOf = (r) => `${r.customer}|${r.projectCode}|${r.project}|${r.workType ?? ''}`;
   for (const r of rows) {
     if (!r.project) continue;
-    const p = per.get(keyOf(r)) ?? { customer: r.customer, projectCode: r.projectCode, project: r.project, werk: 0, reis: 0, km: 0, mat: 0 };
+    const p = per.get(keyOf(r)) ?? { customer: r.customer, projectCode: r.projectCode, project: r.project, workType: r.workType ?? '', werk: 0, reis: 0, km: 0, mat: 0 };
     if (r.kind === 'verplaatsing' || r.kind === 'woon-werk') p.reis += r.end - r.start;
     else if (r.kind !== 'pauze') p.werk += r.end - r.start;
     p.km += r.km ?? 0;
@@ -91,15 +93,19 @@ export async function buildWorkbook(master, regs, from, to) {
   }
   for (const m of mats) {
     if (!m.project) continue;
-    const p = per.get(keyOf(m)) ?? { customer: m.customer, projectCode: m.projectCode, project: m.project, werk: 0, reis: 0, km: 0, mat: 0 };
+    // materiaal bij de eerste regel van hetzelfde project (los van het type werk)
+    const pre = `${m.customer}|${m.projectCode}|${m.project}|`;
+    const k = [...per.keys()].find((x) => x.startsWith(pre)) ?? keyOf(m);
+    const p = per.get(k) ?? { customer: m.customer, projectCode: m.projectCode, project: m.project, workType: '', werk: 0, reis: 0, km: 0, mat: 0 };
     p.mat += 1;
-    per.set(keyOf(m), p);
+    per.set(k, p);
   }
   const prj = wb.addWorksheet('Per project');
   prj.columns = [
     { header: 'Klant', key: 'customer', width: 26 },
     { header: 'Projectcode', key: 'projectCode', width: 13 },
     { header: 'Project', key: 'project', width: 30 },
+    { header: 'Type werk', key: 'workType', width: 20 },
     { header: 'Werkuren', key: 'werk', width: 10 },
     { header: 'Reisuren', key: 'reis', width: 10 },
     { header: 'Km', key: 'km', width: 8 },
@@ -140,6 +146,7 @@ export async function buildWorkbook(master, regs, from, to) {
     { header: 'Klant', key: 'customer', width: 24 },
     { header: 'Projectcode', key: 'projectCode', width: 13 },
     { header: 'Project', key: 'project', width: 26 },
+    { header: 'Type werk', key: 'workType', width: 20 },
     { header: 'Locatie', key: 'site', width: 22 },
     { header: 'Opmerking', key: 'note', width: 30 },
   ];

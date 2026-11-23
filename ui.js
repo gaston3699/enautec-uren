@@ -23,10 +23,22 @@ export const alive = (list = []) => list.filter((x) => !x.deleted);
 
 export const byName = (a, b) => String(a.name ?? '').localeCompare(String(b.name ?? ''), 'nl');
 
+/** Id van een samengevoegd project/klant doorverwijzen naar het bestaande (merged_into) */
+export function resolveId(list = [], id) {
+  let cur = id;
+  for (let i = 0; i < 5 && cur; i++) {
+    const r = list.find((x) => x.id === cur);
+    if (!r?.merged_into) break;
+    cur = r.merged_into;
+  }
+  return cur;
+}
+
 export function projectLabel(p, master) {
   if (!p) return '';
-  const c = master.customers.find((x) => x.id === p.customer_id);
-  return [c?.name, p.code, p.name].filter(Boolean).join(' · ');
+  if (p.merged_into) p = master.projects.find((x) => x.id === resolveId(master.projects, p.id)) ?? p;
+  const c = master.customers.find((x) => x.id === resolveId(master.customers, p.customer_id));
+  return [c?.name, p.code, p.name].filter(Boolean).join(' · ') + (p.pending || c?.pending ? ' (nieuw)' : '');
 }
 
 export async function copyText(text) {

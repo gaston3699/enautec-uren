@@ -260,6 +260,7 @@ export function applyAnswers(segs, answers = []) {
     if (a.answer.answer === 'geen') { Object.assign(seg, { kind: 'pauze', projectId: null, candidates: [] }); continue; }
     if (seg.kind === 'onbekend' || (a.answer.customerId && seg.kind !== 'atelier')) seg.kind = 'werk';
     if (a.answer.siteId) seg.siteId = a.answer.siteId;
+    if (a.answer.workType) seg.workType = a.answer.workType;
     if (a.answer.projectId) {
       seg.projectId = a.answer.projectId;
       const prev = out[i - 1];
@@ -286,6 +287,42 @@ export function applyAnswers(segs, answers = []) {
   }
   return { segs: out, declined: null };
 }
+
+/**
+ * Manuele aanpassingen: het automatische voorstel vergelijken met wat bevestigd werd.
+ * Blokken worden gekoppeld op de grootste overlap. Resultaat (in volgorde van tijd):
+ *  { type: 'toegevoegd' | 'verwijderd' | 'gewijzigd', kind, from: {start,end,kind,projectId}, to: {...}, what: [...] }
+ *  what: 'begin', 'einde', 'soort', 'project', 'km'
+ */
+export function diffSegments(proposalSegs = [], finalSegs = []) {
+  const P = proposalSegs.map((s, i) => ({ s, i }));
+  const F = finalSegs.map((s, i) => ({ s, i }));
+  const pairs = [];
+  for (const p of P) for (const f of F) {
+    const ov = Math.min(p.s.end, f.s.end) - Math.max(p.s.start, f.s.start);
+    if (ov > 0) pairs.push({ p, f, ov: ov + (p.s.kind === f.s.kind ? 1 : 0) });
+  }
+  pairs.sort((a, b) => b.ov - a.ov);
+  const usedP = new Set(); const usedF = new Set();
+  const out = [];
+  for (const { p, f } of pairs) {
+    if (usedP.has(p.i) || usedF.has(f.i)) continue;
+    usedP.add(p.i); usedF.add(f.i);
+    const what = [];
+    if (Math.abs(p.s.start - f.s.start) >= MIN) what.push('begin');
+    if (Math.abs(p.s.end - f.s.end) >= MIN) what.push('einde');
+    if (p.s.kind !== f.s.kind) what.push('soort');
+    if (p.s.projectId && f.s.projectId !== p.s.projectId) what.push('project');
+    if (p.s.km != null && f.s.km != null && Math.abs(p.s.km - f.s.km) >= 0.5) what.push('km');
+    if (what.length) out.push({ type: 'gewijzigd', kind: f.s.kind, from: p.s, to: f.s, what });
+  }
+  for (const p of P) if (!usedP.has(p.i)) out.push({ type: 'verwijderd', kind: p.s.kind, from: p.s, to: null, what: [] });
+  for (const f of F) if (!usedF.has(f.i)) out.push({ type: 'toegevoegd', kind: f.s.kind, from: null, to: f.s, what: [] });
+  return out.sort((a, b) => (a.to ?? a.from).start - (b.to ?? b.from).start);
+}
+
+/** Enkel wat nodig is om later te vergelijken (bewaard bij het bevestigen) */
+export const compactSegments = (segs) => segs.map(({ start, end, kind, projectId = null, siteId = null, km = null }) => ({ start, end, kind, projectId, siteId, km }));
 
 /**
  * Afronden per kwartier (instelbaar). Een verblijf/verplaatsing die op de vorige aansluit,

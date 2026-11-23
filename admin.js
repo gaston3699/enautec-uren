@@ -1,11 +1,12 @@
 // Beheer: dagoverzicht, stamgegevens, planning, export naar facturatie en instellingen.
 import { PATHS, EMPTY_MASTER } from './store.js';
-import { renderDay, dayState, emptyReg } from './day.js';
+import { renderDay, dayState, emptyReg, manualChanges } from './day.js';
 import { buildWorkbook } from './export.js';
-import { today, shiftDate, fmtDate, fmtHours, localTime, isDate } from './time.js';
+import { today, shiftDate, fmtDate, fmtHours, localTime, isDate, localDate as localDateOf } from './time.js';
 import { parseLatLon, distance } from './geo.js';
 import { geocode, addressLine, splitAddress } from './geocode.js';
 import { readTable } from './xlsx.js';
+import { workTypesOf, DEFAULT_WORK_TYPES, similarTo, workTypeOptions } from './projects.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Leverancier', thuis: 'Thuisadres werknemer' };
@@ -61,8 +62,14 @@ const ENTITIES = {
       { k: 'name', label: 'Naam', req: true },
       { k: 'customer_id', label: 'Klant', type: 'select', options: (m) => alive(m.customers).sort(byName) },
       { k: 'site_id', label: 'Werf', type: 'select', options: (m) => alive(m.sites).filter((s) => s.type === 'klant').sort(byName) },
+      { k: 'work_type', label: 'Type werk', type: 'select', options: (m) => workTypesOf(m) },
       { k: 'active', label: 'Actief', type: 'bool' },
     ],
+  },
+  workTypes: {
+    title: 'Soorten werk', newLabel: 'Nieuw soort werk',
+    help: 'Werknemers kiezen bij elk tijdsblok welk soort werk ze deden (bv. elektrische werken, elektrisch tekenen, software). Dat komt mee in de export.',
+    fields: [{ k: 'name', label: 'Naam', req: true }, { k: 'active', label: 'Actief', type: 'bool' }],
   },
   articles: {
     title: 'Artikels', newLabel: 'Nieuw artikel',
@@ -130,10 +137,11 @@ export class Admin {
     this.el = el;
     this.tab = tab;
     if (tab !== 'overzicht') clearInterval(this.ovTimer);
-    const tabs = { overzicht: 'Dagoverzicht', planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
+    const n = this.pendingCount();
+    const tabs = { overzicht: 'Dagoverzicht', nieuw: `Te bevestigen${n ? ` <span class="tab-badge">${n}</span>` : ''}`, planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', workTypes: 'Soorten werk', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
     el.innerHTML = `<nav class="tabs" aria-label="Beheer">${Object.entries(tabs).map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav><div id="adminView"></div>`;
     const view = el.querySelector('#adminView');
-    const fn = { overzicht: this.overview, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
+    const fn = { overzicht: this.overview, nieuw: this.review, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
     Promise.resolve().then(() => (fn ? fn.call(this, view) : this.entity(view, tab)))
       .catch((e) => { view.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
   }
@@ -142,6 +150,10 @@ export class Admin {
   entity(view, name, edit = null) {
     const ent = ENTITIES[name];
     if (!ent) { view.innerHTML = '<p>Onbekend tabblad.</p>'; return; }
+    // eerste keer: de standaard soorten werk in de stamgegevens zetten, zodat ze aanpasbaar zijn
+    if (name === 'workTypes' && !(this.ctx.master().workTypes ?? []).length) {
+      this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => { mm.workTypes = DEFAULT_WORK_TYPES.map((w) => ({ ...w, active: true, updated: Date.now() })); });
+    }
     const m = this.ctx.master();
     const rows = alive(m[name]).sort(byName);
     view.innerHTML = `
@@ -302,6 +314,133 @@ export class Admin {
       this.entity(view, name);
     });
     if (name === 'employees' && !edit) this.syncAdminFlags(view);
+  }
+
+  // ---------- Te bevestigen: nieuwe klanten en projecten van werknemers ----------
+  pendingCount() {
+    const m = this.ctx.master();
+    return alive(m.customers).filter((c) => c.pending).length + alive(m.projects).filter((p) => p.pending).length;
+  }
+
+  review(view) {
+    const m = this.ctx.master();
+    const emps = alive(m.employees);
+    const who = (r) => `${esc(emps.find((e) => e.username === r.created_by)?.name ?? r.created_by ?? 'onbekend')}${r.created_at ? ` · ${esc(fmtDate(localDateOf(r.created_at), { day: 'numeric', month: 'short' }))}` : ''}`;
+    const pc = alive(m.customers).filter((c) => c.pending).sort(byName);
+    const pp = alive(m.projects).filter((p) => p.pending).sort(byName);
+    const okCust = alive(m.customers).filter((c) => !c.pending).sort(byName);
+    const okProj = alive(m.projects).filter((p) => !p.pending);
+    const custOpts = (sel) => alive(m.customers).sort(byName).map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}${c.pending ? ' (nieuw)' : ''}</option>`).join('');
+    const mergeSelect = (list, name, label) => {
+      const sim = similarTo(list, name);
+      const rest = list.filter((x) => !sim.includes(x)).sort((a, b) => label(a).localeCompare(label(b), 'nl'));
+      return `<select data-f="target"><option value="">— samenvoegen met… —</option>
+        ${sim.length ? `<optgroup label="Lijkt op">${sim.map((x) => `<option value="${esc(x.id)}">${esc(label(x))}</option>`).join('')}</optgroup>` : ''}
+        <optgroup label="Alle">${rest.map((x) => `<option value="${esc(x.id)}">${esc(label(x))}</option>`).join('')}</optgroup></select>`;
+    };
+    const card = (kind, r, body, sim) => `<div class="review" data-kind="${kind}" data-id="${esc(r.id)}">
+      <div class="row spread"><b>${esc(r.name)}</b><span class="muted small">aangemaakt door ${who(r)}</span></div>
+      ${sim.length ? `<p class="warn-text">Lijkt op: ${sim.slice(0, 3).map((x) => `<b>${esc(kind === 'projects' ? projectLabel(x, m) : x.name)}</b>`).join(', ')}</p>` : ''}
+      <div class="form-grid">${body}</div>
+      <div class="row" style="margin-top:8px"><button class="primary" data-act="confirm">✔ Bevestigen</button>
+        ${kind === 'projects' ? mergeSelect(okProj, r.name, (x) => projectLabel(x, m)) : mergeSelect(okCust, r.name, (x) => x.name)}
+        <button class="secondary" data-act="merge">Samenvoegen</button></div></div>`;
+    view.innerHTML = `<section class="card"><h2>Te bevestigen</h2>
+      <p class="muted">Klanten en projecten die werknemers zelf aanmaakten (in de app of via een melding). Pas de naam aan of vul aan en <b>bevestig</b>, of <b>voeg samen</b> met een bestaande klant of een bestaand project: dan worden alle uren, materiaal en planning mee omgezet.</p>
+      ${pc.length + pp.length ? '' : '<p class="ok-text">✓ Niets te bevestigen.</p>'}</section>
+      ${pc.length ? `<section class="card"><h2>Nieuwe klanten (${pc.length})</h2>${pc.map((c) => card('customers', c,
+        `<label><span>Naam klant</span><input data-f="name" value="${esc(c.name)}"></label>
+         <label><span>Opmerking</span><input data-f="note" value="${esc(c.note ?? '')}"></label>`, similarTo(okCust, c.name))).join('')}</section>` : ''}
+      ${pp.length ? `<section class="card"><h2>Nieuwe projecten (${pp.length})</h2>${pp.map((p) => card('projects', p,
+        `<label><span>Naam project</span><input data-f="name" value="${esc(p.name)}"></label>
+         <label><span>Projectcode</span><input data-f="code" value="${esc(p.code ?? '')}"></label>
+         <label><span>Klant</span><select data-f="customer_id"><option value="">— geen klant —</option>${custOpts(p.customer_id)}</select></label>
+         <label><span>Type werk</span><select data-f="work_type">${workTypeOptions(m, p.work_type)}</select></label>`,
+        similarTo(okProj.filter((x) => !p.customer_id || x.customer_id === p.customer_id || !x.customer_id), p.name))).join('')}</section>` : ''}`;
+
+    view.onclick = async (e) => {
+      const btn = e.target.closest('[data-act]');
+      const box = e.target.closest('.review');
+      if (!btn || !box) return;
+      const kind = box.dataset.kind;
+      const id = box.dataset.id;
+      const val = (f) => box.querySelector(`[data-f=${f}]`)?.value.trim() ?? '';
+      if (btn.dataset.act === 'confirm') {
+        if (!val('name')) return toast('Geef een naam.', 'err');
+        this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+          const r = mm[kind].find((x) => x.id === id);
+          if (!r) return;
+          r.name = val('name');
+          if (kind === 'customers') r.note = val('note') || null;
+          else { r.code = val('code'); r.customer_id = val('customer_id') || null; r.work_type = val('work_type') || null; }
+          // de locatie die bij een nieuwe klant gemaakt werd, krijgt de nieuwe naam mee
+          if (kind === 'customers') for (const s of mm.sites ?? []) if (s.from_customer && s.customer_id === id) s.name = r.name;
+          delete r.pending;
+          r.confirmed_at = Date.now();
+          r.updated = Date.now();
+        });
+        toast('Bevestigd', 'ok');
+        this.render(this.el, 'nieuw');
+      } else if (btn.dataset.act === 'merge') {
+        const target = val('target');
+        if (!target) return toast('Kies eerst met wie je wil samenvoegen.', 'err');
+        const tName = kind === 'projects' ? projectLabel(m.projects.find((x) => x.id === target), m) : m.customers.find((x) => x.id === target)?.name;
+        if (!confirm(`"${box.querySelector('b').textContent}" samenvoegen met "${tName}"? Alle uren, materiaal en planning gaan naar "${tName}".`)) return;
+        btn.disabled = true;
+        try {
+          const n = await this.mergeInto(kind, id, target);
+          toast(`Samengevoegd${n ? ` (${n} dag${n > 1 ? 'en' : ''} aangepast)` : ''}`, 'ok');
+        } catch (e2) { toast(e2.message, 'err'); }
+        this.render(this.el, 'nieuw');
+      }
+    };
+  }
+
+  /**
+   * Klant of project samenvoegen met een bestaande: alle verwijzingen omzetten (uren, materiaal, planning,
+   * projecten en locaties van de klant). Het oude record blijft bewaard met merged_into (doorverwijzing).
+   */
+  async mergeInto(kind, fromId, toId) {
+    const m = this.ctx.master();
+    const from = m[kind].find((x) => x.id === fromId);
+    const startMonth = localDateOf(Math.min(from?.created_at ?? Date.now(), Date.now()) - 7 * 86400000).slice(0, 7);
+    const months = [];
+    for (let mo = startMonth; mo <= today().slice(0, 7); mo = shiftDate(`${mo}-01`, 32).slice(0, 7)) months.push(mo);
+    const paths = alive(m.employees).flatMap((e) => months.map((mo) => PATHS.reg(mo, e.username)));
+    await this.ctx.store.sync([PATHS.master, PATHS.planning, ...paths]);
+    let days = 0;
+    if (kind === 'projects') {
+      const fix = (x) => { if (x.projectId === fromId) { x.projectId = toId; return true; } return false; };
+      for (const p of paths) {
+        if (!this.ctx.store.has(p)) continue;
+        const reg = this.ctx.store.get(p, null);
+        const hit = Object.values(reg?.days ?? {}).some((d) => [...(d.segments ?? []), ...(d.material ?? [])].some((x) => x.projectId === fromId));
+        if (!hit) continue;
+        this.ctx.store.change(p, null, (r) => {
+          for (const d of Object.values(r.days ?? {})) {
+            let changed = false;
+            for (const x of [...(d.segments ?? []), ...(d.material ?? [])]) changed = fix(x) || changed;
+            if (changed) { d.updated = Date.now(); days++; }
+          }
+        });
+      }
+      if (this.ctx.store.has(PATHS.planning)) {
+        this.ctx.store.change(PATHS.planning, { items: [] }, (pl) => {
+          for (const it of pl.items ?? []) if (it.projectId === fromId) { it.projectId = toId; it.updated = Date.now(); }
+        });
+      }
+    }
+    this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+      const r = mm[kind].find((x) => x.id === fromId);
+      if (r) Object.assign(r, { deleted: true, merged_into: toId, pending: false, updated: Date.now() });
+      if (kind === 'customers') {
+        const target = mm.customers.find((x) => x.id === toId);
+        for (const p of mm.projects ?? []) if (p.customer_id === fromId) { p.customer_id = toId; p.updated = Date.now(); }
+        // de locatie op de plek van de werknemer blijft, als extra zone van de bestaande klant
+        for (const s of mm.sites ?? []) if (s.customer_id === fromId) { s.customer_id = toId; s.name = target?.name ?? s.name; s.updated = Date.now(); }
+      }
+    });
+    return days;
   }
 
   // ---------- Klanten: locatie en import ----------
@@ -543,7 +682,7 @@ export class Admin {
     view.querySelector('#ovTable').innerHTML = `
       ${rawErr ? `<p class="muted">⚠ ${esc(rawErr)}</p>` : ''}
       <p class="muted small live-note">● Live · bijgewerkt ${localTime(Date.now())}</p>
-      <table><thead><tr><th>Werknemer</th><th>Status</th><th>Van – tot</th><th>Arbeidstijd</th><th>Km</th><th>Materiaal</th><th>Aandachtspunten</th></tr></thead><tbody>
+      <table><thead><tr><th>Werknemer</th><th>Status</th><th>Van – tot</th><th>Arbeidstijd</th><th>Km</th><th>Materiaal</th><th>Manueel aangepast</th></tr></thead><tbody>
       ${rows.map(({ e, st }) => {
         const ok = st.status === 'bevestigd';
         return `<tr class="click" data-emp="${esc(e.username)}">
@@ -553,7 +692,7 @@ export class Admin {
         <td>${ok ? fmtHours(st.summary.workMinutes) : ''}</td>
         <td>${ok ? st.summary.km : ''}</td>
         <td>${ok ? st.material.length || '' : ''}</td>
-        <td class="muted"></td></tr>`;
+        <td>${(() => { const ch = ok ? manualChanges(st) : null; return ch == null ? '' : ch.length ? `<span class="pill warn">${ch.length}</span>` : '<span class="muted">nee</span>'; })()}</td></tr>`;
       }).join('')}
       </tbody></table>`;
     const showDay = (u, scroll) => {
