@@ -20,6 +20,7 @@ const ENTITIES = {
       { k: 'username', label: 'Gebruikersnaam', req: true, help: 'kleine letters, bv. ruben' },
       { k: 'password', label: 'Nieuw wachtwoord', type: 'password', noList: true, help: 'leeg = ongewijzigd (vergeten? stel hier een nieuw in)' },
       { k: 'loxone_user', label: 'Loxone-gebruiker' },
+      { k: 'start_date', label: 'Uren tellen vanaf', type: 'date', noList: true, help: 'leeg = eerste ingegeven dag' },
       { k: 'is_admin', label: 'Beheerder', type: 'bool', def: false },
       { k: 'has_password', label: 'Wachtwoord', type: 'bool', def: false, noForm: true },
       { k: 'active', label: 'Actief', type: 'bool' },
@@ -104,7 +105,7 @@ function fieldInput(f, row, m) {
     // zichtbaar voor de beheerder, zodat die het meteen kan doorgeven
     return `<span class="row"><input name="${f.k}" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" minlength="8" placeholder="${esc(f.help ?? '')}"><button type="button" class="secondary" data-act="genpw">Genereer</button></span>`;
   }
-  return `<input name="${f.k}" ${f.type === 'number' ? 'type="number" step="any"' : ''} value="${esc(v ?? f.def ?? '')}" ${f.req ? 'required' : ''} placeholder="${esc(f.help ?? '')}">`;
+  return `<input name="${f.k}" ${f.type === 'number' ? 'type="number" step="any"' : f.type === 'date' ? 'type="date"' : ''} value="${esc(v ?? f.def ?? '')}" ${f.req ? 'required' : ''} placeholder="${esc(f.help ?? '')}">`;
 }
 
 export class Admin {

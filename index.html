@@ -158,6 +158,117 @@ input:disabled, select:disabled { background: var(--surface2); color: var(--fg);
   .seg-grid input[type=time] { width: 100%; }
 }
 
+/* Kleuren voor uren (zoals Atree): werk bij klant rood, atelier donker, verplaatsing grijs gearceerd */
+:root { --c-werf: #d7262e; --c-werf-hi: #ff5a5f; --c-atelier: #3d3d3d; --c-verpl: #8a8a8a; --c-pauze: #cfcfca; --c-exp: #e4e3de; --c-track: #ecebe6; --c-auto: #2a6fb0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --c-atelier: #b9b9b5; --c-verpl: #6e6e6b; --c-pauze: #4a4a47; --c-exp: #34332f; --c-track: #262624; --c-auto: #7fb2ea; } }
+:root[data-theme="dark"] { --c-atelier: #b9b9b5; --c-verpl: #6e6e6b; --c-pauze: #4a4a47; --c-exp: #34332f; --c-track: #262624; --c-auto: #7fb2ea; }
+.c-werf { background: linear-gradient(180deg, var(--c-werf-hi), var(--c-werf)); }
+.c-atelier { background: var(--c-atelier); }
+.c-verpl { background: repeating-linear-gradient(45deg, var(--c-verpl) 0 5px, color-mix(in srgb, var(--c-verpl) 70%, #fff) 5px 8px); }
+.c-pauze { background: var(--c-pauze); }
+.c-onbekend { background: repeating-linear-gradient(45deg, #d9a400 0 5px, #f2d06b 5px 8px); }
+.c-gat { background: repeating-linear-gradient(45deg, rgba(215,38,46,.22) 0 4px, transparent 4px 8px); outline: 1.5px dashed var(--c-werf); outline-offset: -1.5px; }
+.c-exp { background: var(--c-exp); border: 1px solid var(--line); }
+/* Dagbalk */
+.track { position: relative; height: 38px; border-radius: 9px; background: var(--c-track); border: 1px solid var(--line); overflow: hidden; }
+.track.compact { height: 26px; }
+.track-lines i { position: absolute; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--line) 70%, transparent); }
+.tb { position: absolute; top: 3px; bottom: 3px; border-radius: 5px; overflow: hidden; display: flex; align-items: center; }
+.tb span { color: #fff; font-size: 11px; font-weight: 700; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
+.tb.c-gat { top: 0; bottom: 0; border-radius: 0; }
+.tb.open { box-shadow: inset -6px 0 0 rgba(255,255,255,.6); }
+.track.concept .tb:not(.c-gat) { opacity: .7; outline: 2px dashed var(--fg); outline-offset: -2px; }
+.track.empty { background: transparent; border-style: dashed; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+.track.missing { border-color: var(--c-werf); background: repeating-linear-gradient(45deg, rgba(215,38,46,.10) 0 4px, transparent 4px 8px); color: var(--red-text); font-weight: 700; }
+.track.axis { background: transparent; border: none; height: 0; }
+.track.axis .track-lines { display: none; }
+.track-hours { position: relative; height: 16px; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.track-hours span { position: absolute; transform: translateX(-50%); }
+.track-hours span:first-child { transform: none; } .track-hours span:last-child { transform: translateX(-100%); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend .sw { display: inline-block; width: 18px; height: 12px; border-radius: 3px; }
+/* Tellers (zoals de kopbalk van Atree) */
+.counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+.counter b small { white-space: nowrap; }
+.counters.dark { background: linear-gradient(180deg, #262626, #1c1c1c); border-radius: var(--radius); padding: 10px; border-bottom: 3px solid var(--c-werf); }
+.counters.light { margin-top: 12px; }
+.counter { border-radius: 10px; padding: 8px 10px; border: 1px solid var(--line); background: var(--surface); }
+.counters.dark .counter { background: rgba(255,255,255,.07); border-color: rgba(255,255,255,.08); color: #fff; }
+.counter > span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
+.counters.dark .counter > span { color: #a8a8a8; }
+.counter b { display: block; font-family: var(--font-head); font-size: 20px; line-height: 1.25; }
+.counter b small { font-size: 13px; font-weight: 500; opacity: .7; }
+.counter .bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 25%, transparent); margin-top: 5px; overflow: hidden; }
+.counter .bar i { display: block; height: 100%; background: var(--c-werf); border-radius: 2px; }
+.counters.dark .counter .bar i { background: #cfcfcf; } .counters.dark .counter.red .bar i { background: var(--c-werf-hi); }
+.counter.ok .bar i { background: var(--ok); } .counter.warn b { color: var(--warn); }
+.danger { color: var(--red-text); }
+.cap { text-transform: capitalize; }
+/* Periode: kop met pijlen */
+.period-head { display: grid; grid-template-columns: 48px 1fr 48px; align-items: center; text-align: center; gap: 8px; }
+.period-head h2 { margin: 0; }
+.subtabs { display: flex; background: var(--surface2); border-radius: 99px; padding: 4px; gap: 4px; margin: 0 0 12px; }
+.subtabs a { flex: 1; text-align: center; padding: 8px; border-radius: 99px; text-decoration: none; color: var(--fg); font-weight: 700; }
+.subtabs a.active { background: var(--ink); color: var(--ink-on); }
+/* Week: rijen per dag met dagbalk */
+.week .wrow { display: grid; grid-template-columns: 74px 1fr 62px; gap: 8px; align-items: center; padding: 5px 0; text-decoration: none; color: var(--fg); border-radius: 8px; }
+.week a.wrow:hover { background: var(--surface2); }
+.week .wrow.off .wday { color: var(--muted); }
+.week .wrow.today .wday b { color: var(--red-text); }
+.week .wday { font-size: 14px; line-height: 1.2; text-transform: capitalize; }
+.week .wday small { display: block; font-size: 10px; color: var(--muted); text-transform: none; }
+.week .wtot { text-align: right; font-family: var(--font-head); font-weight: 700; font-size: 15px; }
+.week .wtot small { display: block; font-size: 10px; font-family: var(--font-body); color: var(--warn); }
+.week .wtot.short { color: var(--red-text); }
+.week .wrow.head, .week .wrow.foot { padding: 0; }
+.week .wrow.foot { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
+.week .track-hours { margin: 0; }
+@media (max-width: 420px) { .week .wrow { grid-template-columns: 54px 1fr 50px; gap: 5px; } .week .wday { font-size: 12px; } }
+/* Grafieken */
+.chart { width: 100%; height: auto; display: block; font-family: var(--font-body); max-width: 100%; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .ax { fill: var(--muted); font-size: 11px; } .chart .ax.small { font-size: 9px; } .chart .ax.off { fill: color-mix(in srgb, var(--muted) 60%, transparent); }
+.chart .val { fill: var(--fg); font-size: 10px; font-weight: 700; }
+.chart .col { fill: transparent; } .chart .col-off { fill: var(--surface2); opacity: .6; } .chart .col-today { fill: var(--red-soft); }
+.chart a:hover .col, .chart a:hover .col-off { fill: var(--surface2); opacity: 1; }
+.chart .f-werf { fill: var(--c-werf); } .chart .f-atelier { fill: var(--c-atelier); } .chart .f-verpl { fill: var(--c-verpl); }
+.chart .f-verpl-h { fill: url(#hatchGrey); } .chart .hatch-line { stroke: color-mix(in srgb, var(--c-verpl) 55%, #fff); stroke-width: 3; }
+.chart .f-exp { fill: var(--c-exp); stroke: var(--line); }
+.chart .goal { stroke: var(--fg); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.chart .miss { fill: var(--c-werf); }
+.chart .concept-outline { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-dasharray: 3 2; }
+table.num td, table.num th { white-space: nowrap; }
+tr.total td { font-weight: 700; background: var(--surface2); }
+/* Dag: blokken (zoals de tijdsblokken van Atree) */
+.blk { display: grid; grid-template-columns: 40px 1fr; gap: 4px 10px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 10px 0; background: var(--surface); }
+.blk.err { border-color: var(--c-werf); background: var(--red-soft); }
+.blk-ico { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 19px; grid-row: span 2; color: #fff; }
+.blk-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.blk-head b { font-family: var(--font-head); font-size: 15px; }
+.blk-head .muted { font-size: 13px; }
+.blk-time { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.blk-time input.t { width: 5.2em; text-align: center; font-weight: 700; font-size: 17px; padding: 6px 4px; }
+.blk-time input.t.auto { color: var(--c-auto); font-style: italic; }
+.blk-time input.t.bad { border-color: var(--c-werf); background: var(--red-soft); }
+.dur { display: inline-block; min-width: 4.4em; text-align: center; border-radius: 8px; padding: 6px 8px; background: var(--surface2); font-weight: 700; font-family: var(--font-head); }
+.dur.bad { background: var(--c-werf); color: #fff; }
+.blk-more { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.blk-more .full { grid-column: 1 / -1; }
+.blk-more select, .blk-more input { width: 100%; }
+.blk-more select.bad { border-color: var(--c-werf); background: var(--red-soft); }
+.blk-more .km { display: flex; align-items: center; gap: 6px; } .blk-more .km input { width: 6em; }
+.blk-msg { grid-column: 1 / -1; font-size: 13px; }
+.quick-add { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.quick-add button { min-height: 38px; padding: 6px 12px; font-size: 14px; }
+.check-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.check-list li { padding: 3px 0 3px 22px; position: relative; font-size: 14px; }
+.check-list li::before { position: absolute; left: 0; }
+.check-list li.fout { color: var(--red-text); } .check-list li.fout::before { content: '✖'; }
+.check-list li.let { color: var(--warn); } .check-list li.let::before { content: '⚠'; }
+.check-list li.ok { color: var(--ok); } .check-list li.ok::before { content: '✓'; }
+.goal-line { font-size: 14px; margin: 4px 0; }
+
 /* Materiaal */
 .mat, .mat-head { display: grid; grid-template-columns: 1fr 5em 4.5em 1fr 36px; gap: 6px; align-items: center; margin: 6px 0; }
 .mat-head { font-size: 13px; margin-bottom: 0; }

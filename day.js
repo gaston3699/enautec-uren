@@ -1,10 +1,13 @@
-// Dagstaat: automatisch voorstel, aanpassen, materiaal en bevestigen.
+// Dagstaat: automatisch voorstel, aanpassen (tijdsblokken zoals Atree), materiaal en bevestigen.
 import { buildTimeline, summarize, roundSegments, KINDS } from './engine.js';
-import { localTime, localToTs, dayRange, fmtHours, fmtDate, today } from './time.js';
+import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, byName, toast } from './ui.js';
+import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
+import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
 
 const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
+const MIN = 60000;
 
 export const DEFAULT_RULES = {
   minStayMin: 10, unknownMinStayMin: 20, maxAccuracyM: 250, clusterRadiusM: 200,
@@ -12,6 +15,8 @@ export const DEFAULT_RULES = {
   avgSpeedKmh: 50, roadFactor: 1.3, homeTravelIsWork: false, badgeDebounceSec: 600,
   // Afronden per kwartier: begin tot 5 min erna naar beneden, einde tot 8 min erna naar beneden
   roundMinutes: 15, roundStartDownMax: 5, roundEndDownMax: 8,
+  // Verwachte arbeidstijd per werkdag (uren)
+  dayHours: 8,
 };
 export const rulesFrom = (master) => ({ ...DEFAULT_RULES, ...(master.settings?.rules ?? {}) });
 
@@ -78,6 +83,25 @@ export function validate(segments, date) {
   return null;
 }
 
+/** Controle van de dag (zoals Atree): fouten, aandachtspunten of een groen vinkje */
+export function dayChecks(segs, rules) {
+  const out = [];
+  const s = [...segs].sort((a, b) => a.start - b.start);
+  s.forEach((x, i) => {
+    const t = `${localTime(x.start)}–${localTime(x.end)}`;
+    if (!(x.end > x.start)) out.push(['fout', `${t}: einde ligt voor het begin.`]);
+    if (i > 0 && x.start < s[i - 1].end) out.push(['fout', `${t} overlapt met ${localTime(s[i - 1].start)}–${localTime(s[i - 1].end)}.`]);
+    if (x.kind === 'onbekend') out.push(['fout', `${t}: onbekende plek, kies pauze, werk of verplaatsing.`]);
+    if (x.kind === 'werk' && !x.projectId) out.push(['fout', `${t}: kies een project.`]);
+    if (x.openBadge) out.push(['let', `${t}: ingebadged in het atelier maar (nog) niet uitgebadged.`]);
+  });
+  for (const g of gapsOf(segs)) out.push(['let', `Niets ingegeven van ${localTime(g.start)} tot ${localTime(g.end)}.`]);
+  const sum = summarize(segs, rules);
+  const hasGapPause = s.some((x, i) => i > 0 && x.start - s[i - 1].end >= 15 * MIN);
+  if (sum.workMinutes > 6 * 60 && !sum.minutes.pauze && !hasGapPause) out.push(['let', 'Meer dan 6 uur gewerkt zonder pauze.']);
+  return out;
+}
+
 export function summaryHtml(st) {
   const s = st.summary;
   const pill = st.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>'
@@ -92,23 +116,34 @@ export function summaryHtml(st) {
     ${s.warnings.length && st.status !== 'bevestigd' && st.segments.length ? `<ul class="notice">${s.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}`;
 }
 
+const ICON = { werf: '⛑️', atelier: '🏭', verpl: '🚗', pauze: '☕', onbekend: '❓' };
+const SUB = {
+  werk: 'Gewerkte uren bij de klant', atelier: 'Gewerkte uren in het atelier', leverancier: 'Materiaal halen',
+  verplaatsing: 'Rit naar of tussen klanten', 'woon-werk': 'Van of naar huis', pauze: 'Middagpauze', onbekend: 'Wat gebeurde hier?',
+};
+
 /**
  * Teken de dag in `el`.
- * opts: { ctx, username, date, raw, asAdmin, onChanged }
+ * opts: { ctx, username, date, raw, asAdmin }
  */
 export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawError = '' }) {
   const st = dayState(ctx, username, date, raw);
   const master = st.master;
+  const rules = rulesFrom(master);
   const readonly = st.status === 'bevestigd';
-  let segs = st.segments.map((s) => ({ ...s, candidates: s.candidates ?? [] }));
+  // voorstel van de app: tijden in blauw/schuin tot je ze aanpast
+  const allAuto = !st.edited && st.status !== 'bevestigd';
+  let segs = st.segments.map((s) => ({ ...s, candidates: s.candidates ?? [], ...(allAuto ? { auto: { start: true, end: true } } : {}) }));
   let material = st.material.map((m) => ({ ...m }));
   const projects = alive(master.projects).filter((p) => p.active !== false);
   const sitesById = new Map(master.sites.map((s) => [s.id, s]));
   const articles = alive(master.articles).filter((a) => a.active !== false).sort(byName);
   const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date);
+  const dayGoal = (rules.dayHours ?? 8) * 60;
 
-  const persistSegments = () => saveDay(ctx, username, date, { segments: segs, segmentsEdited: true, status: 'concept' });
-  const persistMaterial = () => saveDay(ctx, username, date, { material, ...(st.edited ? {} : { segments: segs }) });
+  const clean = (list) => list.map(({ auto, ...s }) => s);
+  const persistSegments = () => saveDay(ctx, username, date, { segments: clean(segs), segmentsEdited: true, status: 'concept' });
+  const persistMaterial = () => saveDay(ctx, username, date, { material, ...(st.edited ? {} : { segments: clean(segs) }) });
 
   function projectOptions(sel, candidates = []) {
     const cand = candidates.map((id) => projects.find((p) => p.id === id)).filter(Boolean);
@@ -124,22 +159,33 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
 
   function segHtml(s, i) {
     const site = sitesById.get(s.siteId);
-    const place = site ? site.name : s.kind === 'onbekend' ? 'Onbekende plek' : '';
+    const proj = s.projectId ? master.projects.find((p) => p.id === s.projectId) : null;
+    const place = [proj ? projectLabel(proj, master) : '', site && site.name !== projectLabel(proj, master) ? `📍 ${site.name}` : '', s.source === 'badge' ? 'badge' : '']
+      .filter(Boolean).join(' · ');
+    const c = CAT[s.kind] ?? 'onbekend';
+    const dur = Math.round((s.end - s.start) / MIN);
+    const bad = !(s.end > s.start);
     const dis = readonly ? 'disabled' : '';
     const kinds = Object.entries(KINDS).filter(([k]) => k !== 'onbekend' || s.kind === 'onbekend')
       .map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${esc(v)}</option>`).join('');
-    return `<div class="seg" data-kind="${s.kind}" data-i="${i}">
-      <div class="seg-grid">
-        <input type="time" aria-label="Van" data-f="start" value="${localTime(s.start)}" ${dis}>
-        <input type="time" aria-label="Tot" data-f="end" value="${localTime(s.end)}" ${dis}>
-        <select data-f="kind" aria-label="Soort" ${dis}>${kinds}</select>
-        ${place ? `<div class="full muted">📍 ${esc(place)}${s.source === 'badge' ? ' · badge' : ''}</div>` : ''}
-        ${s.kind === 'pauze' ? '' : `<select class="full" data-f="projectId" aria-label="Project" ${dis}>${projectOptions(s.projectId, s.candidates)}</select>`}
-        ${s.kind === 'werk' && !s.projectId && !readonly ? '<div class="full warn-text">Kies een project</div>' : ''}
-        ${TRAVEL.has(s.kind) ? `<label class="muted km">km <input type="number" inputmode="decimal" step="0.1" min="0" data-f="km" value="${s.km ?? ''}" ${dis}></label>` : ''}
-        <input type="text" class="full" data-f="note" placeholder="Opmerking" value="${esc(s.note ?? '')}" ${dis}>
-        ${readonly ? '' : `<button class="link danger full-right" data-act="del-seg">Regel verwijderen</button>`}
-      </div></div>`;
+    const timeInput = (f) => `<input class="t ${s.auto?.[f] ? 'auto' : ''}" data-f="${f}" value="${localTime(s[f])}" inputmode="decimal" autocomplete="off"
+      aria-label="${f === 'start' ? 'Begin' : 'Einde'}" title="${s.auto?.[f] ? 'Automatisch ingevuld, pas gerust aan' : 'Typ bv. 8, 730, 7u30 of 16.45'}" ${dis}>`;
+    return `<div class="blk ${bad ? 'err' : ''}" data-kind="${s.kind}" data-i="${i}">
+      <div class="blk-ico c-${c}" aria-hidden="true">${ICON[c] ?? '•'}</div>
+      <div class="blk-head"><b>${esc(KINDS[s.kind] ?? s.kind)}</b><span class="muted">${esc(place || SUB[s.kind] || '')}</span></div>
+      <div class="blk-time">${timeInput('start')}<span aria-hidden="true">→</span>${timeInput('end')}
+        <span class="dur ${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</span>
+        ${TRAVEL.has(s.kind) ? `<label class="muted small km">km <input type="number" inputmode="decimal" step="0.1" min="0" data-f="km" value="${s.km ?? ''}" style="width:5em" ${dis}></label>` : ''}</div>
+      ${readonly || s.kind === 'pauze' ? '' : `<div class="blk-more"><select class="full ${s.kind === 'werk' && !s.projectId ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select></div>`}
+      ${readonly ? '' : `<details class="blk-more-wrap" style="grid-column:1/-1" ${s.kind === 'onbekend' ? 'open' : ''}><summary class="small muted">Soort, opmerking, verwijderen</summary>
+        <div class="blk-more">
+          <select data-f="kind" aria-label="Soort">${kinds}</select>
+          <input type="text" data-f="note" placeholder="Opmerking" value="${esc(s.note ?? '')}">
+          <button class="link danger full" style="justify-self:end" data-act="del-seg">Blok verwijderen</button>
+        </div></details>`}
+      ${readonly && s.note ? `<div class="blk-msg muted">${esc(s.note)}</div>` : ''}
+      ${bad ? '<div class="blk-msg danger">Einde ligt voor het begin.</div>' : ''}
+    </div>`;
   }
 
   function matHtml(m, i) {
@@ -153,20 +199,60 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     </div>`;
   }
 
+  /** Week- en maandtotaal: bewaarde dagen + deze dag zoals hij nu op het scherm staat */
+  function periodTotals(cur) {
+    const sum = (dates) => {
+      const saved = savedDays(ctx, username, dates.filter((d) => d !== date));
+      return dates.reduce((s, d) => s + (d === date ? cur : saved[d]?.tot.work ?? 0), 0);
+    };
+    const wk = datesBetween(weekStart(date), shiftDate(weekStart(date), 6));
+    const mo = monthDays(date.slice(0, 7));
+    return {
+      week: sum(wk), weekExp: wk.reduce((s, d) => s + expectedMinutes(d, dayGoal), 0),
+      month: sum(mo), monthExp: mo.reduce((s, d) => s + expectedMinutes(d, dayGoal), 0),
+    };
+  }
+
   function draw() {
     const cur = dayState(ctx, username, date, raw);
-    const view = { ...cur, segments: segs, summary: summarize(segs, rulesFrom(master)) };
+    const sorted = [...segs].map((s, i) => ({ s, i })).sort((a, b) => a.s.start - b.s.start);
+    const tot = dayTotals(segs, rules);
+    const pt = periodTotals(tot.work);
+    const checks = dayChecks(segs, rules);
+    const hol = holidayName(date);
+    const pill = cur.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>'
+      : cur.edited ? '<span class="pill warn">Aangepast, nog niet bevestigd</span>' : '<span class="pill warn">Voorstel van de app</span>';
+    const goal = (label, v, e) => `<div class="goal-line">${label}: <b class="${v >= e ? 'ok-text' : 'danger'}">${fmtHours(v)}</b> <span class="muted">van ${fmtHours(e)}</span></div>`;
     el.innerHTML = `
-      <section class="card">
-        ${summaryHtml(view)}
+      <div class="counters dark">
+        ${counterHtml('Werk', tot.werf + tot.atelier, dayGoal)}
+        ${counterHtml('Verplaatsing', tot.verpl, 120)}
+        ${counterHtml('Netto dag', tot.work, expectedMinutes(date, dayGoal) || dayGoal, { cls: 'red' })}
+        ${counterHtml('Week', pt.week, pt.weekExp || null, { cls: 'red' })}
+      </div>
+      <section class="card" style="margin-top:12px">
+        <div class="row spread">${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}<span class="muted small">${tot.start ? `${localTime(tot.start)} – ${localTime(tot.end)}` : ''}${tot.km ? ` · ${tot.km} km` : ''}</span></div>
+        <div style="margin-top:10px">${trackHtml(segs, date, hourRange([{ segs, date }], date))}</div>
+        ${legendHtml()}
         ${rawError ? `<p class="muted">⚠ ${esc(rawError)}</p>` : ''}
-        ${!raw && !rawError && !readonly ? '<p class="muted">Geen automatische gegevens (geen koppeling met de server). Voeg je regels zelf toe.</p>' : ''}
+        ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
       </section>
       <section class="card">
-        <div class="row spread"><h2>Tijdlijn</h2>${!readonly && cur.edited ? '<button class="link" data-act="reset">↺ Automatisch voorstel</button>' : ''}</div>
-        ${segs.length ? segs.map(segHtml).join('') : '<p class="muted">Nog geen activiteiten voor deze dag.</p>'}
-        ${readonly ? '' : '<p class="muted small">Tijden worden per kwartier afgerond: begin tot 5 min na het kwartier naar beneden, einde tot 8 min na het kwartier naar beneden.</p>'}
-        ${readonly ? '' : '<button class="secondary" data-act="add-seg">+ Regel toevoegen</button>'}
+        <h2>Controle van de dag</h2>
+        <div class="goal-line"><b>${fmtHours(tot.work)} netto</b> <span class="muted">(verplaatsing ${fmtHours(tot.verpl)}${tot.pauze ? ` · pauze ${fmtHours(tot.pauze)}` : ''})</span></div>
+        ${goal('Week', pt.week, pt.weekExp)}${goal('Maand', pt.month, pt.monthExp)}
+        <ul class="check-list">${checks.length ? checks.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
+      </section>
+      <section class="card">
+        <div class="row spread"><h2>Tijdsblokken</h2>${!readonly && cur.edited ? '<button class="link" data-act="reset">↺ Automatisch voorstel</button>' : ''}</div>
+        ${segs.length ? sorted.map(({ s, i }) => segHtml(s, i)).join('') : '<p class="muted">Nog geen blokken voor deze dag.</p>'}
+        ${readonly ? '' : `<div class="quick-add">
+          <button class="secondary" data-act="add" data-kind="verplaatsing">🚗 + Heenrit</button>
+          <button class="secondary" data-act="add" data-kind="werk">⛑️ + Werk</button>
+          <button class="secondary" data-act="add" data-kind="atelier">🏭 + Atelier</button>
+          <button class="secondary" data-act="add" data-kind="pauze">☕ + Pauze</button>
+          <button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button></div>
+          <p class="muted small">Tijden typ je kort: <b>8</b> = 8:00, <b>730</b> of <b>7u30</b> = 7:30, <b>16.45</b>. Blauw en schuin = voorgesteld, gewoon overschrijven. Bij bevestigen wordt per kwartier afgerond (begin tot 5 min, einde tot 8 min na het kwartier naar beneden).</p>`}
       </section>
       <section class="card">
         <h2>Gebruikt materiaal</h2>
@@ -184,6 +270,31 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       </section>`;
   }
 
+  /** Nieuw blok met voorgestelde tijden (zoals Atree: aansluitend, na werk eerst een halfuur pauze) */
+  function addBlock(kindKey) {
+    const sorted = [...segs].sort((a, b) => a.start - b.start);
+    const last = sorted.at(-1);
+    const [, dayEnd] = dayRange(date);
+    const kind = kindKey === 'terug' ? 'verplaatsing' : kindKey;
+    const dflt = { verplaatsing: 30, terug: 30, werk: 240, atelier: 240, pauze: 30 }[kindKey];
+    let start = last ? last.end : localToTs(date, kindKey === 'verplaatsing' ? '07:30' : '08:00');
+    const workLike = (k) => k === 'werk' || k === 'atelier';
+    if (last && workLike(kind) && workLike(last.kind)) {
+      // tweede periode: eerst een halfuur pauze
+      segs.push({ start, end: start + 30 * MIN, kind: 'pauze', projectId: null, candidates: [], siteId: null, auto: { start: true, end: true } });
+      start += 30 * MIN;
+    }
+    const prevWork = [...sorted].reverse().find((s) => workLike(s.kind) && s.projectId);
+    const end = Math.min(start + dflt * MIN, dayEnd - MIN);
+    segs.push({
+      start, end, kind, candidates: [], siteId: null, auto: { start: true, end: true },
+      projectId: kind === 'pauze' ? null : prevWork?.projectId ?? planned[0]?.projectId ?? null,
+    });
+    persistSegments(); draw();
+    const box = el.querySelector(`.blk[data-i="${segs.length - 1}"] input.t[data-f=end]`);
+    box?.focus(); box?.select();
+  }
+
   el.oninput = (e) => {
     const m = e.target.closest('.mat');
     if (m && e.target.dataset.mf === 'description') {
@@ -197,27 +308,54 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       } else item.articleId = null;
       persistMaterial();
     }
+    if (e.target.classList.contains('t')) e.target.classList.remove('auto', 'bad');
   };
 
   el.onchange = (e) => {
     const t = e.target;
-    if (t.dataset.f === 'daynote') { saveDay(ctx, username, date, { note: t.value, ...(st.edited ? {} : { segments: segs }) }); return; }
-    const box = t.closest('.seg');
+    if (t.dataset.f === 'daynote') { saveDay(ctx, username, date, { note: t.value, ...(st.edited ? {} : { segments: clean(segs) }) }); return; }
+    const box = t.closest('.blk');
     if (box) {
       const i = Number(box.dataset.i);
       const s = segs[i];
       const f = t.dataset.f;
-      if (f === 'start' || f === 'end') { if (t.value) s[f] = localToTs(date, t.value); }
-      else if (f === 'km') s.km = t.value === '' ? null : Number(t.value);
+      if (f === 'start' || f === 'end') {
+        const hhmm = parseTime(t.value);
+        if (!hhmm) { t.classList.add('bad'); toast('Tijd niet herkend. Typ bv. 8, 730, 7u30 of 16.45', 'err'); return; }
+        const old = s[f];
+        const ts = hhmm === '24:00' || (f === 'end' && hhmm === '00:00') ? dayRange(date)[1] - MIN : localToTs(date, hhmm);
+        s[f] = ts;
+        if (s.auto) delete s.auto[f];
+        // aansluitend blok schuift mee (einde heenrit = begin werk). Een voorgestelde pauze schuift
+        // helemaal op (blijft een halfuur), zodat ook de tweede periode later begint, zoals in Atree.
+        if (f === 'end') {
+          let prevEnd = old; let newEnd = ts;
+          for (let guard = 0; guard < segs.length; guard++) {
+            const o = segs.find((x) => x !== s && x.start === prevEnd);
+            if (!o) break;
+            if (o.kind === 'pauze' && o.auto?.start && o.auto?.end) {
+              const d = o.end - o.start;
+              prevEnd = o.end; o.start = newEnd; o.end = newEnd + d; newEnd = o.end;
+              continue;
+            }
+            if (newEnd < o.end) o.start = newEnd;
+            break;
+          }
+        } else {
+          for (const o of segs) if (o !== s && o.end === old && ts > o.start) o.end = ts;
+        }
+      } else if (f === 'km') s.km = t.value === '' ? null : Number(t.value);
       else if (f === 'projectId') {
         s.projectId = t.value || null;
         if (s.kind === 'werk' && s.projectId) {
-          for (const n of [segs[i - 1], segs[i + 1]]) if (n?.kind === 'verplaatsing' && !n.projectId) n.projectId = s.projectId;
+          const sorted = [...segs].sort((a, b) => a.start - b.start);
+          const k = sorted.indexOf(s);
+          for (const n of [sorted[k - 1], sorted[k + 1]]) if (n && TRAVEL.has(n.kind) && !n.projectId) n.projectId = s.projectId;
         }
       } else if (f === 'kind') s.kind = t.value;
       else s[f] = t.value;
       persistSegments();
-      if (f === 'kind' || f === 'projectId' || f === 'start' || f === 'end') draw();
+      if (f !== 'note' && f !== 'km') draw();
       return;
     }
     const m = t.closest('.mat');
@@ -228,20 +366,31 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     }
   };
 
+  // Enter in een tijdveld = naar het volgende tijdveld
+  el.onkeydown = (e) => {
+    if (e.key !== 'Enter' || !e.target.classList.contains('t')) return;
+    e.preventDefault();
+    const all = [...el.querySelectorAll('input.t')];
+    const next = all[all.indexOf(e.target) + 1];
+    e.target.blur();
+    setTimeout(() => {
+      const again = [...el.querySelectorAll('input.t')];
+      const n = again[all.indexOf(e.target) + 1] ?? next;
+      n?.focus(); n?.select?.();
+    }, 0);
+  };
+
   el.onclick = (e) => {
-    const act = e.target.closest('[data-act]')?.dataset.act;
+    const btn = e.target.closest('[data-act]');
+    const act = btn?.dataset.act;
     if (!act) return;
-    if (act === 'add-seg') {
-      const last = segs.at(-1);
-      const start = last ? last.end : localToTs(date, '08:00');
-      segs.push({ start, end: Math.min(start + 3600000, dayRange(date)[1] - 60000), kind: 'werk', projectId: planned[0]?.projectId ?? null, candidates: [], siteId: null });
-      persistSegments(); draw();
-    } else if (act === 'del-seg') {
-      segs.splice(Number(e.target.closest('.seg').dataset.i), 1);
+    if (act === 'add') addBlock(btn.dataset.kind);
+    else if (act === 'del-seg') {
+      segs.splice(Number(e.target.closest('.blk').dataset.i), 1);
       persistSegments(); draw();
     } else if (act === 'reset') {
       saveDay(ctx, username, date, { segmentsEdited: false });
-      segs = dayState(ctx, username, date, raw).segments.map((s) => ({ ...s }));
+      segs = dayState(ctx, username, date, raw).segments.map((s) => ({ ...s, auto: { start: true, end: true } }));
       draw();
     } else if (act === 'add-mat') {
       const defProject = [...segs].reverse().find((s) => s.kind === 'werk' && s.projectId)?.projectId ?? planned[0]?.projectId ?? null;
@@ -253,11 +402,11 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       persistMaterial(); draw();
     } else if (act === 'confirm') {
       // bij bevestigen altijd per kwartier afronden (ook manueel aangepaste tijden)
-      segs = roundSegments(segs.map(({ openBadge, ...s }) => s), rulesFrom(master));
+      segs = roundSegments(clean(segs).map(({ openBadge, ...s }) => s), rules);
       const err = validate(segs, date) || (material.some((m) => m.description && !m.projectId) ? 'Kies bij elk materiaal een project.' : null);
       const slot = el.querySelector('.err-slot');
       if (err) { slot.innerHTML = `<div class="error">${esc(err)}</div>`; return; }
-      if (!segs.length && !confirm('Er staan geen regels op deze dag. Toch bevestigen?')) return;
+      if (!segs.length && !confirm('Er staan geen blokken op deze dag. Toch bevestigen?')) return;
       material = material.filter((m) => m.description);
       saveDay(ctx, username, date, {
         segments: [...segs].sort((a, b) => a.start - b.start).map(({ candidates, ...s }) => s),

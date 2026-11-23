@@ -11,6 +11,8 @@ import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
 import { esc, alive, byName, projectLabel, toast, sha256, copyText } from './ui.js';
 import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
+import { weekHtml, monthHtml, yearHtml, ensureMonths } from './report.js';
+import { weekStart } from './periods.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -250,7 +252,7 @@ function route() {
   } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
   if (view === 'planning') return viewPlanning();
-  if (view === 'overzicht') return viewHistory();
+  if (view === 'overzicht') return viewHistory(rest);
   if (view === 'meer') return viewMore();
   return viewDay(isDate(rest[0]) ? rest[0] : today());
 }
@@ -555,35 +557,30 @@ function viewPlanning() {
       }).join('')}</section>`).join('') || '<section class="card"><p class="muted">Er is niets ingepland voor jou.</p></section>'}`;
 }
 
-function viewHistory() {
+/** Overzicht per week, maand of jaar: #overzicht/week/<datum>, #overzicht/maand/<jjjj-mm>, #overzicht/jaar/<jjjj> */
+async function viewHistory([kind = 'week', arg] = []) {
   setNav('overzicht');
   const dev = device();
-  const m = ctx.master();
-  const rules = rulesFrom(m);
-  const months = [today().slice(0, 7), shiftDate(`${today().slice(0, 7)}-01`, -1).slice(0, 7)];
-  const days = [];
-  for (const mo of months) {
-    const reg = store.get(PATHS.reg(mo, dev.username), emptyReg(dev.username, mo));
-    for (const [date, d] of Object.entries(reg.days)) days.push({ date, d, sum: summarize(d.segments ?? [], rules) });
-  }
-  days.sort((a, b) => b.date.localeCompare(a.date));
-  const missing = [];
-  for (let d = shiftDate(today(), -1), i = 0; i < 14; i++, d = shiftDate(d, -1)) {
-    const wd = new Date(`${d}T12:00:00Z`).getUTCDay();
-    if (wd !== 0 && wd !== 6 && !days.some((x) => x.date === d && x.d.status === 'bevestigd')) missing.push(d);
-  }
-  const totalMonth = days.filter((x) => x.date.startsWith(months[0]) && x.d.status === 'bevestigd').reduce((s, x) => s + x.sum.workMinutes, 0);
+  if (!['week', 'maand', 'jaar'].includes(kind)) kind = 'week';
+  const t = today();
+  const key = kind === 'week' ? (isDate(arg) ? arg : t) : kind === 'maand' ? (/^\d{4}-\d{2}$/.test(arg ?? '') ? arg : t.slice(0, 7)) : (/^\d{4}$/.test(arg ?? '') ? arg : t.slice(0, 4));
+  const tabs = [['week', 'Week', t], ['maand', 'Maand', t.slice(0, 7)], ['jaar', 'Jaar', t.slice(0, 4)]];
+  // bij wisselen van tab dezelfde periode behouden
+  const linkFor = (k, dflt) => {
+    if (k === kind) return `#overzicht/${k}/${key}`;
+    const ref = kind === 'week' ? key : kind === 'maand' ? `${key}-01` : `${key}-01-01`;
+    return `#overzicht/${k}/${k === 'week' ? (ref.slice(0, 7) === t.slice(0, 7) ? t : ref) : k === 'maand' ? ref.slice(0, 7) : ref.slice(0, 4)}` || dflt;
+  };
   $main.innerHTML = `<h1 class="page-title">Mijn overzicht</h1>
-    <section class="card"><div class="stats"><div class="stat"><span>Bevestigd deze maand</span><b>${fmtHours(totalMonth)}</b></div>
-      <div class="stat"><span>Werkdagen nog te bevestigen</span><b>${missing.length}</b></div></div>
-      ${missing.length ? `<p class="muted">Nog te bevestigen (laatste 2 weken): ${missing.map((d) => `<a href="#dag/${d}">${esc(fmtDate(d, { weekday: 'short', day: 'numeric', month: 'short' }))}</a>`).join(', ')}</p>` : ''}
-    </section>
-    <section class="card table-wrap"><table><thead><tr><th>Dag</th><th>Arbeidstijd</th><th>Materiaal</th><th>Status</th></tr></thead><tbody>
-      ${days.map(({ date, d, sum }) => `<tr class="click" data-date="${date}"><td>${esc(fmtDate(date, { weekday: 'short', day: 'numeric', month: 'short' }))}</td>
-        <td>${fmtHours(sum.workMinutes)}</td><td>${(d.material ?? []).length || ''}</td>
-        <td>${d.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>' : '<span class="pill warn">Open</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Nog niets bewaard.</td></tr>'}
-    </tbody></table></section>`;
-  $main.querySelectorAll('[data-date]').forEach((tr) => tr.onclick = () => { location.hash = `#dag/${tr.dataset.date}`; });
+    <nav class="subtabs" aria-label="Periode">${tabs.map(([k, l, d]) => `<a href="${linkFor(k, d)}" class="${k === kind ? 'active' : ''}">${l}</a>`).join('')}</nav>
+    <div id="period"><p class="muted center">Laden…</p></div>`;
+  const months = kind === 'week' ? [...new Set([weekStart(key), shiftDate(weekStart(key), 6)].map((d) => d.slice(0, 7)))]
+    : kind === 'maand' ? [key] : Array.from({ length: 12 }, (_, i) => `${key}-${String(i + 1).padStart(2, '0')}`).filter((mo) => mo <= t.slice(0, 7));
+  await ensureMonths(ctx, dev.username, months);
+  const box = $main.querySelector('#period');
+  if (!box) return;
+  box.innerHTML = kind === 'week' ? weekHtml(ctx, dev.username, key) : kind === 'maand' ? monthHtml(ctx, dev.username, key) : yearHtml(ctx, dev.username, key);
+  box.querySelectorAll('[data-href]').forEach((tr) => tr.onclick = () => { location.hash = tr.dataset.href; });
 }
 
 /** Lijst van aangemelde toestellen (eigen of, voor de beheerder, van iedereen) */
