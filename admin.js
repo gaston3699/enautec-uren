@@ -3,7 +3,9 @@ import { PATHS, EMPTY_MASTER } from './store.js';
 import { renderDay, dayState, emptyReg } from './day.js';
 import { buildWorkbook } from './export.js';
 import { today, shiftDate, fmtDate, fmtHours, localTime, isDate } from './time.js';
-import { parseLatLon } from './geo.js';
+import { parseLatLon, distance } from './geo.js';
+import { geocode, addressLine, splitAddress } from './geocode.js';
+import { readTable } from './xlsx.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Leverancier', thuis: 'Thuisadres werknemer' };
@@ -25,11 +27,20 @@ const ENTITIES = {
   },
   customers: {
     title: 'Klanten', newLabel: 'Nieuwe klant',
-    fields: [{ k: 'name', label: 'Naam', req: true }, { k: 'note', label: 'Opmerking' }],
+    help: 'Met een adres maakt de app zelf een locatie (zone) voor deze klant en zoekt de coördinaten op. Een volledige lijst inlezen kan onderaan met "Klanten importeren".',
+    fields: [
+      { k: 'name', label: 'Naam', req: true },
+      { k: 'street', label: 'Adres', help: 'straat en nummer' },
+      { k: 'postcode', label: 'Postcode' },
+      { k: 'city', label: 'Gemeente' },
+      { k: 'phone', label: 'Telefoon', noList: true },
+      { k: 'vat', label: 'BTW-nummer' },
+      { k: 'note', label: 'Opmerking', noList: true },
+    ],
   },
   sites: {
     title: 'Locaties', newLabel: 'Nieuwe locatie',
-    help: 'Elke locatie krijgt een zone met een straal in meter. Coördinaten: rechtsklik op de plek in Google Maps → klik op de coördinaten (ze worden gekopieerd) en plak ze hier. Of sta ter plaatse en tik "Mijn locatie".',
+    help: 'Elke locatie krijgt een zone met een straal in meter. Coördinaten leeg laten = de app zoekt ze zelf op bij het adres (of tik "Zoek bij adres"). Klopt het niet? Rechtsklik op de plek in Google Maps → klik op de coördinaten (ze worden gekopieerd) en plak ze hier, of sta ter plaatse en tik "Mijn locatie". Klanten met een adres krijgen automatisch een locatie.',
     fields: [
       { k: 'type', label: 'Soort', type: 'select', req: true, options: () => Object.entries(SITE_TYPES).map(([id, name]) => ({ id, name })) },
       { k: 'name', label: 'Naam', req: true },
@@ -72,7 +83,10 @@ const boolOf = (v, f) => {
 
 const fieldValue = (f, row, m) => {
   if (f.type === 'bool') return boolOf(row[f.k], f) ? '✔' : '—';
-  if (f.type === 'coords') return row.lat != null ? `<a href="https://www.google.com/maps?q=${row.lat},${row.lon}" target="_blank" rel="noopener">kaart</a>` : '<span class="pill warn">ontbreekt</span>';
+  if (f.type === 'coords') {
+    if (row.lat == null) return `<span class="pill warn">${row.geo === 'niet gevonden' ? 'adres niet gevonden' : 'ontbreekt'}</span>`;
+    return `<a href="https://www.google.com/maps?q=${row.lat},${row.lon}" target="_blank" rel="noopener">kaart</a>${row.geo === 'straat' ? ' <span class="pill warn" title="Enkel de straat werd gevonden, niet het huisnummer">controleer</span>' : ''}${row.overlap && row.active === false ? ` <span class="pill warn" title="Zelfde plaats als ${esc(row.overlap)}: deze zone staat uit">= ${esc(row.overlap)}</span>` : ''}`;
+  }
   if (f.type === 'select') return esc(f.options(m).find((o) => o.id === row[f.k])?.name ?? '');
   return esc(row[f.k] ?? '');
 };
@@ -84,7 +98,7 @@ function fieldInput(f, row, m) {
     return `<select name="${f.k}" ${f.req ? 'required' : ''}><option value="">—</option>${f.options(m).map((o) => `<option value="${esc(o.id)}" ${o.id === v ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
   }
   if (f.type === 'coords') {
-    return `<span class="row"><input name="coords" placeholder="50.8631, 3.0694" value="${row?.lat != null ? `${row.lat}, ${row.lon}` : ''}"><button type="button" class="secondary" data-act="here">Mijn locatie</button></span>`;
+    return `<span class="row"><input name="coords" placeholder="leeg = zelf opzoeken bij het adres" value="${row?.lat != null ? `${row.lat}, ${row.lon}` : ''}"><button type="button" class="secondary" data-act="lookup">Zoek bij adres</button><button type="button" class="secondary" data-act="here">Mijn locatie</button></span>`;
   }
   if (f.type === 'password') {
     // zichtbaar voor de beheerder, zodat die het meteen kan doorgeven
@@ -145,7 +159,12 @@ export class Admin {
         <table><thead><tr>${ent.fields.filter((f) => !f.noList).map((f) => `<th>${f.label}</th>`).join('')}<th></th></tr></thead>
         <tbody>${rows.map((r) => `<tr>${ent.fields.filter((f) => !f.noList).map((f) => `<td>${fieldValue(f, r, m)}</td>`).join('')}
           <td class="actions"><button class="link" data-edit="${esc(r.id)}">Wijzig</button><button class="link danger" data-del="${esc(r.id)}">Verwijder</button></td></tr>`).join('')}</tbody></table>
-      </section>`;
+      </section>
+      ${name === 'customers' ? `<section class="card" id="importCard"><h2>Klanten importeren</h2>
+        <p class="muted">Kies een Excel- (.xlsx) of CSV-bestand met kolommen zoals <b>Naam, Adres, Postcode, Gemeente, Telefoonnummer, BTW-nummer</b> (bv. de export uit de boekhouding). Bestaande klanten (zelfde btw-nummer of naam) worden bijgewerkt, niet dubbel gemaakt. Per klant met adres maakt de app een locatie en zoekt ze de coördinaten op.</p>
+        <input type="file" id="importFile" accept=".xlsx,.csv,text/csv">
+        <div id="importOut"></div></section>` : ''}
+      ${name === 'sites' ? '<div id="geoBox"></div>' : ''}`;
 
     const form = view.querySelector('#entForm');
     const err = (msg) => { view.querySelector('#entErr').innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : ''; };
@@ -170,6 +189,22 @@ export class Admin {
         rec.id = rec.username;
       }
       if (name === 'sites' && rec.type === 'thuis' && !rec.employee_id) return err('Kies de werknemer bij een thuisadres.');
+      if (name === 'sites') {
+        const coordsText = form.elements.coords.value.trim();
+        if (rec.lat != null && coordsText !== (edit?.lat != null ? `${edit.lat}, ${edit.lon}` : '')) {
+          rec.geo = form.dataset.lookup === coordsText ? form.dataset.geo : 'manueel';
+        }
+        if (rec.lat == null && rec.address) {
+          // geen coördinaten ingevuld: zelf opzoeken bij het adres
+          const btn = form.querySelector('button.primary');
+          btn.disabled = true;
+          try {
+            const g = await geocode(splitAddress(rec.address));
+            if (g) Object.assign(rec, g);
+            else { rec.geo = 'niet gevonden'; toast('Adres niet gevonden. Vul de coördinaten zelf in (Google Maps of "Mijn locatie").', 'err'); }
+          } catch (e2) { toast(e2.message, 'err'); } finally { btn.disabled = false; }
+        }
+      }
       let newPassword = null;
       if (name === 'employees') {
         const me = this.ctx.me();
@@ -202,6 +237,7 @@ export class Admin {
         mm[name].push(rec);
       });
       toast('Bewaard', 'ok');
+      if (name === 'customers') this.syncCustomerSite(rec);
       this.entity(view, name);
       if (name === 'employees' && newPassword) {
         // eenmalig tonen: het wachtwoord wordt nergens leesbaar bewaard
@@ -215,6 +251,25 @@ export class Admin {
         box.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     };
+    form.querySelector('[data-act=lookup]')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const addr = form.elements.address?.value.trim();
+      if (!addr) return err('Vul eerst het adres in, bv. Ieperseweg 112, 8800 Roeselare.');
+      btn.disabled = true;
+      try {
+        const g = await geocode(splitAddress(addr));
+        if (!g) return err('Adres niet gevonden. Controleer het adres of vul de coördinaten zelf in.');
+        err('');
+        form.elements.coords.value = `${g.lat}, ${g.lon}`;
+        form.dataset.lookup = form.elements.coords.value;
+        form.dataset.geo = g.geo;
+        toast(g.geo === 'adres' ? 'Coördinaten gevonden' : 'Enkel de straat gevonden: controleer op de kaart', g.geo === 'adres' ? 'ok' : 'err');
+      } catch (e2) { err(e2.message); } finally { btn.disabled = false; }
+    });
+    if (name === 'customers') {
+      view.querySelector('#importFile').onchange = (e) => { if (e.target.files[0]) this.importCustomers(view, e.target.files[0]); };
+    }
+    if (name === 'sites') this.geoMissingBox(view.querySelector('#geoBox'));
     form.querySelector('[data-act=genpw]')?.addEventListener('click', () => {
       // goed leesbaar en makkelijk over te typen: geen 0/O, 1/l/I
       const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -237,6 +292,8 @@ export class Admin {
       this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
         const r = mm[name].find((x) => x.id === id);
         if (r) Object.assign(r, { deleted: true, updated: Date.now() });
+        // klant weg → ook de locatie die de app voor die klant maakte
+        if (name === 'customers') for (const s of mm.sites ?? []) if (s.from_customer && s.customer_id === id) Object.assign(s, { deleted: true, updated: Date.now() });
       });
       if (name === 'employees' && this.hasServer()) {
         try { await this.server(`/api/admin/employees/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* server niet bereikbaar */ }
@@ -244,6 +301,150 @@ export class Admin {
       this.entity(view, name);
     });
     if (name === 'employees' && !edit) this.syncAdminFlags(view);
+  }
+
+  // ---------- Klanten: locatie en import ----------
+  /**
+   * Klant met adres → één locatie (zone) "van de klant". Adres gewijzigd → coördinaten opnieuw opzoeken.
+   * Extra werven van dezelfde klant maak je zelf bij Locaties; die blijven ongemoeid.
+   * Geeft de id van de locatie terug als die opnieuw opgezocht moet worden.
+   */
+  customerSite(mm, cust) {
+    const line = addressLine(cust);
+    if (!cust.street || (!cust.postcode && !cust.city)) return null;
+    mm.sites = mm.sites ?? [];
+    let site = mm.sites.find((s) => !s.deleted && s.from_customer && s.customer_id === cust.id);
+    if (site && site.address === line) {
+      if (site.name !== cust.name) Object.assign(site, { name: cust.name, updated: Date.now() });
+      return site.lat == null && site.geo !== 'niet gevonden' ? site.id : null;
+    }
+    if (!site) {
+      site = { id: uid(), type: 'klant', from_customer: true, customer_id: cust.id, radius_m: 150, active: true };
+      mm.sites.push(site);
+    }
+    Object.assign(site, { name: cust.name, address: line, lat: null, lon: null, geo: null, updated: Date.now() });
+    return site.id;
+  }
+
+  syncCustomerSite(cust) {
+    let id = null;
+    this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => { id = this.customerSite(mm, cust); });
+    if (id) this.geocodeSites([id]).then(({ found, missing }) => {
+      if (found) toast(`Coördinaten gevonden voor ${cust.name}`, 'ok');
+      if (missing) toast(`Adres van ${cust.name} niet gevonden: vul de coördinaten aan bij Locaties.`, 'err');
+    });
+  }
+
+  /** Coördinaten opzoeken voor de gegeven locaties (1 per seconde). onProgress(i, n) */
+  async geocodeSites(ids, onProgress = () => {}, shouldStop = () => false) {
+    let found = 0;
+    let missing = 0;
+    for (let i = 0; i < ids.length; i++) {
+      if (shouldStop()) break;
+      onProgress(i, ids.length);
+      const site = alive(this.ctx.master().sites).find((s) => s.id === ids[i]);
+      if (!site?.address || site.lat != null) continue;
+      let g = null;
+      try { g = await geocode(splitAddress(site.address)); } catch (e) { toast(e.message, 'err'); break; }
+      if (g) found++; else missing++;
+      // zelfde plek als het atelier, een thuisadres of leverancier? Dan uitschakelen, anders "wint" de klant daar
+      const clash = g && alive(this.ctx.master().sites).find((o) => o.id !== site.id && o.type !== 'klant' && o.lat != null
+        && distance(o, g) <= (o.radius_m ?? 150));
+      this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+        const s = mm.sites.find((x) => x.id === site.id);
+        if (s && s.lat == null) {
+          Object.assign(s, g ?? { geo: 'niet gevonden' }, clash ? { active: false, overlap: clash.name } : {}, { updated: Date.now() });
+        }
+      });
+    }
+    onProgress(ids.length, ids.length);
+    return { found, missing };
+  }
+
+  /** Locaties: knop om alle ontbrekende coördinaten op te zoeken */
+  geoMissingBox(box) {
+    if (!box) return;
+    const todo = alive(this.ctx.master().sites).filter((s) => s.address && s.lat == null);
+    if (!todo.length) { box.innerHTML = ''; return; }
+    const notFound = todo.filter((s) => s.geo === 'niet gevonden').length;
+    box.innerHTML = `<section class="card"><h2>Coördinaten ontbreken (${todo.length})</h2>
+      <p class="muted">De app zoekt ze op bij het adres via OpenStreetMap (ongeveer 1 per seconde).${notFound ? ` ${notFound} adres(sen) werden eerder niet gevonden: controleer die adressen of vul de coördinaten zelf in.` : ''}</p>
+      <div class="row"><button class="primary" data-act="geoall">Coördinaten opzoeken</button></div><div class="geo-progress"></div></section>`;
+    box.querySelector('[data-act=geoall]').onclick = async (e) => {
+      e.currentTarget.disabled = true;
+      const out = box.querySelector('.geo-progress');
+      const { found, missing } = await this.geocodeSites(todo.map((s) => s.id), (i, n) => { out.innerHTML = `<p class="muted">Bezig: ${i} / ${n}…</p>`; });
+      toast(`${found} gevonden${missing ? `, ${missing} niet gevonden` : ''}`, missing ? 'err' : 'ok');
+      this.entity(box.closest('#adminView') ?? this.el.querySelector('#adminView'), 'sites');
+    };
+  }
+
+  /** Excel/CSV met klanten inlezen: voorbeeld tonen, daarna importeren en coördinaten opzoeken */
+  async importCustomers(view, file) {
+    const out = view.querySelector('#importOut');
+    let rows;
+    try { rows = await readTable(file); } catch (e) { out.innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+    const norm = (s) => String(s ?? '').trim();
+    const hi = rows.findIndex((r) => r.some((c) => /^naam$/i.test(norm(c))));
+    if (hi < 0) { out.innerHTML = '<div class="error">Geen kolom "Naam" gevonden in de eerste rijen.</div>'; return; }
+    const head = rows[hi].map((c) => norm(c).toLowerCase());
+    const col = (re) => head.findIndex((h) => re.test(h));
+    const C = { name: col(/^naam/), street: col(/^(adres|straat)/), postcode: col(/^post/), city: col(/^(gemeente|plaats|stad|woonplaats)/), phone: col(/^(telefoon|tel|gsm)/), vat: col(/^(btw|vat|ondernemingsnummer)/) };
+    const vatKey = (v) => norm(v).replace(/[^0-9a-z]/gi, '').toUpperCase();
+    const m = this.ctx.master();
+    const existing = alive(m.customers);
+    const items = [];
+    const skipped = [];
+    for (const r of rows.slice(hi + 1)) {
+      const get = (k) => (C[k] >= 0 ? norm(r[C[k]]).replace(/\s+/g, ' ') : '');
+      const rec = { name: get('name'), street: get('street'), postcode: get('postcode'), city: get('city'), phone: get('phone'), vat: get('vat') };
+      if (!rec.name) continue;
+      if (rec.postcode && !/^\d{4,5}$/.test(rec.postcode)) {
+        // kapotte rij (alles in één kolom): klant wel overnemen, adres niet
+        skipped.push(`${rec.name}: adres onleesbaar, zonder locatie overgenomen`);
+        rec.note = `Adres uit import: ${rec.street}`;
+        rec.street = ''; rec.postcode = ''; rec.city = '';
+      }
+      // "MOORSLEDE", "izegem" → "Moorslede", "Izegem"
+      if (rec.city === rec.city.toUpperCase() || rec.city === rec.city.toLowerCase()) {
+        rec.city = rec.city.toLowerCase().replace(/(^|[\s-])\p{L}/gu, (x) => x.toUpperCase());
+      }
+      const match = (rec.vat && existing.find((c) => c.vat && vatKey(c.vat) === vatKey(rec.vat)))
+        || existing.find((c) => c.name.trim().toLowerCase() === rec.name.toLowerCase())
+        || items.find((x) => x.rec.name.toLowerCase() === rec.name.toLowerCase())?.match;
+      items.push({ rec, match });
+    }
+    const nNew = items.filter((x) => !x.match).length;
+    const withAddr = items.filter((x) => x.rec.street && (x.rec.postcode || x.rec.city)).length;
+    out.innerHTML = `<div class="notice">
+      <p><b>${items.length}</b> klanten gevonden: <b>${nNew}</b> nieuw, <b>${items.length - nNew}</b> bestaand (worden bijgewerkt). ${withAddr} met adres → locatie + coördinaten.</p>
+      ${skipped.length ? `<details><summary>Opmerkingen (${skipped.length})</summary><ul>${skipped.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></details>` : ''}
+      <div class="row"><button class="primary" data-act="doimport">Importeren</button><button class="secondary" data-act="cancelimport">Annuleren</button></div></div>`;
+    out.querySelector('[data-act=cancelimport]').onclick = () => { out.innerHTML = ''; view.querySelector('#importFile').value = ''; };
+    out.querySelector('[data-act=doimport]').onclick = async () => {
+      const geoIds = [];
+      this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+        mm.customers = mm.customers ?? [];
+        for (const { rec, match } of items) {
+          let cust = match && mm.customers.find((c) => c.id === match.id);
+          if (!cust) { cust = { id: uid() }; mm.customers.push(cust); }
+          for (const [k, v] of Object.entries(rec)) if (v || !cust[k]) cust[k] = v || cust[k] || '';
+          cust.updated = Date.now();
+          const id = this.customerSite(mm, cust);
+          if (id) geoIds.push(id);
+        }
+      });
+      let stop = false;
+      out.innerHTML = `<div class="notice"><p>✔ ${items.length} klanten bewaard. Coördinaten opzoeken: <b class="geo-count">0 / ${geoIds.length}</b> <span class="muted small">(ongeveer ${Math.ceil(geoIds.length * 1.2 / 60)} min; je mag verder werken in de app, maar laat ze open)</span></p>
+        <div class="row"><button class="secondary" data-act="stopgeo">Stoppen</button></div></div>`;
+      out.querySelector('[data-act=stopgeo]').onclick = () => { stop = true; };
+      const { found, missing } = await this.geocodeSites(geoIds, (i, n) => {
+        const el = document.querySelector('.geo-count');
+        if (el) el.textContent = `${i} / ${n}`;
+      }, () => stop);
+      toast(`Import klaar: ${found} locaties gevonden${missing ? `, ${missing} niet gevonden (zie Locaties)` : ''}`, missing ? 'err' : 'ok');
+      if (out.isConnected) this.entity(view, 'customers');
+    };
   }
 
   /** Beheerrecht en "wachtwoord ingesteld" staan op de server: neem ze over in de lijst als ze verschillen */
