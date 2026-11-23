@@ -10,7 +10,7 @@ import { summarize } from './engine.js';
 import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
 import { esc, alive, byName, projectLabel, toast, sha256, copyText } from './ui.js';
 import { seedDemo } from './demo.js';
-import { initUpdates } from './update.js';
+import { initUpdates, confirmDialog } from './update.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -222,12 +222,13 @@ function setNav(active) {
   $nav.innerHTML = items.map(([k, label, icon]) => `<a href="#${k}" class="${k === active ? 'active' : ''}"><span aria-hidden="true">${icon}</span>${label}</a>`).join('');
   $nav.hidden = adminView || !dev || (!store.drive && !TEST);
   document.body.classList.toggle('admin-mode', adminView);
-  if (adminView && dev) {
+  if (adminView && (dev?.session || adminKey())) {
+    // zonder werknemerssessie (enkel beheersleutel) leidt de knop naar het aanmeldscherm
     $switch.hidden = false;
     $switch.href = '#dag';
     $switch.innerHTML = '<span aria-hidden="true">👤</span> Werknemer';
-    $switch.title = 'Terug naar je eigen uren';
-  } else if (!adminView && dev && canAdmin()) {
+    $switch.title = dev?.session ? 'Terug naar je eigen uren' : 'Aanmelden als werknemer';
+  } else if (!adminView && dev?.session && canAdmin()) {
     $switch.hidden = false;
     $switch.href = '#beheer';
     $switch.innerHTML = '<span aria-hidden="true">🔒</span> Beheer';
@@ -244,7 +245,8 @@ function route() {
   const hasSession = !!dev?.session;
   if (GOOGLE || TEST) {
     // niet aangemeld: enkel een beheerder met beheersleutel mag (naar het beheer); anders aanmelden
-    if (!hasSession) return adminKey() && (view === 'beheer' || !TEST) ? viewAdmin(rest[0] || 'overzicht') : viewLogin();
+    // (de beheersleutel geeft enkel toegang tot het beheer; de werknemersweergave vraagt altijd aanmelden)
+    if (!hasSession) return adminKey() && view === 'beheer' ? viewAdmin(rest[0] || 'overzicht') : viewLogin();
   } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
   if (view === 'planning') return viewPlanning();
@@ -307,10 +309,10 @@ function forgetUser(username) {
 }
 
 /** Aangemeld: sessie op dit toestel bewaren */
-function signedIn({ session, username, name, isAdmin }) {
+function signedIn({ session, username, name, isAdmin, mustChange }) {
   rememberUser(username, name);
   lsSet(DEVICE, { username, session });
-  lsSet(ME, { username, name, isAdmin });
+  lsSet(ME, { username, name, isAdmin, mustChange: !!mustChange });
   lsSet(ADMIN_OK, null);
   location.hash = '#dag';
   location.reload();
@@ -354,7 +356,6 @@ async function viewLogin(message = '') {
   let gs = null;
   let gsErr = '';
   if (isKeyAdmin && !TEST) { try { gs = await ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
-
   $main.innerHTML = `<section class="card welcome">
     <img src="logo.svg" alt="Enautec – Automatisatie &amp; elektrotechnieken" class="welcome-logo">
     <h1>Urenregistratie</h1>
@@ -366,13 +367,6 @@ async function viewLogin(message = '') {
         <input name="pw2" type="password" autocomplete="new-password" placeholder="Herhaal wachtwoord" required minlength="8" aria-label="Herhaal wachtwoord">
         <div class="row"><button class="primary">Wachtwoord instellen</button></div>
       </form><div id="pwErr"></div>`
-    : isKeyAdmin && !TEST ? `
-      ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
-      ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Zie HANDLEIDING.md.</div>' : ''}
-      ${gs?.configured && !gs.A ? `<p>Koppel nu het <b>Google-account van Enautec Uren</b>. Daar worden de uren, planning en het materiaal bewaard.</p>
-        <button class="primary big" data-act="connect">Koppelen met Google Drive</button>` : ''}
-      ${gs?.A ? `<p>✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google Drive')}</b>.</p><a class="btn primary" href="#beheer">Naar beheer</a>` : ''}
-      <p><button class="link" data-act="forget">Beheersleutel van dit toestel wissen</button></p>`
     : `
       <form id="loginForm" class="link-form">
         ${users.length ? `<select name="pick" aria-label="Gebruiker">
@@ -387,13 +381,22 @@ async function viewLogin(message = '') {
       <p class="muted small">Je blijft aangemeld op dit toestel tot je zelf afmeldt (Meer → Afmelden). Gebruik je het toestel van een collega? Meld je daarna af.</p>
       <p class="muted small">Wachtwoord vergeten? Vraag een beheerder om een nieuw wachtwoord. Daarna kan je het zelf wijzigen via Meer → Wachtwoord wijzigen.</p>
       ${TEST ? '<p class="muted small">Testmodus: gebruiker <b>tomas</b>, <b>ruben</b> of <b>philippe</b>, wachtwoord <b>demo1234</b>.</p>' : ''}
-      <details><summary>Beheerder met beheersleutel</summary>
+      ${isKeyAdmin ? `<section class="key-admin">
+        <h2>Beheer met beheersleutel</h2>
+        ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
+        ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Zie HANDLEIDING.md.</div>' : ''}
+        ${gs?.configured && !gs.A ? `<p>Koppel nu het <b>Google-account van Enautec Uren</b>. Daar worden de uren, planning en het materiaal bewaard.</p>
+          <button class="primary" data-act="connect">Koppelen met Google Drive</button>` : ''}
+        ${gs?.A ? `<p class="small">✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google Drive')}</b>.</p>` : ''}
+        ${gs?.A || TEST ? '<a class="btn secondary" href="#beheer">Naar beheer (zonder aanmelden)</a>' : ''}
+        <p><button class="link" data-act="forget">Beheersleutel van dit toestel wissen</button></p>
+      </section>` : `<details><summary>Beheerder met beheersleutel</summary>
         <form id="adminSetup" class="form-grid" style="text-align:left">
           <label><span>Adres van de verzamelserver</span><input name="server" required placeholder="https://enautec-uren.….workers.dev" value="${esc(serverUrl())}"></label>
           <label><span>Beheersleutel (ADMIN_KEY)</span><input name="key" type="password" required autocomplete="off"></label>
           <div><button class="primary">Verbinden</button></div>
         </form><div id="setupErr"></div>
-      </details>`}
+      </details>`}`}
     ${LOCAL && !TEST ? '<p><a href="?test=1">Testmodus starten</a></p>' : ''}
   </section>`;
 
@@ -667,6 +670,13 @@ async function viewMore() {
   });
 
   const pc = $main.querySelector('#pwChange');
+  if (openPwChange) {
+    openPwChange = false;
+    const d = pc.closest('details');
+    d.open = true;
+    d.scrollIntoView({ block: 'center' });
+    pc.elements.current.focus();
+  }
   pc.onsubmit = async (e) => {
     e.preventDefault();
     const msg = (t, cls = 'error') => { $main.querySelector('#pwMsg').innerHTML = `<div class="${cls}">${esc(t)}</div>`; };
@@ -674,6 +684,7 @@ async function viewMore() {
     try {
       await postJson('/api/password', { current: pc.elements.current.value, new: pc.elements.pw1.value }, dev.session);
       pc.reset();
+      lsSet(ME, { ...lsGet(ME), mustChange: false });
       msg('✔ Wachtwoord gewijzigd. Je andere toestellen zijn afgemeld.', 'ok-text');
       loadMySessions();
     } catch (err) { msg(err.message); }
@@ -709,6 +720,29 @@ function signOutLocal(message) {
   location.hash = '';
   viewLogin(message);
 }
+/** Wachtwoord ingesteld door een beheerder: één keer voorstellen om een eigen wachtwoord te kiezen */
+let pwOffered = false;
+let openPwChange = false;
+async function offerPasswordChange() {
+  const dev = device();
+  if (pwOffered || !dev?.session || !lsGet(ME)?.mustChange) return;
+  pwOffered = true;
+  const change = await confirmDialog({
+    title: 'Eigen wachtwoord kiezen?',
+    text: 'Je wachtwoord werd ingesteld door een beheerder. Wil je nu een eigen wachtwoord kiezen? Je kan ook dit wachtwoord houden.',
+    ok: 'Wachtwoord wijzigen', cancel: 'Houden',
+  });
+  if (change) {
+    openPwChange = true;
+    if (location.hash === '#meer') viewMore(); else location.hash = '#meer';
+    return;
+  }
+  try {
+    await postJson('/api/password/keep', {}, dev.session);
+    lsSet(ME, { ...lsGet(ME), mustChange: false });
+  } catch { pwOffered = false; /* offline: volgende keer opnieuw vragen */ }
+}
+
 /** Pincode van het beheer onthouden voor 12 uur op dit toestel */
 const adminUnlocked = () => (lsGet(ADMIN_OK)?.until ?? 0) > Date.now();
 const unlockAdmin = () => lsSet(ADMIN_OK, { until: Date.now() + 12 * 3600000 });
@@ -834,7 +868,8 @@ async function start() {
   await syncNow();
   if (GOOGLE && store.status === 'login' && !device()?.session && !adminKey()) { viewWelcome(); return; }
   route();
-  refreshMe();
+  offerPasswordChange();
+  refreshMe().then(offerPasswordChange);
 
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60000);
   document.addEventListener('visibilitychange', () => {
