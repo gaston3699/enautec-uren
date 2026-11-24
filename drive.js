@@ -65,6 +65,14 @@ export class OneDrive {
     const item = await res.json();
     return { webUrl: item.webUrl };
   }
+
+  /** Bestand ophalen als Blob, of null als het niet bestaat */
+  async download(path) {
+    const res = await this.req(`/me/drive/root:/${encPath(path)}:/content`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`OneDrive ophalen mislukt (${res.status})`);
+    return res.blob();
+  }
 }
 
 /** Testversie: "OneDrive" in de browser (enkel voor localhost / demo) */
@@ -94,8 +102,17 @@ export class TestDrive {
   }
   async upload(path, blob) {
     const all = this._all();
-    all[path] = { body: JSON.stringify({ bestand: path, grootte: blob.size }), eTag: 'x' };
+    // afbeeldingen als data-URL (testmodus), andere bestanden enkel een beschrijving
+    const body = blob.type?.startsWith('image/')
+      ? await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(blob); })
+      : JSON.stringify({ bestand: path, grootte: blob.size });
+    all[path] = { body, eTag: 'x' };
     this._save(all);
     return { webUrl: null };
+  }
+  async download(path) {
+    const f = this._all()[path];
+    if (!f) return null;
+    return f.body.startsWith('data:') ? (await fetch(f.body)).blob() : new Blob([f.body]);
   }
 }

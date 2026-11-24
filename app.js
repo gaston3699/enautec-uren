@@ -13,6 +13,7 @@ import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths } from './report.js';
 import { initCombos } from './combo.js';
+import { renderTodo } from './todo.js';
 import { weekStart } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, renderQuestion } from './questions.js';
 
@@ -198,7 +199,7 @@ function owntracksLink(ot) {
 
 // ---------- Synchroniseren ----------
 function myPaths(date = today()) {
-  const paths = [PATHS.master, PATHS.planning];
+  const paths = [PATHS.master, PATHS.planning, PATHS.todos];
   const dev = device();
   if (dev?.username) {
     const months = new Set([date.slice(0, 7), today().slice(0, 7), shiftDate(`${today().slice(0, 7)}-01`, -1).slice(0, 7)]);
@@ -255,7 +256,7 @@ const $switch = document.getElementById('modeSwitch');
 function setNav(active) {
   const dev = device();
   const adminView = active === 'beheer';
-  const items = [['dag', 'Dag', '🕒'], ['planning', 'Planning', '📅'], ['overzicht', 'Overzicht', '📋'], ['meer', 'Meer', '⚙']];
+  const items = [['dag', 'Dag', '🕒'], ['planning', 'Planning', '📅'], ['overzicht', 'Overzicht', '📋'], ['todo', 'ToDo', '✅'], ['meer', 'Meer', '⚙']];
   $nav.innerHTML = items.map(([k, label, icon]) => `<a href="#${k}" class="${k === active ? 'active' : ''}"><span aria-hidden="true">${icon}</span>${label}</a>`).join('');
   $nav.hidden = adminView || !dev || (!store.drive && !TEST);
   document.body.classList.toggle('admin-mode', adminView);
@@ -287,6 +288,7 @@ function route() {
   } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
   if (view === 'planning') return viewPlanning();
+  if (view === 'todo') { setNav('todo'); return renderTodo($main, { ctx }); }
   if (view === 'overzicht') return viewHistory(rest);
   if (view === 'meer') return viewMore();
   if (view === 'vraag') return viewQuestion(rest[0]);
@@ -959,7 +961,7 @@ async function refreshMe() {
 // ---------- Opstarten ----------
 async function start() {
   // Altijd eerst de werknemersweergave tonen (behalve bij terugkeer van Google of een koppellink)
-  if (device() && !/^#(google|koppel)=/.test(location.hash) && !/^#(dag|planning|overzicht|meer)/.test(location.hash)) {
+  if (device() && !/^#(google|koppel)=/.test(location.hash) && !/^#(dag|planning|overzicht|todo|meer)/.test(location.hash)) {
     history.replaceState(null, '', `${location.pathname}${location.search}#dag`);
   }
   let r = null;

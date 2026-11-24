@@ -9,6 +9,8 @@ const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)
 export const PATHS = {
   master: `${DATA_FOLDER}/stamgegevens.json`,
   planning: `${DATA_FOLDER}/planning.json`,
+  todos: `${DATA_FOLDER}/todo.json`,
+  todoPhoto: (name) => `${DATA_FOLDER}/todo-fotos/${name}`,
   regFolder: (month) => `${DATA_FOLDER}/registraties/${month}`,
   reg: (month, username) => `${DATA_FOLDER}/registraties/${month}/${username}.json`,
 };

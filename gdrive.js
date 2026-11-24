@@ -131,6 +131,18 @@ export class GoogleDrive {
     return (await this._json(res, 'map lezen')).files.map((x) => x.name);
   }
 
+  /** Bestand ophalen als Blob (bv. een foto), of null als het niet bestaat */
+  async download(path) {
+    const { dirs, name } = this.split(path);
+    const dir = await this.folderId(dirs, false);
+    if (!dir) return null;
+    const f = await this.find(name, dir, false);
+    if (!f) return null;
+    const res = await this.req(`${API}/files/${f.id}?alt=media`);
+    if (!res.ok) throw new Error(`Google Drive ophalen mislukt (${res.status})`);
+    return res.blob();
+  }
+
   /** Bestand uploaden (bv. Excel-export); vervangt een bestaand bestand met dezelfde naam */
   async upload(path, blob, contentType) {
     const { dirs, name } = this.split(path);

@@ -7,6 +7,7 @@ import { parseLatLon, distance } from './geo.js';
 import { geocode, addressLine, splitAddress } from './geocode.js';
 import { readTable } from './xlsx.js';
 import { workTypesOf, DEFAULT_WORK_TYPES, similarTo, workTypeOptions } from './projects.js';
+import { renderTodo, todoToConfirm } from './todo.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Leverancier', thuis: 'Thuisadres werknemer' };
@@ -138,10 +139,11 @@ export class Admin {
     this.tab = tab;
     if (tab !== 'overzicht') clearInterval(this.ovTimer);
     const n = this.pendingCount();
-    const tabs = { overzicht: 'Dagoverzicht', nieuw: `Te bevestigen${n ? ` <span class="tab-badge">${n}</span>` : ''}`, planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', workTypes: 'Soorten werk', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
+    const nt = todoToConfirm(this.ctx);
+    const tabs = { overzicht: 'Dagoverzicht', nieuw: `Te bevestigen${n ? ` <span class="tab-badge">${n}</span>` : ''}`, todo: `ToDo${nt ? ` <span class="tab-badge">${nt}</span>` : ''}`, planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', workTypes: 'Soorten werk', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
     el.innerHTML = `<nav class="tabs" aria-label="Beheer">${Object.entries(tabs).map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav><div id="adminView"></div>`;
     const view = el.querySelector('#adminView');
-    const fn = { overzicht: this.overview, nieuw: this.review, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
+    const fn = { overzicht: this.overview, nieuw: this.review, todo: (v) => { this.ctx.store.sync([PATHS.todos]).catch(() => {}).then(() => renderTodo(v, { ctx: this.ctx, asAdmin: true, onChange: () => this.render(this.el, 'todo') })); }, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
     Promise.resolve().then(() => (fn ? fn.call(this, view) : this.entity(view, tab)))
       .catch((e) => { view.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
   }
