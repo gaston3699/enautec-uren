@@ -135,6 +135,18 @@ const ctx = {
     if (s) postJson('/api/me/pause', { minutes: min }, s).catch((e) => toast(e.message, 'err'));
   },
   /** Dag als "niet gewerkt" (of terug open) doorgeven: dan stuurt de server die dag geen vragen meer */
+  /** Materiaal uit de planning: wat is al ingeladen (gedeeld per project), en afvinken */
+  checks: async (date) => {
+    const s = device()?.session;
+    if (!s || !serverUrl()) return null;
+    const r = await fetch(`${serverUrl()}/api/checks?date=${date}`, { headers: { Authorization: `Bearer ${s}` } });
+    return r.ok ? r.json() : null;
+  },
+  setCheck: (body) => {
+    const s = device()?.session;
+    if (!s) return Promise.reject(new Error('Niet aangemeld.'));
+    return postJson('/api/checks', body, s);
+  },
   notWorked: (date, on) => {
     const s = device()?.session;
     if (s) postJson('/api/questions/day', { date, notWorked: !!on }, s).catch(() => {});

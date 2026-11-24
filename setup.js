@@ -8,45 +8,93 @@ import { pushSupport, enablePush, currentSubscription } from './questions.js';
 
 const MIN = 60000;
 
-/** Script voor Scriptable: toont de stand van vandaag (uren, waar, open vragen) */
+/** Versie van het script (de server meldt als er een nieuwere is: dan opnieuw instellen via Meer) */
+export const SCRIPT_VERSION = 2;
+
+/**
+ * Script voor Scriptable: toont de stand van vandaag (uren, waar, open vragen) en 's ochtends
+ * de planning met het materiaal. Middelgroot/groot: tik op een materiaalregel om af te vinken
+ * (voor iedereen op dat project) en op de pauzeknop om je pauze te starten of te stoppen.
+ * Een tik opent Scriptable even (een widget kan op iPhone niets doen zonder een app te openen).
+ */
 export function widgetScript({ server, key, name = '' }) {
   return `// Enautec Uren – widget${name ? ` voor ${name}` : ''}
-// Gemaakt door de app op ${new Date().toLocaleDateString('nl-BE')}. Deze sleutel geeft enkel de stand van vandaag.
-// Afmelden kan in de app bij Meer → Mijn toestellen ("Widget").
+// Gemaakt door de app op ${new Date().toLocaleDateString('nl-BE')}. Deze sleutel geeft enkel de stand van vandaag,
+// pauze starten/stoppen en materiaal afvinken. Afmelden kan in de app bij Meer → Mijn toestellen ("Widget").
+const SCRIPT_VERSION = ${SCRIPT_VERSION};
 const SERVER = ${JSON.stringify(server)};
 const KEY = ${JSON.stringify(key)};
 
 const RED = new Color("#e3262e");
 const FG = Color.dynamic(new Color("#111111"), new Color("#ffffff"));
 const MUTED = Color.dynamic(new Color("#6b6b6b"), new Color("#a0a0a0"));
+const BTN = Color.dynamic(new Color("#f0f0ee"), new Color("#2c2c2e"));
 const STATUS = { geen: "Nog niet gestart", werk: "Aan het werk", pauze: "Pauze", onderweg: "Onderweg", gedaan: "Dag gedaan", nee: "Niet gewerkt" };
 const hm = (min) => Math.floor(min / 60) + "u" + String(min % 60).padStart(2, "0");
 const hhmm = (ts) => { const d = new Date(ts); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
 
-async function load() {
-  const r = new Request(SERVER + "/api/widget");
-  r.headers = { Authorization: "Bearer " + KEY };
+async function api(path, body) {
+  const r = new Request(SERVER + path);
+  r.headers = { Authorization: "Bearer " + KEY, "Content-Type": "application/json" };
   r.timeoutInterval = 20;
+  if (body) { r.method = "POST"; r.body = JSON.stringify(body); }
   const d = await r.loadJSON();
   if (r.response.statusCode !== 200) throw new Error(d.error || "Fout " + r.response.statusCode);
   return d;
 }
 
-const family = config.widgetFamily || "small";
-const w = new ListWidget();
-const text = (t, font, color, lines) => { const x = w.addText(t); x.font = font; x.textColor = color; if (lines) x.lineLimit = lines; x.minimumScaleFactor = 0.7; return x; };
+// getikt op het widget: eerst de actie uitvoeren
+const q = args.queryParameters || {};
+let banner = null;
 try {
-  const d = await load();
+  if (q.act === "pause") {
+    await api("/api/widget/pause", { action: q.v });
+    banner = q.v === "start" ? "✔ Pauze gestart" : "✔ Pauze gestopt";
+  } else if (q.act === "check") {
+    await api("/api/widget/check", { date: q.d, projectId: q.p, key: q.k, done: q.v === "1" });
+    banner = (q.v === "1" ? "✔ Ingeladen: " : "↺ Niet meer ingeladen: ") + (q.t || "");
+  }
+} catch (e) { banner = "⚠ " + (e.message || e); }
+
+// in de app (na een tik) tonen we het middelgrote widget, zodat je verder kan aftikken
+const family = config.runsInWidget ? (config.widgetFamily || "small") : "medium";
+const taps = family === "medium" || family === "large";
+const link = (p) => "scriptable:///run/" + encodeURIComponent(Script.name()) + "?" + Object.keys(p).map((k) => k + "=" + encodeURIComponent(p[k])).join("&");
+const w = new ListWidget();
+const style = (x, font, color, lines) => { x.font = font; x.textColor = color; if (lines) x.lineLimit = lines; x.minimumScaleFactor = 0.7; return x; };
+const text = (t, font, color, lines) => style(w.addText(t), font, color, lines);
+/** regel met een eigen tikvlak (enkel middelgroot en groot) */
+function tapRow(t, font, color, url, button) {
+  if (!taps) return text(t, font, color, 1);
+  const s = w.addStack();
+  s.url = url;
+  s.centerAlignContent();
+  if (button) { s.backgroundColor = BTN; s.cornerRadius = 8; s.setPadding(4, 8, 4, 8); }
+  style(s.addText(t), font, color, 1);
+  if (!button) s.addSpacer();
+  return s;
+}
+function pauseButton(d) {
+  if (!taps || !["werk", "pauze", "onderweg"].includes(d.status)) return;
+  w.addSpacer(4);
+  if (d.pause === "loopt") tapRow("☕ Pauze stoppen · sinds " + hhmm(d.pauseSince), Font.semiboldSystemFont(12), FG, link({ act: "pause", v: "stop" }), true);
+  else if (d.pause === "mogelijk") tapRow("☕ Pauze starten", Font.semiboldSystemFont(12), FG, link({ act: "pause", v: "start" }), true);
+}
+try {
+  const d = await api("/api/widget");
   const status = STATUS[d.status] + (d.since && ["werk", "pauze"].includes(d.status) ? " sinds " + hhmm(d.since) : "");
+  const openPlan = (d.plan || []).some((p) => p.material.some((m) => !m.done));
+  w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
   if (family.startsWith("accessory")) {
     // vergrendelscherm
+    w.backgroundColor = null;
     text("Enautec · " + hm(d.workedMin), Font.boldSystemFont(14), Color.white(), 1);
     text(d.openCount ? "❓ vraag open" : status, Font.systemFont(12), Color.white(), 1);
     if (family === "accessoryRectangular" && (d.project || d.place)) text(d.project || d.place, Font.systemFont(12), Color.white(), 1);
-  } else if ((d.plan || []).length && (d.status === "geen" || new Date().getHours() < 10)) {
-    // 's ochtends: wat staat er vandaag gepland en welk materiaal moet mee
-    w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
+  } else if ((d.plan || []).length && (d.status === "geen" || new Date().getHours() < 10 || (!config.runsInWidget && openPlan && q.act === "check"))) {
+    // 's ochtends: wat staat er vandaag gepland en welk materiaal moet mee (tik = ingeladen)
     w.setPadding(12, 14, 12, 14);
+    if (banner) text(banner, Font.semiboldSystemFont(11), RED, 1);
     const max = family === "large" ? 14 : family === "medium" ? 5 : 3;
     text("ENAUTEC · VANDAAG", Font.heavySystemFont(11), RED, 1);
     w.addSpacer(3);
@@ -55,27 +103,38 @@ try {
       text(p.project, Font.boldSystemFont(family === "small" ? 13 : 14), FG, family === "small" ? 2 : 1);
       if (family !== "small" && (p.place || p.note)) text([p.place, p.note].filter(Boolean).join(" · "), Font.systemFont(11), MUTED, 1);
       if (!p.material.length) { text("Geen materiaal opgegeven", Font.systemFont(11), MUTED, 1); continue; }
-      for (const m of p.material.slice(0, Math.max(left, 0))) text("🧰 " + m, Font.systemFont(12), FG, 1);
-      if (p.material.length > left) text("+ " + (p.material.length - Math.max(left, 0)) + " meer in de app", Font.systemFont(11), MUTED, 1);
-      left -= p.material.length;
+      // nog in te laden eerst
+      const list = p.material.filter((m) => !m.done).concat(p.material.filter((m) => m.done));
+      for (const m of list.slice(0, Math.max(left, 0))) {
+        tapRow((m.done ? "✅ " : "⬜️ ") + m.text, Font.systemFont(12), m.done ? MUTED : FG,
+          link({ act: "check", d: d.date, p: p.projectId, k: m.key, v: m.done ? "0" : "1", t: m.text }));
+      }
+      if (list.length > left) text("+ " + (list.length - Math.max(left, 0)) + " meer in de app", Font.systemFont(11), MUTED, 1);
+      left -= list.length;
       w.addSpacer(3);
     }
-    if (family === "small" && d.plan.length > 1) text("+ " + (d.plan.length - 1) + " project", Font.systemFont(11), MUTED, 1);
+    if (family === "small") {
+      const all = d.plan.flatMap((p) => p.material);
+      if (all.length) text(all.filter((m) => m.done).length + "/" + all.length + " ingeladen · tik om af te vinken", Font.systemFont(10), MUTED, 2);
+      if (d.plan.length > 1) text("+ " + (d.plan.length - 1) + " project", Font.systemFont(11), MUTED, 1);
+    }
     w.addSpacer();
     if (d.openCount) text("❓ " + (d.openCount === 1 ? "1 vraag open" : d.openCount + " vragen open"), Font.semiboldSystemFont(11), RED, 1);
   } else {
-    w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
     w.setPadding(12, 14, 12, 14);
+    if (banner) text(banner, Font.semiboldSystemFont(11), RED, 1);
     text("ENAUTEC", Font.heavySystemFont(11), RED);
     w.addSpacer(2);
     text(hm(d.workedMin), Font.boldSystemFont(32), FG, 1);
     text(status, Font.mediumSystemFont(12), MUTED, 1);
     if (d.project || d.place) { w.addSpacer(4); text(d.project || d.place, Font.semiboldSystemFont(12), FG, family === "small" ? 2 : 1); }
     if (family !== "small" && d.project && d.place) text("📍 " + d.place, Font.systemFont(11), MUTED, 1);
+    pauseButton(d);
     w.addSpacer();
     if (d.openCount) text("❓ " + (d.openCount === 1 ? "1 vraag open" : d.openCount + " vragen open"), Font.semiboldSystemFont(11), RED, 1);
     else text("Bijgewerkt " + hhmm(d.now), Font.systemFont(10), MUTED, 1);
   }
+  if (d.scriptVersion > SCRIPT_VERSION && !family.startsWith("accessory")) text("Nieuwe versie: app → Meer → Widget instellen", Font.systemFont(10), RED, 2);
 } catch (e) {
   w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
   text("ENAUTEC", Font.heavySystemFont(11), RED);
@@ -84,7 +143,7 @@ try {
 }
 w.refreshAfterDate = new Date(Date.now() + 10 * 60 * 1000);
 if (config.runsInWidget) Script.setWidget(w);
-else await w.presentSmall();
+else await w.presentMedium();
 Script.complete();
 `;
 }
@@ -236,7 +295,7 @@ export function renderSetup(el, deps) {
     try { await fetchMe(); } catch { /* offline */ }
     const ok = s.widgetAt && me?.widgetSeen && me.widgetSeen >= s.widgetAt;
     frame(`<h2>🧩 Widget op je beginscherm</h2>
-      <p>Het widget toont 's ochtends je planning en het materiaal dat mee moet, en daarna je uren van vandaag, waar je bent en of er een vraag openstaat. Kies <b>middelgroot</b> om meer materiaal te zien.</p>
+      <p>Het widget toont 's ochtends je planning en het materiaal dat mee moet, en daarna je uren van vandaag, waar je bent en of er een vraag openstaat. Kies <b>middelgroot</b>: dan tik je op een materiaalregel om ze af te vinken als ingeladen, en op <b>☕ Pauze starten/stoppen</b>. Scriptable opent dan even; veeg daarna terug naar je beginscherm.</p>
       <ol class="setup-steps">
         <li>Installeer de gratis app <b>Scriptable</b> uit de App Store.</li>
         <li>${s.script ? '<button class="primary" data-act="copy">📋 Kopieer het script</button>' : '<button class="primary" data-act="make">Script klaarzetten</button>'}

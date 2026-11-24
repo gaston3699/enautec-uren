@@ -20,9 +20,16 @@ export function hue(id) {
 export const needId = (date, projectId) => `${date}|${projectId}`;
 export const needOf = (planning, date, projectId) => alive(planning?.needs).find((n) => n.id === needId(date, projectId)) ?? null;
 export const needLine = (l) => [l.qty != null && l.qty !== '' ? String(l.qty).replace('.', ',') : '', l.unit, l.description].filter(Boolean).join(' ');
-export function needHtml(need) {
+/** Sleutel van een materiaalregel om af te vinken (zelfde op de server: worker/src/widget.js) */
+export const needKey = (description) => String(description ?? '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
+/** checkable: met vakjes om af te vinken als ingeladen (de stand komt van de server) */
+export function needHtml(need, { checkable = false } = {}) {
   const lines = (need?.lines ?? []).filter((l) => l.description);
-  return lines.length ? `<div class="cal-need"><b>🧰 Mee te nemen</b><ul>${lines.map((l) => `<li>${esc(needLine(l))}</li>`).join('')}</ul></div>` : '';
+  if (!lines.length) return '';
+  return `<div class="cal-need"><b>🧰 Mee te nemen</b>${checkable
+    ? `<div class="need-checks">${lines.map((l) => `<label class="need-check"><input type="checkbox" data-ck="${esc(need.projectId)}" data-key="${esc(needKey(l.description))}" data-t="${esc(needLine(l))}">
+        <span>${esc(needLine(l))}</span><small class="muted"></small></label>`).join('')}</div>`
+    : `<ul>${lines.map((l) => `<li>${esc(needLine(l))}</li>`).join('')}</ul>`}</div>`;
 }
 
 /** Alle dagen die in de huidige weergave te zien zijn (voor "selecteer alle werkdagen") */

@@ -252,6 +252,17 @@ tr.total td { font-weight: 700; background: var(--surface2); }
 .blk-time input.t { width: 5.2em; text-align: center; font-weight: 700; font-size: 17px; padding: 6px 4px; }
 .blk-time input.t.auto { color: var(--c-auto); font-style: italic; }
 .blk-time input.t.bad { border-color: var(--c-werf); background: var(--red-soft); }
+/* pauze binnen een doorlopend blok (zelfde project voor en na) */
+.blk-pause { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: var(--surface2); border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+.blk-pause input.t { width: 4.6em; text-align: center; font-weight: 600; padding: 4px; }
+.blk-pause .dur { margin-left: auto; }
+/* opsplitsing onderaan het dagscherm */
+.day-split { margin-top: 10px; }
+.split-list { list-style: none; padding: 0; margin: 6px 0 0; }
+.split-list li { display: grid; grid-template-columns: 12px 6.5em 1fr auto; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.split-list li:last-child { border-bottom: 0; }
+.split-dot { width: 12px; height: 12px; border-radius: 3px; }
+.split-time { font-variant-numeric: tabular-nums; color: var(--muted); }
 .dur { display: inline-block; min-width: 4.4em; text-align: center; border-radius: 8px; padding: 6px 8px; background: var(--surface2); font-weight: 700; font-family: var(--font-head); }
 .dur.bad { background: var(--c-werf); color: #fff; }
 .blk-more { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
@@ -437,6 +448,13 @@ main:has(.plan-admin) { max-width: 1400px; }
 .need-row input { width: 100%; min-width: 0; }
 .cal-need { margin-top: 6px; }
 .cal-need ul { margin: 2px 0 0; padding-left: 20px; }
+.need-checks { display: grid; gap: 2px; margin-top: 4px; }
+.need-check { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.need-check:last-child { border-bottom: 0; }
+.need-check input { width: 22px; height: 22px; flex: none; accent-color: var(--ok); }
+.need-check span { flex: 1; }
+.need-check.done span { color: var(--muted); text-decoration: line-through; }
+.need-check small { font-size: 12px; }
 .day-need { border-left: 5px solid hsl(var(--h) 60% 45%); }
 .pill-check { position: relative; }
 .pill-check input { position: absolute; opacity: 0; pointer-events: none; }
