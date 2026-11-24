@@ -238,6 +238,10 @@ export function buildTimeline({ points, badges = [], sites, projects = [], plann
     .map((p) => ({ ...p, site: matchSite(p, sites) }));
 
   const stays = findStays(clusterPoints(pts, rules), rules);
+  // Vandaag: het laatste verblijf op een gekende plek (klant, atelier, leverancier) loopt door tot nu.
+  // De gsm stuurt niets zolang je stilstaat; pas als je vertrekt komt er een nieuw punt.
+  const lastStay = stays.at(-1);
+  if (live && lastStay?.site && lastStay.site.type !== 'thuis' && openEnd > lastStay.end) lastStay.end = openEnd;
   let segs = staysToSegments(stays, pts, rules, sites.find((s) => s.type === 'thuis'));
 
   const atelier = sites.find((s) => s.type === 'atelier');
@@ -292,9 +296,12 @@ export function applyAnswers(segs, answers = []) {
   // pauze via de melding: van het bevestigen van "Pauze?" tot "Pauze voorbij?" (of de standaardpauze)
   const p = answers.filter((a) => a.kind === 'pauze' && a.answer).at(-1);
   if (p?.answer.answer === 'ja') {
-    const start = p.answer.at ?? p.answeredAt ?? p.ts;
+    // per kwartier: begin en einde naar het dichtstbijzijnde kwartier (12:04 → 12:00, 12:35 → 12:30), minstens een kwartier
+    const Q = 15 * MIN;
+    const q = (ts) => Math.round(ts / Q) * Q;
+    const start = q(p.answer.at ?? p.answeredAt ?? p.ts);
     const endA = answers.filter((a) => a.kind === 'pauze_einde' && a.answer?.answer === 'ja').at(-1);
-    const end = endA ? (endA.answer.at ?? endA.answeredAt) : start + (p.answer.pauseMin ?? 30) * MIN;
+    const end = Math.max(start + Q, endA ? q(endA.answer.at ?? endA.answeredAt) : start + (p.answer.pauseMin ?? 30) * MIN);
     if (end > start) {
       const cut = [];
       for (const s of out) {
