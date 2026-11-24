@@ -335,6 +335,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       ${readonly || s.kind === 'pauze' ? '' : `<div class="blk-more"><select class="${WORKLIKE.has(s.kind) ? '' : 'full'} ${s.kind === 'werk' && !s.projectId ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select>
         ${WORKLIKE.has(s.kind) ? `<select data-f="workType" aria-label="Type werk">${workTypeOptions(master, s.workType)}</select>` : ''}</div>`}
       ${readonly && s.workType ? `<div class="blk-msg muted">${esc(workTypeName(master, s.workType))}</div>` : ''}
+      ${matHosts.get(s.projectId) === i ? blockMaterial(s.projectId) : ''}
       ${readonly ? '' : `<details class="blk-more-wrap" style="grid-column:1/-1" ${s.kind === 'onbekend' ? 'open' : ''}><summary class="small muted">Soort, opmerking, verwijderen</summary>
         <div class="blk-more">
           <select data-f="kind" aria-label="Soort">${kinds}</select>
@@ -343,6 +344,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         </div></details>`}
       ${readonly && s.note ? `<div class="blk-msg muted">${esc(s.note)}</div>` : ''}
       ${bad ? '<div class="blk-msg danger">Einde ligt voor het begin.</div>' : ''}
+    </div>`;
+  }
+
+  /** Gebruikt materiaal in het blok van het project (onder het soort werk) */
+  let matHosts = new Map();
+  function blockMaterial(pid) {
+    const items = material.map((m, i) => ({ m, i })).filter(({ m }) => m.projectId === pid);
+    if (readonly && !items.length) return '';
+    return `<div class="blk-mat">
+      ${items.length ? `<b class="small">🧰 Gebruikt materiaal</b><div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span></span></div>${items.map(({ m, i }) => matHtml(m, i)).join('')}` : ''}
+      ${readonly ? '' : `<button class="secondary small" data-act="add-mat" data-p="${esc(pid)}">🧰 + Materiaal</button>`}
     </div>`;
   }
 
@@ -385,12 +397,15 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     showChecks();
   }
 
-  /** Materiaal: eerst het project (van de projecten van die dag), dan het materiaal */
+  /**
+   * Materiaal dat (nog) bij geen blok hoort: zonder project, of op een project dat niet meer
+   * in de blokken staat. Het andere materiaal staat in het blok van zijn project.
+   */
   function materialHtml(sortedSegs) {
     const dayProj = [...new Set(sortedSegs.filter((s) => WORKLIKE.has(s.kind) && s.projectId).map((s) => s.projectId))];
     // maar één project vandaag: al het materiaal hoort daarbij
     if (dayProj.length === 1 && !readonly) for (const m of material) if (!m.projectId) m.projectId = dayProj[0];
-    const groups = [...dayProj, ...new Set(material.map((m) => m.projectId).filter((p) => p && !dayProj.includes(p)))];
+    const groups = [...new Set(material.map((m) => m.projectId).filter((p) => p && !matHosts.has(p)))];
     const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
     const head = '<div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span></span></div>';
     const rows = (list) => (list.length ? head + list.map(({ m, i }) => matHtml(m, i, dayProj)).join('') : '');
@@ -403,12 +418,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         ${rows(items) || '<p class="muted small">Nog geen materiaal op dit project.</p>'}
         ${readonly ? '' : `<button class="secondary" data-act="add-mat" data-p="${esc(pid)}">+ Materiaal${groups.length > 1 ? ' op dit project' : ''}</button>`}</div>`;
     }).join('');
-    const looseHtml = loose.length ? `<div class="mat-proj-group"><h3>Nog geen project gekozen</h3>${rows(loose)}</div>` : '';
-    if (!parts && !looseHtml) {
-      return readonly ? '<p class="muted">Geen materiaal ingegeven.</p>'
-        : '<p class="muted">Kies eerst bij je tijdsblokken een project. Daarna geef je hier het materiaal per project in.</p>';
-    }
-    return parts + looseHtml;
+    const looseHtml = loose.length ? `<div class="mat-proj-group"><h3>Materiaal: nog geen project gekozen</h3>${rows(loose)}</div>` : '';
+    return parts || looseHtml ? `<div class="mat-rest">${parts}${looseHtml}</div>` : '';
   }
 
   function draw() {
@@ -418,6 +429,9 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const blocks = merged ? employeeBlocks(segs, rules).groups : order.map(({ i }) => ({ main: i, members: [i], pauses: [] }));
     if (merged && !readonly) for (const g of blocks) for (const k of g.members) if (k !== g.main && TRAVEL.has(segs[k].kind)) segs[k].projectId = segs[g.main].projectId;
     const shown = blocks.map((g) => ({ g, s: { ...segs[g.main], start: segs[g.members[0]].start, end: segs[g.members.at(-1)].end } }));
+    // materiaal komt in het eerste blok van zijn project
+    matHosts = new Map();
+    for (const { g, s } of shown) if (WORKLIKE.has(s.kind) && s.projectId && !matHosts.has(s.projectId)) matHosts.set(s.projectId, g.main);
     // onderaan: de echte opsplitsing (ritten, werk en pauze apart)
     const tot = dayTotals(segs, rules);
     const km = tot.km;
@@ -431,7 +445,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
       ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
       ${!asAdmin && !readonly ? neededHtml() : ''}
-      <section class="card">
+      <section class="card mat-card">
         <div class="row spread"><h2>Tijdsblokken</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
         ${!readonly && cur.edited ? '<p style="text-align:right;margin:0"><button class="link" data-act="reset">↺ Automatisch voorstel</button></p>' : ''}
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
@@ -441,15 +455,11 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           <button class="secondary" data-act="add" data-kind="werk">⛑️ + Werk</button>
           <button class="secondary" data-act="add" data-kind="atelier">🏭 + Atelier</button>
           <button class="secondary" data-act="add" data-kind="pauze">☕ + Pauze</button>
-          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button>'}</div>
-          <div class="pause-set"><span>☕ <b>Standaard pauze</b><small>Om 12:00 krijg je een melding om je pauze te starten.</small></span>
-            <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>
-          <p class="muted small">Tijden typ je kort: <b>8</b> = 8:00, <b>730</b> of <b>7u30</b> = 7:30, <b>16.45</b>. Blauw en schuin = voorgesteld, gewoon overschrijven. Bij bevestigen wordt per kwartier afgerond (begin tot 5 min, einde tot 8 min na het kwartier naar beneden).</p>`}
-      </section>
-      <section class="card mat-card">
-        <h2>Gebruikt materiaal</h2>
+          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button>'}</div>`}
         <datalist id="artikels">${articles.map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
         ${materialHtml(order.map((x) => x.s))}
+        ${readonly ? '' : `<div class="pause-set"><span>☕ <b>Standaard pauze</b><small>Om 12:00 krijg je een melding om je pauze te starten.</small></span>
+            <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>`}
       </section>
       <section class="card">
         ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd. Klopt er iets niet? Pas de uren aan en bevestig opnieuw.</p>
@@ -541,7 +551,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       return;
     }
     if (t.dataset.f === 'daynote') { if (!editingConfirmed) saveDay(ctx, username, date, { note: t.value, ...(st.edited ? {} : { segments: clean(segs) }) }); return; }
-    const box = t.closest('.blk');
+    const box = t.closest('.mat') ? null : t.closest('.blk'); // materiaal staat ook in een blok
     if (box) {
       // pauze binnen een doorlopend blok: die pauze zelf aanpassen
       const pi = t.dataset.pi;

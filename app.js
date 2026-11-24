@@ -712,13 +712,13 @@ async function viewDay(date, focus = null) {
   setNav('dag');
   const dev = device();
   const emp = alive(ctx.master().employees).find((e) => e.username === dev.username);
-  $main.innerHTML = `<section class="card"><div class="datebar">
+  $main.innerHTML = `<section class="card day-head"><div class="datebar">
       <a class="icon" href="#dag/${shiftDate(date, -1)}" aria-label="Vorige dag">‹</a>
-      <div class="date-title"><b>${esc(fmtDate(date))}</b>${date === today() ? ' <span class="pill red">vandaag</span>' : ''}
+      <div><div class="date-title"><b>${esc(fmtDate(date))}</b>${date === today() ? ' <span class="pill red">vandaag</span>' : ''}
         <input type="date" id="dayPick" value="${date}" max="${today()}" aria-label="Kies een datum"></div>
-      ${date < today() ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true"></span>'}
-    </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}
-    <div class="row spread small muted" style="margin-top:8px"><span id="rawInfo"></span><button class="link" data-act="refresh">↻ Vernieuwen</button></div></section>
+        <div class="day-head-info muted"><span id="rawInfo"></span> · <button class="link" data-act="refresh">↻ Vernieuwen</button></div></div>
+      ${date < today() ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true" style="visibility:hidden"></span>'}
+    </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}</section>
     <div id="openQuestions"></div>
     ${isMobile() && pushSupport().ok && Notification.permission === 'default' && date === today() ? '<a class="q-banner soft" href="#meer">🔔 <span>Zet de <b>meldingen</b> aan: dan vraagt de app zelf bij wie je bent.</span></a>' : ''}
     <div id="dayBody"><p class="muted center">Laden…</p></div>`;
