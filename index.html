@@ -384,6 +384,19 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; min
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .tabs a { padding: 7px 13px; border-radius: 99px; border: 1.5px solid var(--line); text-decoration: none; color: var(--fg); font-weight: 700; font-size: 14px; background: var(--surface); }
 .tabs a.active { background: var(--ink); color: var(--ink-on); border-color: var(--ink); }
+/* Beheer: hoofdtabbladen + subtabbladen */
+.main-tabs { margin-bottom: 8px; }
+.main-tabs a { display: inline-flex; align-items: center; gap: 4px; }
+.subtabs-admin { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 14px; padding-bottom: 2px; border-bottom: 1.5px solid var(--line); }
+.subtabs-admin a { padding: 6px 12px; text-decoration: none; color: var(--muted); font-weight: 700; font-size: 14px; border-bottom: 3px solid transparent; margin-bottom: -3.5px; }
+.subtabs-admin a:hover { color: var(--fg); }
+.subtabs-admin a.active { color: var(--fg); border-bottom-color: var(--red); }
+@media (max-width: 560px) {
+  .main-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; position: relative; }
+  .main-tabs a { white-space: nowrap; flex: none; }
+  .subtabs-admin { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .subtabs-admin a { white-space: nowrap; flex: none; }
+}
 
 .who { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
 .plan-item { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }

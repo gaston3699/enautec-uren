@@ -141,8 +141,27 @@ export class Admin {
     if (tab !== 'overzicht') clearInterval(this.ovTimer);
     const n = this.pendingCount();
     const nt = todoToConfirm(this.ctx);
-    const tabs = { overzicht: 'Dagoverzicht', nieuw: `Te bevestigen${n ? ` <span class="tab-badge">${n}</span>` : ''}`, todo: `ToDo${nt ? ` <span class="tab-badge">${nt}</span>` : ''}`, planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', badges: 'Badges', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', workTypes: 'Soorten werk', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
-    el.innerHTML = `<nav class="tabs" aria-label="Beheer">${Object.entries(tabs).map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav><div id="adminView"></div>`;
+    const badge = (x) => (x ? ` <span class="tab-badge">${x}</span>` : '');
+    // Hoofdtabbladen met subtabbladen (de adressen #beheer/<sub> blijven dezelfde)
+    const groups = [
+      { key: 'opvolging', label: 'Opvolging', icon: '📋', count: n + nt, subs: [['overzicht', 'Dagoverzicht'], ['nieuw', `Te bevestigen${badge(n)}`], ['todo', `ToDo${badge(nt)}`]] },
+      { key: 'planning', label: 'Planning', icon: '📅', subs: [['planning', 'Planning']] },
+      { key: 'stam', label: 'Klanten & projecten', icon: '🏗️', subs: [['customers', 'Klanten'], ['projects', 'Projecten'], ['sites', 'Locaties'], ['workTypes', 'Soorten werk'], ['articles', 'Artikels']] },
+      { key: 'personeel', label: 'Personeel', icon: '👷', subs: [['employees', 'Werknemers'], ['badges', 'Badges'], ['toestellen', 'Toestellen']] },
+      { key: 'instellingen', label: 'Export & instellingen', icon: '⚙️', subs: [['export', 'Export'], ['instellingen', 'Instellingen']] },
+    ];
+    const group = groups.find((g) => g.subs.some(([k]) => k === tab)) ?? groups[0];
+    this.lastSub ??= {};
+    this.lastSub[group.key] = tab;
+    el.innerHTML = `<nav class="tabs main-tabs" aria-label="Beheer">${groups.map((g) => `<a href="#beheer/${this.lastSub[g.key] ?? g.subs[0][0]}" class="${g === group ? 'active' : ''}">
+        <span aria-hidden="true">${g.icon}</span> ${g.label}${badge(g.count)}</a>`).join('')}</nav>
+      ${group.subs.length > 1 ? `<nav class="subtabs-admin" aria-label="${esc(group.label)}">${group.subs.map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav>` : ''}
+      <div id="adminView"></div>`;
+    // gsm: het actieve (sub)tabblad in beeld schuiven (de rij schuift horizontaal)
+    for (const a of el.querySelectorAll('.main-tabs a.active, .subtabs-admin a.active')) {
+      const nav = a.parentElement;
+      if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = a.offsetLeft - (nav.clientWidth - a.offsetWidth) / 2;
+    }
     const view = el.querySelector('#adminView');
     const fn = { overzicht: this.overview, nieuw: this.review, badges: this.badgesView, todo: (v) => { this.ctx.store.sync([PATHS.todos]).catch(() => {}).then(() => renderTodo(v, { ctx: this.ctx, asAdmin: true, onChange: () => this.render(this.el, 'todo') })); }, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
     Promise.resolve().then(() => (fn ? fn.call(this, view) : this.entity(view, tab)))
