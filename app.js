@@ -14,6 +14,7 @@ import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths } from './report.js';
 import { initCombos } from './combo.js';
 import { renderTodo } from './todo.js';
+import { planningHtml } from './calendar.js';
 import { weekStart } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, renderQuestion } from './questions.js';
 
@@ -288,7 +289,7 @@ function route() {
     if (!hasSession) return adminKey() && view === 'beheer' ? viewAdmin(rest[0] || 'overzicht') : viewLogin();
   } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
-  if (view === 'planning') return viewPlanning();
+  if (view === 'planning') return viewPlanning(rest);
   if (view === 'todo') { setNav('todo'); return renderTodo($main, { ctx }); }
   if (view === 'overzicht') return viewHistory(rest);
   if (view === 'meer') return viewMore();
@@ -596,22 +597,10 @@ function watchDay(date, raw) {
   }, 60000);
 }
 
-function viewPlanning() {
+/** Planning als kalender: #planning/<dag|week|maand>/<datum> (standaard: week) */
+function viewPlanning([view = 'week', date] = []) {
   setNav('planning');
-  const dev = device();
-  const m = ctx.master();
-  const items = alive(ctx.planning().items).filter((p) => p.username === dev.username && p.date >= today()).sort((a, b) => a.date.localeCompare(b.date));
-  const byDate = Object.groupBy ? Object.groupBy(items, (i) => i.date) : items.reduce((acc, i) => ((acc[i.date] ??= []).push(i), acc), {});
-  $main.innerHTML = `<h1 class="page-title">Mijn planning</h1>
-    ${Object.entries(byDate).map(([date, list]) => `<section class="card"><h2>${esc(fmtDate(date))}</h2>
-      ${list.map((it) => {
-        const p = m.projects.find((x) => x.id === it.projectId);
-        const site = m.sites.find((s) => s.id === p?.site_id);
-        return `<div class="plan-item"><div><b>${esc(projectLabel(p, m) || 'Onbekend project')}</b>
-          ${site ? `<div class="muted">📍 ${esc(site.name)}${site.address ? ` · ${esc(site.address)}` : ''}</div>` : ''}
-          ${it.note ? `<div>${esc(it.note)}</div>` : ''}</div>
-          ${site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}">Route</a>` : ''}</div>`;
-      }).join('')}</section>`).join('') || '<section class="card"><p class="muted">Er is niets ingepland voor jou.</p></section>'}`;
+  $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: device().username, view, date });
 }
 
 /** Overzicht per week, maand of jaar: #overzicht/week/<datum>, #overzicht/maand/<jjjj-mm>, #overzicht/jaar/<jjjj> */

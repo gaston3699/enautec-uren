@@ -10,6 +10,7 @@ import { fmtDate, localDate } from './time.js';
 const EMPTY = () => ({ items: [] });
 const when = (ts) => (ts ? fmtDate(localDate(ts), { day: 'numeric', month: 'short' }) : '');
 const MAX_TITLE = 60;
+let todoQuery = '';
 
 function change(ctx, fn) {
   ctx.store.change(PATHS.todos, EMPTY(), (doc) => { doc.items ??= []; fn(doc); });
@@ -185,31 +186,25 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
       ${!t.done && (asAdmin || t.by === me) ? '<button class="link danger" data-act="del" aria-label="Verwijderen">✕</button>' : ''}
     </li>`;
 
+  const searchHtml = `<input type="search" id="todoSearch" class="todo-search" placeholder="🔍 Zoek een project…" value="${esc(todoQuery)}" autocomplete="off" aria-label="Zoek een project">`;
   el.innerHTML = `
-    ${asAdmin ? '' : '<h1 class="page-title">ToDo</h1>'}
-    <section class="card">
-      <h2>Nieuw puntje</h2>
-      <form id="todoNew" class="todo-new">
-        <select name="project" required aria-label="Project"><option value="">— kies een project —</option>
-          ${projects.sort((a, b) => label(a.id).localeCompare(label(b.id), 'nl')).map((p) => `<option value="${esc(p.id)}">${esc(label(p.id))}</option>`).join('')}</select>
-        <textarea name="text" required maxlength="2000" rows="2" placeholder="Wat moet er nog gebeuren? (de eerste zin wordt de samenvatting)"></textarea>
-        <div class="row"><label class="btn secondary photo-add">📷 Foto's<input type="file" name="photos" accept="image/*" multiple hidden></label>
-          <span class="muted small" id="todoPhotoCount"></span><button class="primary" style="margin-left:auto">Toevoegen</button></div>
-      </form>
-    </section>
+    <div class="todo-head">${asAdmin ? (open.length ? searchHtml : '<span></span>') : '<h1 class="page-title">ToDo</h1>'}
+      <button type="button" class="fab-add" id="todoNewBtn" aria-label="Nieuw puntje" title="Nieuw puntje">+</button></div>
+    ${!asAdmin && open.length ? searchHtml : ''}
     ${asAdmin ? `<section class="card"><h2>Afgevinkt, te bevestigen ${waiting.length ? `<span class="tab-badge">${waiting.length}</span>` : ''}</h2>
       ${waiting.length ? `<ul class="todo-list">${waiting.sort((a, b) => (b.done_at ?? 0) - (a.done_at ?? 0)).map((t) => `<li class="todo-item done" data-id="${esc(t.id)}">
         <span><b>${esc(label(t.projectId))}</b><br><button type="button" class="todo-title" data-act="open">${esc(titleOf(t))}${badges(t)}</button></span>
         <small class="muted">afgevinkt door ${esc(name(t.done_by))} · ${esc(when(t.done_at))}</small>
         <span class="row"><button class="primary" data-act="confirm">✔ Bevestigen</button><button class="secondary" data-act="reopen">Terug open</button></span></li>`).join('')}</ul>`
         : '<p class="muted">Niets te bevestigen.</p>'}</section>` : ''}
-    ${open.length ? open.map(([pid, list]) => `<section class="card todo-project" data-project="${esc(pid)}">
+    ${open.length ? open.map(([pid, list]) => `<section class="card todo-project" data-project="${esc(pid)}" data-label="${esc(label(pid).toLowerCase())}">
         <h2>${esc(label(pid))}</h2>
         <ul class="todo-list">${list.sort((a, b) => Number(a.done) - Number(b.done) || (a.at ?? 0) - (b.at ?? 0)).map(itemHtml).join('')}</ul>
         <form class="todo-add" data-project="${esc(pid)}"><input name="text" maxlength="2000" placeholder="+ Puntje toevoegen" autocomplete="off" aria-label="Puntje toevoegen"><button class="secondary">+</button></form>
       </section>`).join('')
       : `<section class="card"><p class="muted">Er staan geen open puntjes.${!asAdmin && waiting.length ? ` ${waiting.length} afgevinkt puntje(s) wacht(en) op bevestiging van de beheerder.` : ''}</p></section>`}
     ${!asAdmin && open.length && waiting.length ? `<p class="muted small center">${waiting.length} afgevinkt puntje(s) wacht(en) op bevestiging van de beheerder.</p>` : ''}
+    <p class="muted small center" id="todoNoMatch" hidden>Geen project gevonden.</p>
     <p class="muted small center">Tik op een puntje voor meer uitleg en foto's.</p>`;
 
   const redraw = () => (onChange ? onChange() : renderTodo(el, { ctx, asAdmin }));
@@ -225,20 +220,53 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     }));
     return id;
   };
-  const nf = el.querySelector('#todoNew');
-  nf.elements.photos.onchange = () => { el.querySelector('#todoPhotoCount').textContent = nf.elements.photos.files.length ? `${nf.elements.photos.files.length} foto('s) gekozen` : ''; };
-  nf.onsubmit = async (e) => {
-    e.preventDefault();
-    const files = [...nf.elements.photos.files];
-    const id = add(nf.elements.project.value, nf.elements.text.value);
-    if (!id) return;
-    if (files.length) {
-      nf.querySelector('button.primary').disabled = true;
-      toast("Foto's opslaan…");
-      try { await addPhotos(ctx, id, files, me); } catch (err) { toast(err.message, 'err'); }
-    }
-    toast('Puntje toegevoegd', 'ok');
-    redraw();
+  // zoeken per project (onthouden tussen het hertekenen)
+  const search = el.querySelector('#todoSearch');
+  const filter = () => {
+    const q = todoQuery.trim().toLowerCase();
+    let shown = 0;
+    el.querySelectorAll('.todo-project').forEach((s) => { const hit = !q || s.dataset.label.includes(q); s.hidden = !hit; shown += hit; });
+    el.querySelector('#todoNoMatch').hidden = shown > 0 || !q;
+  };
+  if (search) { search.oninput = () => { todoQuery = search.value; filter(); }; filter(); }
+
+  // nieuw puntje: in een venster via de + rechtsboven
+  el.querySelector('#todoNewBtn').onclick = () => {
+    const sorted = projects.sort((a, b) => label(a.id).localeCompare(label(b.id), 'nl'));
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `<form class="modal todo-new" role="dialog" aria-modal="true" aria-labelledby="tnTitle">
+      <h2 id="tnTitle">Nieuw puntje</h2>
+      <select name="project" required aria-label="Project"><option value="">— kies een project —</option>
+        ${sorted.map((p) => `<option value="${esc(p.id)}">${esc(label(p.id))}</option>`).join('')}</select>
+      <textarea name="text" required maxlength="2000" rows="3" placeholder="Wat moet er nog gebeuren? (de eerste zin wordt de samenvatting)"></textarea>
+      <div class="row"><label class="btn secondary photo-add">📷 Foto's<input type="file" name="photos" accept="image/*" multiple hidden></label>
+        <span class="muted small" data-count></span></div>
+      <div class="row modal-actions"><button type="button" class="secondary" data-a="close">Annuleren</button><button class="primary">Toevoegen</button></div>
+    </form>`;
+    document.body.append(wrap);
+    const nf = wrap.querySelector('form');
+    // project voorinvullen als er maar één project overblijft na het zoeken
+    const visible = [...el.querySelectorAll('.todo-project:not([hidden])')];
+    if (todoQuery.trim() && visible.length === 1) nf.elements.project.value = visible[0].dataset.project;
+    const close = () => wrap.remove();
+    wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target.closest('[data-a="close"]')) close(); });
+    nf.elements.photos.onchange = () => { wrap.querySelector('[data-count]').textContent = nf.elements.photos.files.length ? `${nf.elements.photos.files.length} foto('s) gekozen` : ''; };
+    nf.onsubmit = async (e) => {
+      e.preventDefault();
+      const files = [...nf.elements.photos.files];
+      const id = add(nf.elements.project.value, nf.elements.text.value);
+      if (!id) return;
+      if (files.length) {
+        nf.querySelector('button.primary').disabled = true;
+        toast("Foto's opslaan…");
+        try { await addPhotos(ctx, id, files, me); } catch (err) { toast(err.message, 'err'); }
+      }
+      close();
+      toast('Puntje toegevoegd', 'ok');
+      redraw();
+    };
+    setTimeout(() => (nf.elements.project.value ? nf.elements.text : nf.elements.project).focus(), 50);
   };
   el.querySelectorAll('.todo-add').forEach((f) => f.onsubmit = (e) => {
     e.preventDefault();
