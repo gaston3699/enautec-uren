@@ -192,6 +192,7 @@ function owntracksLink(ot) {
     username: ot.username, password: ot.password, deviceId: 'gsm',
     tid: ot.username.replace(/[^a-z]/gi, '').slice(0, 2).toUpperCase() || 'XX',
     monitoring: 1, locatorDisplacement: 100, locatorInterval: 180, pubExtendedData: true,
+    cmd: true, // de server mag de zones (klanten in de buurt) doorsturen die OwnTracks zelf bewaakt
   };
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(conf))));
   return `owntracks:///config?inline=${encodeURIComponent(b64)}`;
@@ -778,7 +779,7 @@ async function viewMore() {
       <li>Geef OwnTracks locatietoegang <b>"Altijd"</b> en zet batterijbesparing voor OwnTracks uit.</li></ol>
       <p class="muted">Buiten de werkuren kan je OwnTracks op <b>Rustig</b> zetten. Je locatie wordt enkel gebruikt om je uren voor te stellen en na enkele weken gewist.</p>
       <details><summary>Manueel instellen</summary>
-        <p class="muted small">Werkt de knop niet (bv. op iPhone)? Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> aan en kopieer deze gegevens één voor één. Laat "Geheime coderingssleutel" leeg. Het OwnTracks-wachtwoord is een aparte code, niet je app-wachtwoord.</p>
+        <p class="muted small">Werkt de knop niet (bv. op iPhone)? Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> en <b>cmd</b> (opdrachten op afstand) aan en kopieer deze gegevens één voor één. Laat "Geheime coderingssleutel" leeg. Het OwnTracks-wachtwoord is een aparte code, niet je app-wachtwoord.</p>
         <div class="copy-list">
           ${[['URL', `${server}/api/owntracks`], ['Gebruikersnaam', ot.username], ['Wachtwoord', ot.password], ['Apparaat ID', 'gsm']].map(([label, value]) => `
           <div class="copy-row"><span class="muted small">${label}</span><code>${esc(value)}</code>
