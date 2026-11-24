@@ -106,38 +106,47 @@ function staysToSegments(stays, pts, rules) {
   return segs.filter((s) => s.end > s.start);
 }
 
-/** Badges koppelen tot intervallen in het atelier */
-function badgeIntervals(badges, gpsSegs, rules, openEnd) {
+/**
+ * Badges → werktijd in het atelier.
+ * De badge opent ook de deur van het atelier, dus badges tussendoor tellen niet:
+ *  - de eerste badge van de dag = start,
+ *  - de laatste badge van de dag = einde (vandaag: het blok loopt door tot je vertrekt, want de
+ *    laatste badge tot nu kan nog een deur-badge zijn),
+ *  - tijd waarin de gsm toont dat je elders was (klant, onderweg, leverancier) wordt eruit geknipt.
+ * Pauzes komen niet van de badges maar van de bevestiging op de gsm.
+ */
+function badgeIntervals(badges, gpsSegs, rules, openEnd, { live = false, atelier = null } = {}) {
   const sorted = [...badges].sort((a, b) => a.ts - b.ts);
-  const deduped = [];
-  for (const b of sorted) {
-    if (deduped.length && b.ts - deduped.at(-1).ts < rules.badgeDebounceSec * 1000) continue;
-    deduped.push(b);
+  if (!sorted.length) return [];
+  const first = sorted[0].ts;
+  const last = sorted.at(-1).ts;
+  // elders = verblijf of rit die niet in het atelier is (onbekende plekken enkel als het atelier een zone heeft)
+  const away = (s) => s.kind !== 'atelier' && s.kind !== 'pauze' && (s.kind !== 'onbekend' || atelier?.lat != null);
+  // na een badge vertrokken: de gsm is daarna (nog) elders
+  const leftAfter = (ts) => gpsSegs.find((s) => s.end > ts + MIN && away(s));
+  // een badge bewijst dat je op dat moment in het atelier was: zo'n stuk niet wegknippen
+  const hasBadge = (s) => sorted.some((b) => b.ts > s.start && b.ts < s.end);
+  const twoBadges = sorted.length > 1 && last - first >= rules.badgeDebounceSec * 1000;
+  let end;
+  let open = false;
+  if (twoBadges && !(live && !leftAfter(last))) {
+    end = last;
+  } else {
+    // één badge (of vandaag nog niet vertrokken): tot de gsm toont dat je weg bent, anders tot nu
+    const left = leftAfter(twoBadges ? last : first);
+    if (left && left.end > first) end = Math.max(left.start, twoBadges ? last : first);
+    else { end = Math.max(first + MIN, openEnd); open = true; }
   }
-  const intervals = [];
-  let open = null;
-  for (const b of deduped) {
-    if (open) {
-      // Vertrok de werknemer (volgens GPS) al vóór deze badge? Dan was dit een nieuwe inbadge.
-      const left = gpsSegs.find((s) => s.start >= open.start && s.start < b.ts && s.kind !== 'atelier');
-      if (left) {
-        intervals.push({ start: open.start, end: left.start, closedBy: 'gps' });
-        open = { start: b.ts };
-      } else {
-        intervals.push({ start: open.start, end: b.ts, closedBy: 'badge' });
-        open = null;
-      }
-    } else {
-      open = { start: b.ts };
-    }
+  // stukken waarin de gsm elders was, uitknippen
+  let parts = [{ start: first, end }];
+  for (const s of gpsSegs.filter((x) => away(x) && !hasBadge(x))) {
+    parts = parts.flatMap((p) => {
+      if (s.end <= p.start || s.start >= p.end) return [p];
+      return [{ start: p.start, end: s.start }, { start: s.end, end: p.end }].filter((x) => x.end - x.start >= MIN);
+    });
   }
-  if (open) {
-    const left = gpsSegs.find((s) => s.start >= open.start && s.kind !== 'atelier');
-    if (left) intervals.push({ start: open.start, end: left.start, closedBy: 'gps' });
-    // nog binnen: blok loopt tot nu (minstens 1 minuut, zodat een verse badge meteen zichtbaar is)
-    else intervals.push({ start: open.start, end: Math.max(open.start + MIN, openEnd), closedBy: 'open' });
-  }
-  return intervals.filter((iv) => iv.end > iv.start);
+  return parts.map((p, i) => ({ ...p, closedBy: open && i === parts.length - 1 && p.end === end ? 'open' : 'badge' }))
+    .filter((iv) => iv.end > iv.start);
 }
 
 /** Leg een interval over de segmenten: overlappende delen worden weggeknipt */
@@ -209,7 +218,7 @@ function assignProjects(segs, { sitesById, projects, planning }) {
  * @param {object} input.rules                     regels uit config
  * @param {number} input.openEnd                   eindtijd voor een open badge (nu, of einde van de dag)
  */
-export function buildTimeline({ points, badges = [], sites, projects = [], planning = [], rules, openEnd }) {
+export function buildTimeline({ points, badges = [], sites, projects = [], planning = [], rules, openEnd, live = false }) {
   const sitesById = new Map(sites.map((s) => [s.id, s]));
   const pts = points
     .filter((p) => p.acc == null || p.acc <= rules.maxAccuracyM)
@@ -220,7 +229,7 @@ export function buildTimeline({ points, badges = [], sites, projects = [], plann
   let segs = staysToSegments(stays, pts, rules);
 
   const atelier = sites.find((s) => s.type === 'atelier');
-  const intervals = badgeIntervals(badges, segs, rules, openEnd);
+  const intervals = badgeIntervals(badges, segs, rules, openEnd, { live, atelier });
   for (const iv of intervals) {
     segs = overlay(segs, iv, {
       start: iv.start, end: iv.end, kind: 'atelier', siteId: atelier?.id ?? null,

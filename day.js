@@ -40,6 +40,7 @@ export function proposal(master, planning, username, date, raw) {
     planning: alive(planning.items).filter((p) => p.username === username && p.date === date).map((p) => ({ project_id: p.projectId })),
     rules: rulesFrom(master),
     openEnd: date === today() ? Math.min(Date.now(), end) : end,
+    live: date === today(),
   });
   // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken; samengevoegde projecten doorverwijzen
   return applyAnswers(segs, raw?.answers ?? []).segs
