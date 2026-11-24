@@ -8,6 +8,7 @@ import { geocode, addressLine, splitAddress } from './geocode.js';
 import { readTable } from './xlsx.js';
 import { workTypesOf, DEFAULT_WORK_TYPES, similarTo, workTypeOptions } from './projects.js';
 import { renderTodo, todoToConfirm } from './todo.js';
+import { weekStart, weekNumber, monthDays, shiftMonth } from './periods.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Leverancier', thuis: 'Thuisadres werknemer' };
@@ -140,10 +141,10 @@ export class Admin {
     if (tab !== 'overzicht') clearInterval(this.ovTimer);
     const n = this.pendingCount();
     const nt = todoToConfirm(this.ctx);
-    const tabs = { overzicht: 'Dagoverzicht', nieuw: `Te bevestigen${n ? ` <span class="tab-badge">${n}</span>` : ''}`, todo: `ToDo${nt ? ` <span class="tab-badge">${nt}</span>` : ''}`, planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', workTypes: 'Soorten werk', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
+    const tabs = { overzicht: 'Dagoverzicht', nieuw: `Te bevestigen${n ? ` <span class="tab-badge">${n}</span>` : ''}`, todo: `ToDo${nt ? ` <span class="tab-badge">${nt}</span>` : ''}`, planning: 'Planning', employees: 'Werknemers', toestellen: 'Toestellen', badges: 'Badges', customers: 'Klanten', sites: 'Locaties', projects: 'Projecten', workTypes: 'Soorten werk', articles: 'Artikels', export: 'Export', instellingen: 'Instellingen' };
     el.innerHTML = `<nav class="tabs" aria-label="Beheer">${Object.entries(tabs).map(([k, v]) => `<a href="#beheer/${k}" class="${k === tab ? 'active' : ''}">${v}</a>`).join('')}</nav><div id="adminView"></div>`;
     const view = el.querySelector('#adminView');
-    const fn = { overzicht: this.overview, nieuw: this.review, todo: (v) => { this.ctx.store.sync([PATHS.todos]).catch(() => {}).then(() => renderTodo(v, { ctx: this.ctx, asAdmin: true, onChange: () => this.render(this.el, 'todo') })); }, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
+    const fn = { overzicht: this.overview, nieuw: this.review, badges: this.badgesView, todo: (v) => { this.ctx.store.sync([PATHS.todos]).catch(() => {}).then(() => renderTodo(v, { ctx: this.ctx, asAdmin: true, onChange: () => this.render(this.el, 'todo') })); }, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
     Promise.resolve().then(() => (fn ? fn.call(this, view) : this.entity(view, tab)))
       .catch((e) => { view.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
   }
@@ -316,6 +317,80 @@ export class Admin {
       this.entity(view, name);
     });
     if (name === 'employees' && !edit) this.syncAdminFlags(view);
+  }
+
+  // ---------- Badges: logboek van alle meldingen van Loxone ----------
+  async badgesView(view) {
+    this.bKind ??= 'dag';
+    this.bDate ??= today();
+    this.bFilter ??= { who: '', type: '', q: '' };
+    const kind = this.bKind;
+    const d = this.bDate;
+    const from = kind === 'dag' ? d : kind === 'week' ? weekStart(d) : `${d.slice(0, 7)}-01`;
+    const to = kind === 'dag' ? d : kind === 'week' ? shiftDate(from, 6) : monthDays(d.slice(0, 7)).at(-1);
+    const title = kind === 'dag' ? fmtDate(d) : kind === 'week' ? `Week ${weekNumber(from)} · ${fmtDate(from, { day: 'numeric', month: 'short' })} – ${fmtDate(to, { day: 'numeric', month: 'short' })}`
+      : new Date(`${from}T12:00:00Z`).toLocaleDateString('nl-BE', { month: 'long', year: 'numeric' });
+    const step = (n) => (kind === 'dag' ? shiftDate(d, n) : kind === 'week' ? shiftDate(d, 7 * n) : `${shiftMonth(d.slice(0, 7), n)}-01`);
+    view.innerHTML = `<section class="card">
+      <nav class="subtabs" aria-label="Periode">${['dag', 'week', 'maand'].map((k) => `<a href="#" data-kind="${k}" class="${k === kind ? 'active' : ''}">${k[0].toUpperCase() + k.slice(1)}</a>`).join('')}</nav>
+      <div class="period-head"><button class="icon" data-step="-1" aria-label="Vorige">‹</button><div><h2 class="cap">${esc(title)}</h2></div><button class="icon" data-step="1" aria-label="Volgende">›</button></div>
+      ${to < today() || from > today() ? '<p class="center"><a href="#" data-act="now">Naar vandaag</a></p>' : ''}
+      <div id="bBody"><p class="muted center">Laden…</p></div></section>`;
+    view.querySelectorAll('[data-kind]').forEach((a) => a.onclick = (e) => { e.preventDefault(); this.bKind = a.dataset.kind; this.badgesView(view); });
+    view.querySelectorAll('[data-step]').forEach((b) => b.onclick = () => { this.bDate = step(Number(b.dataset.step)); this.badgesView(view); });
+    view.querySelector('[data-act=now]')?.addEventListener('click', (e) => { e.preventDefault(); this.bDate = today(); this.badgesView(view); });
+    const body = view.querySelector('#bBody');
+    if (!this.hasServer()) { body.innerHTML = '<p class="muted">Geen verbinding met de server.</p>'; return; }
+    let rows;
+    try { rows = await this.server(`/api/admin/badges?from=${from}&to=${to}`); } catch (e) { body.innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+    if (!body.isConnected) return;
+    const typeOf = (raw) => (/nfc|tag|badge/i.test(raw ?? '') ? 'Badge' : /code/i.test(raw ?? '') ? 'Code' : 'Andere');
+    const dirOf = (raw) => (/uitgang|exit/i.test(raw ?? '') ? 'Uit' : /ingang|entry/i.test(raw ?? '') ? 'In' : '');
+    const all = rows.map((r) => ({ ...r, date: localDateOf(r.ts), type: typeOf(r.raw), dir: dirOf(r.raw), who: r.name ?? 'Onbekend' }));
+    const people = [...new Set(all.map((r) => r.who))].sort((a, b) => a.localeCompare(b, 'nl'));
+    const draw = () => {
+      const f = this.bFilter;
+      const q = f.q.trim().toLowerCase();
+      const list = all.filter((r) => (!f.who || r.who === f.who) && (!f.type || r.type === f.type) && (!q || `${r.who} ${r.raw ?? ''}`.toLowerCase().includes(q)));
+      const byDay = new Map();
+      for (const r of list) { if (!byDay.has(r.date)) byDay.set(r.date, []); byDay.get(r.date).push(r); }
+      const unknown = list.filter((r) => !r.username).length;
+      body.querySelector('#bList').innerHTML = `
+        <div class="counters light">
+          <div class="counter"><span>Meldingen</span><b>${list.length}</b></div>
+          <div class="counter"><span>Werknemers</span><b>${new Set(list.filter((r) => r.username).map((r) => r.username)).size}</b></div>
+          <div class="counter"><span>Badges</span><b>${list.filter((r) => r.type === 'Badge').length}</b></div>
+          <div class="counter"><span>Codes</span><b>${list.filter((r) => r.type === 'Code').length}</b></div>
+          <div class="counter ${unknown ? 'warn' : ''}"><span>Onbekend</span><b>${unknown}</b></div>
+        </div>
+        ${list.length ? `<div class="table-wrap" style="margin-top:12px"><table class="badge-log"><thead><tr><th>Tijd</th><th>Werknemer</th><th>Soort</th><th>In/uit</th><th>Melding van Loxone</th></tr></thead><tbody>
+          ${[...byDay.entries()].map(([date, rs]) => `${kind === 'dag' ? '' : `<tr class="day-row"><td colspan="5">${esc(fmtDate(date))} · ${rs.length}</td></tr>`}
+            ${rs.map((r) => `<tr class="${r.username ? '' : 'unknown'}"><td>${esc(localTime(r.ts))}</td><td>${r.username ? esc(r.who) : '<span class="pill warn">Onbekend</span>'}</td>
+              <td>${esc(r.type)}</td><td>${esc(r.dir)}</td><td class="muted small">${esc(r.raw ?? '')}</td></tr>`).join('')}`).join('')}
+        </tbody></table></div>` : '<p class="muted">Geen meldingen in deze periode.</p>'}`;
+      this._bList = list;
+    };
+    body.innerHTML = `<div class="badge-filters">
+        <select data-f="who" aria-label="Werknemer"><option value="">Alle werknemers</option>${people.map((p) => `<option ${p === this.bFilter.who ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+        <select data-f="type" aria-label="Soort"><option value="">Alle soorten</option>${['Badge', 'Code', 'Andere'].map((t) => `<option ${t === this.bFilter.type ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <input data-f="q" placeholder="Zoeken in de meldingen" value="${esc(this.bFilter.q)}" aria-label="Zoeken">
+        <button class="secondary" data-act="csv">⬇ CSV</button></div>
+      <div id="bList"></div>
+      <p class="muted small">Alle meldingen die Loxone doorstuurt (badges, codes en onbekende). Ze worden ${esc(String(400))} dagen bewaard.</p>`;
+    body.querySelectorAll('[data-f]').forEach((el) => {
+      el.addEventListener(el.tagName === 'INPUT' ? 'input' : 'change', () => { this.bFilter[el.dataset.f] = el.value; draw(); });
+    });
+    body.querySelector('[data-act=csv]').onclick = () => {
+      const esc2 = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const csv = ['Datum;Tijd;Werknemer;Gebruikersnaam;Soort;In/uit;Melding',
+        ...(this._bList ?? []).map((r) => [r.date, localTime(r.ts), r.who, r.username ?? '', r.type, r.dir, r.raw].map(esc2).join(';'))].join('\r\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' }));
+      a.download = `badges_${from}${to !== from ? `_${to}` : ''}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    };
+    draw();
   }
 
   // ---------- Te bevestigen: nieuwe klanten en projecten van werknemers ----------

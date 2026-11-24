@@ -320,6 +320,13 @@ tr.total td { font-weight: 700; background: var(--surface2); }
 @media (max-width: 420px) { .blk-more { grid-template-columns: 1fr; } }
 .review .combo { flex: 1; min-width: 200px; }
 
+/* Badges (beheer) */
+.badge-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; margin-top: 10px; }
+.badge-filters .combo { display: block; width: 100%; min-width: 0; }
+@media (max-width: 640px) { .badge-filters { grid-template-columns: 1fr 1fr; } }
+.badge-log td { padding: 7px 8px; } .badge-log tr.day-row td { background: var(--surface2); font-weight: 700; text-transform: capitalize; }
+.badge-log tr.unknown td:first-child { box-shadow: inset 3px 0 0 #d9a400; }
+
 /* ToDo */
 .todo-new { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .todo-new .combo { display: block; width: 100%; min-width: 0; }
