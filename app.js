@@ -389,8 +389,20 @@ async function viewLogin(message = '') {
   }
   const isKeyAdmin = !!adminKey() && !!serverUrl() && !dev?.session && !legacy;
   if (dev?.username) rememberUser(dev.username);
-  const users = knownUsers();
-  const pick = dev?.username ?? users[0]?.username;
+  // alle gebruikers van de server (keuzelijst, zoekbaar); zonder verbinding: wie hier al aanmeldde
+  let serverUsers = [];
+  if (!legacy && serverUrl()) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(`${serverUrl()}/api/login/users`, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (r.ok) serverUsers = await r.json();
+    } catch { /* offline */ }
+  }
+  const known = knownUsers();
+  const users = serverUsers.length ? serverUsers : known;
+  const pick = dev?.username ?? known[0]?.username ?? '__none';
   let gs = null;
   let gsErr = '';
   if (isKeyAdmin && !TEST) { try { gs = await ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
@@ -408,6 +420,7 @@ async function viewLogin(message = '') {
     : `
       <form id="loginForm" class="link-form">
         ${users.length ? `<select name="pick" aria-label="Gebruiker">
+          ${users.some((u) => u.username === pick) ? '' : '<option value="__none" selected hidden>— kies je naam (typ om te zoeken) —</option>'}
           ${users.map((u) => `<option value="${esc(u.username)}" ${u.username === pick ? 'selected' : ''}>${esc(u.name && u.name !== u.username ? `${u.name} (${u.username})` : u.username)}</option>`).join('')}
           <option value="">Andere gebruiker…</option>
         </select>` : ''}
@@ -415,7 +428,7 @@ async function viewLogin(message = '') {
         <input name="password" type="password" autocomplete="current-password" placeholder="Wachtwoord" required aria-label="Wachtwoord">
         <button class="primary big">Aanmelden</button>
       </form><div id="loginErr"></div>
-      ${users.length ? '<p class="small"><button type="button" class="link" data-act="forgetuser">Deze gebruiker uit de lijst verwijderen</button></p>' : ''}
+      ${users.length && !serverUsers.length ? '<p class="small"><button type="button" class="link" data-act="forgetuser">Deze gebruiker uit de lijst verwijderen</button></p>' : ''}
       <p class="muted small">Je blijft aangemeld op dit toestel tot je zelf afmeldt (Meer → Afmelden). Gebruik je het toestel van een collega? Meld je daarna af.</p>
       <p class="muted small">Wachtwoord vergeten? Vraag een beheerder om een nieuw wachtwoord. Daarna kan je het zelf wijzigen via Meer → Wachtwoord wijzigen.</p>
       ${TEST ? '<p class="muted small">Testmodus: gebruiker <b>tomas</b>, <b>ruben</b> of <b>philippe</b>, wachtwoord <b>demo1234</b>.</p>' : ''}
@@ -448,20 +461,22 @@ async function viewLogin(message = '') {
       const isOther = sel.value === '';
       lf.elements.username.hidden = !isOther;
       lf.elements.username.required = isOther;
-      if (isOther) lf.elements.username.focus(); else lf.elements.password.focus();
-      $main.querySelector('[data-act=forgetuser]').hidden = isOther;
+      if (isOther) lf.elements.username.focus(); else if (sel.value !== '__none') lf.elements.password.focus();
+      const fu = $main.querySelector('[data-act=forgetuser]');
+      if (fu) fu.hidden = isOther;
     };
     sel.onchange = other;
-    $main.querySelector('[data-act=forgetuser]').onclick = () => {
+    $main.querySelector('[data-act=forgetuser]')?.addEventListener('click', () => {
       if (!sel.value || !confirm(`${sel.selectedOptions[0].textContent} uit de lijst op dit toestel verwijderen?`)) return;
       forgetUser(sel.value);
       if (device()?.username === sel.value) lsSet(DEVICE, null);
       viewLogin();
-    };
+    });
   }
   if (lf) lf.onsubmit = async (e) => {
     e.preventDefault();
     const btn = lf.querySelector('button.primary');
+    if (sel?.value === '__none') { $main.querySelector('#loginErr').innerHTML = '<div class="error">Kies eerst je naam in de lijst.</div>'; return; }
     const username = (sel?.value || lf.elements.username.value).trim().toLowerCase();
     if (!username) { lf.elements.username.hidden = false; lf.elements.username.focus(); return; }
     btn.disabled = true;
