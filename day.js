@@ -221,7 +221,6 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   };
   const articles = alive(master.articles).filter((a) => a.active !== false).sort(byName);
   const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date);
-  const dayGoal = (rules.dayHours ?? 8) * 60;
 
   const clean = (list) => list.map(({ auto, ...s }) => s);
   const persistSegments = () => { if (!editingConfirmed) saveDay(ctx, username, date, { segments: clean(segs), segmentsEdited: true, status: 'concept' }); };
@@ -284,52 +283,29 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     </div>`;
   }
 
-  /** Week- en maandtotaal: bewaarde dagen + deze dag zoals hij nu op het scherm staat */
-  function periodTotals(cur) {
-    const sum = (dates) => {
-      const saved = savedDays(ctx, username, dates.filter((d) => d !== date));
-      return dates.reduce((s, d) => s + (d === date ? cur : saved[d]?.tot.work ?? 0), 0);
-    };
-    const wk = datesBetween(weekStart(date), shiftDate(weekStart(date), 6));
-    const mo = monthDays(date.slice(0, 7));
-    return {
-      week: sum(wk), weekExp: wk.reduce((s, d) => s + expectedMinutes(d, dayGoal), 0),
-      month: sum(mo), monthExp: mo.reduce((s, d) => s + expectedMinutes(d, dayGoal), 0),
-    };
-  }
-
   function draw() {
     const cur = dayState(ctx, username, date, raw);
     const sorted = [...segs].map((s, i) => ({ s, i })).sort((a, b) => a.s.start - b.s.start);
     const tot = dayTotals(segs, rules);
-    const pt = periodTotals(tot.work);
     const checks = dayChecks(segs, rules);
     const hol = holidayName(date);
     const pill = cur.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>'
       : cur.edited ? '<span class="pill warn">Aangepast, nog niet bevestigd</span>' : '<span class="pill warn">Voorstel van de app</span>';
-    const goal = (label, v, e) => `<div class="goal-line">${label}: <b class="${v >= e ? 'ok-text' : 'danger'}">${fmtHours(v)}</b> <span class="muted">van ${fmtHours(e)}</span></div>`;
+    // bovenaan: de dag in beeld + de controle; de tellers (zonder vergelijking met 8u) onderaan
     el.innerHTML = `
-      <div class="counters dark">
-        ${counterHtml('Werk', tot.werf + tot.atelier, dayGoal)}
-        ${counterHtml('Verplaatsing', tot.verpl, 120)}
-        ${counterHtml('Netto dag', tot.work, expectedMinutes(date, dayGoal) || dayGoal, { cls: 'red' })}
-        ${counterHtml('Week', pt.week, pt.weekExp || null, { cls: 'red' })}
-      </div>
-      <section class="card" style="margin-top:12px">
+      <section class="card">
         <div class="row spread">${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}<span class="muted small">${tot.start ? `${localTime(tot.start)} – ${localTime(tot.end)}` : ''}${tot.km ? ` · ${tot.km} km` : ''}</span></div>
         <div style="margin-top:10px">${trackHtml(segs, date, hourRange([{ segs, date }], date))}</div>
         ${legendHtml()}
         ${rawError ? `<p class="muted">⚠ ${esc(rawError)}</p>` : ''}
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
         ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
+        <div class="day-check">
+          <h3>Controle van de dag</h3>
+          <ul class="check-list">${checks.length ? checks.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
+        </div>
       </section>
       ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
-      <section class="card">
-        <h2>Controle van de dag</h2>
-        <div class="goal-line"><b>${fmtHours(tot.work)} netto</b> <span class="muted">(verplaatsing ${fmtHours(tot.verpl)}${tot.pauze ? ` · pauze ${fmtHours(tot.pauze)}` : ''})</span></div>
-        ${goal('Week', pt.week, pt.weekExp)}${goal('Maand', pt.month, pt.monthExp)}
-        <ul class="check-list">${checks.length ? checks.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
-      </section>
       <section class="card">
         <div class="row spread"><h2>Tijdsblokken</h2>${!readonly && cur.edited ? '<button class="link" data-act="reset">↺ Automatisch voorstel</button>' : ''}</div>
         ${segs.length ? sorted.map(({ s, i }) => segHtml(s, i)).join('') : '<p class="muted">Nog geen blokken voor deze dag.</p>'}
@@ -343,7 +319,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
             <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>
           <p class="muted small">Tijden typ je kort: <b>8</b> = 8:00, <b>730</b> of <b>7u30</b> = 7:30, <b>16.45</b>. Blauw en schuin = voorgesteld, gewoon overschrijven. Bij bevestigen wordt per kwartier afgerond (begin tot 5 min, einde tot 8 min na het kwartier naar beneden).</p>`}
       </section>
-      <section class="card">
+      <section class="card mat-card">
         <h2>Gebruikt materiaal</h2>
         <datalist id="artikels">${articles.map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
         ${material.length ? `<div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span>Project</span></div>${material.map(matHtml).join('')}` : '<p class="muted">Nog geen materiaal ingegeven.</p>'}
@@ -358,7 +334,13 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           <button class="primary big" data-act="confirm">${editingConfirmed ? 'Opnieuw bevestigen' : 'Dag bevestigen'}</button>
           ${editingConfirmed ? '<button class="secondary" style="margin-top:8px" data-act="cancel-edit">Annuleren</button>'
             : asAdmin ? '' : '<p class="center"><button class="link" data-act="notworked">Niet gewerkt op deze dag</button></p>'}`}
-      </section>`;
+      </section>
+      <div class="counters dark day-totals">
+        ${counterHtml('Werk', tot.werf + tot.atelier)}
+        ${counterHtml('Verplaatsing', tot.verpl)}
+        ${counterHtml('Pauze', tot.pauze ?? 0)}
+        ${counterHtml('Netto dag', tot.work, null, { cls: 'red' })}
+      </div>`;
   }
 
   /** Nieuw blok met voorgestelde tijden (zoals Atree: aansluitend, na werk eerst een halfuur pauze) */

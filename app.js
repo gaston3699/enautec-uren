@@ -294,7 +294,7 @@ function route() {
   if (view === 'overzicht') return viewHistory(rest);
   if (view === 'meer') return viewMore();
   if (view === 'vraag') return viewQuestion(rest[0]);
-  return viewDay(isDate(rest[0]) ? rest[0] : today());
+  return viewDay(isDate(rest[0]) ? rest[0] : today(), rest[1] ?? null);
 }
 
 // ---------- Schermen ----------
@@ -626,13 +626,13 @@ function viewWho() {
   });
 }
 
-async function viewDay(date) {
+async function viewDay(date, focus = null) {
   setNav('dag');
   const dev = device();
   const emp = alive(ctx.master().employees).find((e) => e.username === dev.username);
   $main.innerHTML = `<section class="card"><div class="datebar">
       <a class="icon" href="#dag/${shiftDate(date, -1)}" aria-label="Vorige dag">‹</a>
-      <div><b>${esc(fmtDate(date))}</b>${date === today() ? ' <span class="pill red">vandaag</span>' : ''}
+      <div class="date-title"><b>${esc(fmtDate(date))}</b>${date === today() ? ' <span class="pill red">vandaag</span>' : ''}
         <input type="date" id="dayPick" value="${date}" max="${today()}" aria-label="Kies een datum"></div>
       ${date < today() ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true"></span>'}
     </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}
@@ -650,6 +650,12 @@ async function viewDay(date) {
   renderDay(body, { ctx, username: dev.username, date, raw, rawError: error });
   showRawInfo(raw);
   watchDay(date, raw);
+  // via de melding "Welk materiaal gebruikt?": meteen naar het materiaal
+  if (focus === 'materiaal') {
+    const sec = body.querySelector('.mat-card');
+    sec?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    sec?.classList.add('flash');
+  }
 }
 
 /** Toon wanneer de automatische gegevens laatst opgehaald zijn en wat de laatste badge was */
