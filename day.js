@@ -120,6 +120,48 @@ export function dayChecks(segs, rules) {
   return out;
 }
 
+/**
+ * Weergave voor de werknemer: ritten hoeven niet apart in beeld. Een rit die duidelijk bij een project
+ * hoort (aansluitend werk met hetzelfde project, of maar één project ernaast) wordt bij dat blok gevoegd.
+ * Woon-werkverkeer aan het begin of einde van de dag (telt niet als werk) wordt niet getoond.
+ * Geeft { groups: [{ main, members }], hidden } met indexen in `segs`, in volgorde van tijd.
+ */
+export function employeeBlocks(segs, rules = DEFAULT_RULES) {
+  const order = segs.map((_, i) => i).sort((a, b) => segs[a].start - segs[b].start);
+  const touch = (a, b) => a != null && b != null && Math.abs(segs[a].end - segs[b].start) <= MIN; // a sluit aan op b
+  const work = (i) => i != null && WORKLIKE.has(segs[i].kind) && !!segs[i].projectId;
+  const target = new Map();
+  const hidden = new Set();
+  order.forEach((i, k) => {
+    const s = segs[i];
+    if (!TRAVEL.has(s.kind)) return;
+    const prev = order[k - 1];
+    const next = order[k + 1];
+    const homeNoWork = s.kind === 'woon-werk' && !rules.homeTravelIsWork;
+    if (homeNoWork) { if (k === 0 || k === order.length - 1) hidden.add(i); return; }
+    const nOk = work(next) && touch(i, next);
+    const pOk = work(prev) && touch(prev, i);
+    let t = null;
+    if (s.projectId) t = nOk && segs[next].projectId === s.projectId ? next : pOk && segs[prev].projectId === s.projectId ? prev : null;
+    else {
+      const ps = new Set([nOk ? segs[next].projectId : null, pOk ? segs[prev].projectId : null].filter(Boolean));
+      if (ps.size === 1) t = nOk ? next : prev;
+    }
+    if (t != null) target.set(i, t);
+  });
+  const groups = [];
+  const byMain = new Map();
+  for (const i of order) {
+    if (hidden.has(i) || target.has(i)) continue;
+    const g = { main: i, members: [i] };
+    groups.push(g);
+    byMain.set(i, g);
+  }
+  for (const [t, w] of target) byMain.get(w).members.push(t);
+  for (const g of groups) g.members.sort((a, b) => segs[a].start - segs[b].start);
+  return { groups, hidden };
+}
+
 export function summaryHtml(st) {
   const s = st.summary;
   const pill = st.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>'
@@ -203,6 +245,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   // Bevestigd = alleen lezen, tot je op "Uren aanpassen" tikt (dan pas bewaren bij opnieuw bevestigen)
   const editingConfirmed = st.status === 'bevestigd' && editing;
   const readonly = st.status === 'bevestigd' && !editing;
+  // de werknemer ziet ritten niet apart: die horen bij het project van het aansluitende werk
+  const merged = !asAdmin;
   const pauseMin = ctx.me?.()?.pauseMin ?? 30;
   // voorstel van de app: tijden in blauw/schuin tot je ze aanpast
   const allAuto = !st.edited && st.status !== 'bevestigd';
@@ -239,7 +283,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       <option value="__new">+ Nieuw project…</option>`;
   }
 
-  function segHtml(s, i) {
+  function segHtml(s, i, members = [i]) {
     const site = sitesById.get(s.siteId);
     const proj = s.projectId ? master.projects.find((p) => p.id === s.projectId) : null;
     const place = [proj ? projectLabel(proj, master) : '', site && site.name !== projectLabel(proj, master) ? `📍 ${site.name}` : '', s.source === 'badge' ? 'badge' : '']
@@ -252,7 +296,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       .map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${esc(v)}</option>`).join('');
     const timeInput = (f) => `<input class="t ${s.auto?.[f] ? 'auto' : ''}" data-f="${f}" value="${localTime(s[f])}" inputmode="decimal" autocomplete="off"
       aria-label="${f === 'start' ? 'Begin' : 'Einde'}" title="${s.auto?.[f] ? 'Automatisch ingevuld, pas gerust aan' : 'Typ bv. 8, 730, 7u30 of 16.45'}" ${dis}>`;
-    return `<div class="blk ${bad ? 'err' : ''}" data-kind="${s.kind}" data-i="${i}">
+    return `<div class="blk ${bad ? 'err' : ''}" data-kind="${s.kind}" data-i="${i}" data-g="${members.join(',')}">
       <div class="blk-ico c-${c}" aria-hidden="true">${ICON[c] ?? '•'}</div>
       <div class="blk-head"><b>${esc(KINDS[s.kind] ?? s.kind)}</b><span class="muted">${esc(place || SUB[s.kind] || '')}</span></div>
       <div class="blk-time">${timeInput('start')}<span aria-hidden="true">→</span>${timeInput('end')}
@@ -272,49 +316,75 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     </div>`;
   }
 
-  function matHtml(m, i) {
+  function matHtml(m, i, dayProj = []) {
     const dis = readonly ? 'disabled' : '';
+    const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
     return `<div class="mat" data-m="${i}">
       <input class="mat-desc" list="artikels" data-mf="description" placeholder="Artikel of omschrijving" value="${esc(m.description)}" ${dis}>
       <input class="mat-qty" type="number" inputmode="decimal" step="any" min="0" data-mf="qty" value="${m.qty ?? ''}" aria-label="Aantal" ${dis}>
       <input class="mat-unit" data-mf="unit" placeholder="st" value="${esc(m.unit ?? '')}" aria-label="Eenheid" ${dis}>
-      <select class="mat-proj" data-mf="projectId" aria-label="Project" ${dis}>${projectOptions(m.projectId)}</select>
-      ${readonly ? '' : '<button class="link danger" data-act="del-mat" aria-label="Verwijderen">✕</button>'}
+      ${readonly ? '<span></span>' : '<button class="link danger" data-act="del-mat" aria-label="Verwijderen">✕</button>'}
+      ${m.projectId ? '' : `<select class="mat-proj bad" data-native data-mf="projectId" aria-label="Project" style="grid-column:1/-1" ${dis}>
+        <option value="">— kies het project —</option>${dayProj.map((id) => `<option value="${esc(id)}">${label(id)}</option>`).join('')}</select>`}
     </div>`;
+  }
+
+  /** Materiaal: eerst het project (van de projecten van die dag), dan het materiaal */
+  function materialHtml(sortedSegs) {
+    const dayProj = [...new Set(sortedSegs.filter((s) => WORKLIKE.has(s.kind) && s.projectId).map((s) => s.projectId))];
+    // maar één project vandaag: al het materiaal hoort daarbij
+    if (dayProj.length === 1 && !readonly) for (const m of material) if (!m.projectId) m.projectId = dayProj[0];
+    const groups = [...dayProj, ...new Set(material.map((m) => m.projectId).filter((p) => p && !dayProj.includes(p)))];
+    const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
+    const head = '<div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span></span></div>';
+    const rows = (list) => (list.length ? head + list.map(({ m, i }) => matHtml(m, i, dayProj)).join('') : '');
+    const all = material.map((m, i) => ({ m, i }));
+    const loose = all.filter(({ m }) => !m.projectId);
+    const parts = groups.map((pid) => {
+      const items = all.filter(({ m }) => m.projectId === pid);
+      if (readonly && !items.length) return '';
+      return `<div class="mat-proj-group"><h3>${label(pid)}</h3>
+        ${rows(items) || '<p class="muted small">Nog geen materiaal op dit project.</p>'}
+        ${readonly ? '' : `<button class="secondary" data-act="add-mat" data-p="${esc(pid)}">+ Materiaal${groups.length > 1 ? ' op dit project' : ''}</button>`}</div>`;
+    }).join('');
+    const looseHtml = loose.length ? `<div class="mat-proj-group"><h3>Nog geen project gekozen</h3>${rows(loose)}</div>` : '';
+    if (!parts && !looseHtml) {
+      return readonly ? '<p class="muted">Geen materiaal ingegeven.</p>'
+        : '<p class="muted">Kies eerst bij je tijdsblokken een project. Daarna geef je hier het materiaal per project in.</p>';
+    }
+    return parts + looseHtml;
   }
 
   function draw() {
     const cur = dayState(ctx, username, date, raw);
-    const sorted = [...segs].map((s, i) => ({ s, i })).sort((a, b) => a.s.start - b.s.start);
-    const tot = dayTotals(segs, rules);
+    const order = [...segs].map((s, i) => ({ s, i })).sort((a, b) => a.s.start - b.s.start);
+    // werknemer: ritten bij het project van het aansluitende werk (en het project mee op de rit zetten)
+    const blocks = merged ? employeeBlocks(segs, rules).groups : order.map(({ i }) => ({ main: i, members: [i] }));
+    if (merged && !readonly) for (const g of blocks) for (const k of g.members) if (k !== g.main) segs[k].projectId = segs[g.main].projectId;
+    const shown = blocks.map((g) => ({ g, s: { ...segs[g.main], start: segs[g.members[0]].start, end: segs[g.members.at(-1)].end } }));
+    const viewSegs = shown.map((x) => x.s);
+    const tot = dayTotals(viewSegs, rules);
+    const km = dayTotals(segs, rules).km;
     const checks = dayChecks(segs, rules);
     const hol = holidayName(date);
     const pill = cur.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>'
       : cur.edited ? '<span class="pill warn">Aangepast, nog niet bevestigd</span>' : '<span class="pill warn">Voorstel van de app</span>';
-    // bovenaan: de dag in beeld + de controle; de tellers (zonder vergelijking met 8u) onderaan
+    // eerst de blokken, materiaal en bevestigen; de tellers en de dag in beeld (met de controle) onderaan
     el.innerHTML = `
-      <section class="card">
-        <div class="row spread">${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}<span class="muted small">${tot.start ? `${localTime(tot.start)} – ${localTime(tot.end)}` : ''}${tot.km ? ` · ${tot.km} km` : ''}</span></div>
-        <div style="margin-top:10px">${trackHtml(segs, date, hourRange([{ segs, date }], date))}</div>
-        ${legendHtml()}
-        ${rawError ? `<p class="muted">⚠ ${esc(rawError)}</p>` : ''}
-        ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
-        ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
-        <div class="day-check">
-          <h3>Controle van de dag</h3>
-          <ul class="check-list">${checks.length ? checks.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
-        </div>
-      </section>
+      ${rawError ? `<div class="card"><p class="muted">⚠ ${esc(rawError)}</p></div>` : ''}
+      ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
       ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
       <section class="card">
-        <div class="row spread"><h2>Tijdsblokken</h2>${!readonly && cur.edited ? '<button class="link" data-act="reset">↺ Automatisch voorstel</button>' : ''}</div>
-        ${segs.length ? sorted.map(({ s, i }) => segHtml(s, i)).join('') : '<p class="muted">Nog geen blokken voor deze dag.</p>'}
+        <div class="row spread"><h2>Tijdsblokken</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
+        ${!readonly && cur.edited ? '<p style="text-align:right;margin:0"><button class="link" data-act="reset">↺ Automatisch voorstel</button></p>' : ''}
+        ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
+        ${shown.length ? shown.map(({ g, s }) => segHtml(s, g.main, g.members)).join('') : '<p class="muted">Nog geen blokken voor deze dag.</p>'}
         ${readonly ? '' : `<div class="quick-add">
-          <button class="secondary" data-act="add" data-kind="verplaatsing">🚗 + Heenrit</button>
+          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="verplaatsing">🚗 + Heenrit</button>'}
           <button class="secondary" data-act="add" data-kind="werk">⛑️ + Werk</button>
           <button class="secondary" data-act="add" data-kind="atelier">🏭 + Atelier</button>
           <button class="secondary" data-act="add" data-kind="pauze">☕ + Pauze</button>
-          <button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button></div>
+          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button>'}</div>
           <div class="pause-set"><span>☕ <b>Standaard pauze</b><small>Om 12:00 krijg je een melding om je pauze te starten.</small></span>
             <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>
           <p class="muted small">Tijden typ je kort: <b>8</b> = 8:00, <b>730</b> of <b>7u30</b> = 7:30, <b>16.45</b>. Blauw en schuin = voorgesteld, gewoon overschrijven. Bij bevestigen wordt per kwartier afgerond (begin tot 5 min, einde tot 8 min na het kwartier naar beneden).</p>`}
@@ -322,8 +392,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       <section class="card mat-card">
         <h2>Gebruikt materiaal</h2>
         <datalist id="artikels">${articles.map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
-        ${material.length ? `<div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span>Project</span></div>${material.map(matHtml).join('')}` : '<p class="muted">Nog geen materiaal ingegeven.</p>'}
-        ${readonly ? '' : '<button class="secondary" data-act="add-mat">+ Materiaal</button>'}
+        ${materialHtml(order.map((x) => x.s))}
       </section>
       <section class="card">
         ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd. Klopt er iets niet? Pas de uren aan en bevestig opnieuw.</p>
@@ -337,10 +406,19 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       </section>
       <div class="counters dark day-totals">
         ${counterHtml('Werk', tot.werf + tot.atelier)}
-        ${counterHtml('Verplaatsing', tot.verpl)}
+        ${!merged || tot.verpl ? counterHtml('Verplaatsing', tot.verpl) : ''}
         ${counterHtml('Pauze', tot.pauze ?? 0)}
         ${counterHtml('Netto dag', tot.work, null, { cls: 'red' })}
-      </div>`;
+      </div>
+      <section class="card day-visual">
+        <div class="row spread"><h3>De dag in beeld</h3><span class="muted small">${tot.start ? `${localTime(tot.start)} – ${localTime(tot.end)}` : ''}${km ? ` · ${km} km` : ''}</span></div>
+        <div style="margin-top:10px">${trackHtml(viewSegs, date, hourRange([{ segs: viewSegs, date }], date))}</div>
+        ${legendHtml(merged ? ['werf', 'atelier', 'pauze', 'gat'] : undefined)}
+        <div class="day-check">
+          <h3>Controle van de dag</h3>
+          <ul class="check-list">${checks.length ? checks.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
+        </div>
+      </section>`;
   }
 
   /** Nieuw blok met voorgestelde tijden (zoals Atree: aansluitend, na werk eerst een halfuur pauze) */
@@ -392,13 +470,27 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const box = t.closest('.blk');
     if (box) {
       const i = Number(box.dataset.i);
-      const s = segs[i];
+      const main = segs[i];
+      // samengevoegd blok (rit + werk): begin hoort bij het eerste deel, einde bij het laatste
+      const mem = (box.dataset.g || String(i)).split(',').map((k) => segs[Number(k)]);
       const f = t.dataset.f;
+      let s = main;
       if (f === 'start' || f === 'end') {
         const hhmm = parseTime(t.value);
         if (!hhmm) { t.classList.add('bad'); toast('Tijd niet herkend. Typ bv. 8, 730, 7u30 of 16.45', 'err'); return; }
-        const old = s[f];
         const ts = hhmm === '24:00' || (f === 'end' && hhmm === '00:00') ? dayRange(date)[1] - MIN : localToTs(date, hhmm);
+        if (mem.length > 1) {
+          // ritten die buiten de nieuwe tijd vallen, vervallen
+          const list = f === 'start' ? mem : [...mem].reverse();
+          const drop = [];
+          for (const x of list) {
+            if (x === main || (f === 'start' ? ts < x.end : ts > x.start)) break;
+            drop.push(x);
+          }
+          if (drop.length) segs = segs.filter((x) => !drop.includes(x));
+          s = list.find((x) => !drop.includes(x));
+        }
+        const old = s[f];
         s[f] = ts;
         if (s.auto) delete s.auto[f];
         // aansluitend blok schuift mee (einde heenrit = begin werk). Een voorgestelde pauze schuift
@@ -436,6 +528,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         return;
       } else if (f === 'projectId') {
         s.projectId = t.value || null;
+        for (const x of mem) if (TRAVEL.has(x.kind)) x.projectId = s.projectId;
         const p = projects.find((x) => x.id === s.projectId);
         if (p?.work_type && !s.workType && WORKLIKE.has(s.kind)) s.workType = p.work_type;
         if (s.kind === 'werk' && s.projectId) {
@@ -466,6 +559,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       const item = material[Number(m.dataset.m)];
       item[t.dataset.mf] = t.dataset.mf === 'qty' ? (t.value === '' ? null : Number(t.value)) : t.value || null;
       persistMaterial();
+      if (t.dataset.mf === 'projectId') draw();
     }
   };
 
@@ -506,17 +600,18 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           again();
         });
     } else if (act === 'del-seg') {
-      segs.splice(Number(e.target.closest('.blk').dataset.i), 1);
+      const b = e.target.closest('.blk');
+      const mem = (b.dataset.g || b.dataset.i).split(',').map(Number);
+      segs = segs.filter((_, k) => !mem.includes(k));
       persistSegments(); draw();
     } else if (act === 'reset') {
       saveDay(ctx, username, date, { segmentsEdited: false });
       segs = dayState(ctx, username, date, raw).segments.map((s) => ({ ...s, auto: { start: true, end: true } }));
       draw();
     } else if (act === 'add-mat') {
-      const defProject = [...segs].reverse().find((s) => s.kind === 'werk' && s.projectId)?.projectId ?? planned[0]?.projectId ?? null;
-      material.push({ id: uid(), description: '', qty: 1, unit: '', projectId: defProject, articleId: null });
+      material.push({ id: uid(), description: '', qty: 1, unit: '', projectId: btn.dataset.p || null, articleId: null });
       persistMaterial(); draw();
-      el.querySelectorAll('.mat-desc')[material.length - 1]?.focus();
+      el.querySelector(`.mat[data-m="${material.length - 1}"] .mat-desc`)?.focus();
     } else if (act === 'del-mat') {
       material.splice(Number(e.target.closest('.mat').dataset.m), 1);
       persistMaterial(); draw();

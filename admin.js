@@ -162,7 +162,7 @@ export class Admin {
       { key: 'opvolging', label: 'Opvolging', icon: '📋', count: n + nt, subs: [['overzicht', 'Dagoverzicht'], ['nieuw', `Te bevestigen${badge(n)}`], ['todo', `ToDo${badge(nt)}`]] },
       { key: 'planning', label: 'Planning', icon: '📅', subs: [['planning', 'Planning']] },
       { key: 'stam', label: 'Klanten & projecten', icon: '🏗️', subs: [['customers', 'Klanten'], ['projects', 'Projecten'], ['sites', 'Locaties'], ['workTypes', 'Soorten werk'], ['articles', 'Artikels']] },
-      { key: 'personeel', label: 'Personeel', icon: '👷', subs: [['employees', 'Werknemers'], ['badges', 'Badges'], ['toestellen', 'Toestellen']] },
+      { key: 'personeel', label: 'Personeel', icon: '👷', subs: [['employees', 'Werknemers'], ['leveranciers', 'Leveranciers'], ['andere', 'Andere'], ['badges', 'Badges'], ['toestellen', 'Toestellen']] },
       { key: 'instellingen', label: 'Export & instellingen', icon: '⚙️', subs: [['export', 'Export'], ['instellingen', 'Instellingen']] },
     ];
     const group = groups.find((g) => g.subs.some(([k]) => k === tab)) ?? groups[0];
@@ -178,7 +178,7 @@ export class Admin {
       if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = a.offsetLeft - (nav.clientWidth - a.offsetWidth) / 2;
     }
     const view = el.querySelector('#adminView');
-    const fn = { overzicht: this.overview, nieuw: this.review, badges: this.badgesView, todo: (v) => { this.ctx.store.sync([PATHS.todos]).catch(() => {}).then(() => renderTodo(v, { ctx: this.ctx, asAdmin: true, onChange: () => this.render(this.el, 'todo') })); }, planning: this.planning, toestellen: this.devices, export: this.exportView, instellingen: this.settings }[tab];
+    const fn = { overzicht: this.overview, nieuw: this.review, badges: this.badgesView, todo: (v) => { this.ctx.store.sync([PATHS.todos]).catch(() => {}).then(() => renderTodo(v, { ctx: this.ctx, asAdmin: true, onChange: () => this.render(this.el, 'todo') })); }, planning: this.planning, toestellen: this.devices, leveranciers: (v) => this.badgeGroupView(v, 'leverancier'), andere: (v) => this.badgeGroupView(v, 'andere'), export: this.exportView, instellingen: this.settings }[tab];
     Promise.resolve().then(() => (fn ? fn.call(this, view) : this.entity(view, tab)))
       .catch((e) => { view.innerHTML = `<div class="card error">${esc(e.message)}</div>`; });
   }
@@ -403,10 +403,8 @@ export class Admin {
       const byDay = new Map();
       for (const r of list) { if (!byDay.has(r.date)) byDay.set(r.date, []); byDay.get(r.date).push(r); }
       const unknown = list.filter((r) => !r.username && !r.group).length;
-      const groupSel = (r) => `<select class="badge-group" data-native data-group="${esc(r.id)}" aria-label="Indelen">
-          <option value="">${r.group ? 'Niet meer indelen' : 'Indelen…'}</option>${Object.entries(GROUPS).map(([k, v]) => `<option value="${k}" ${r.group === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
       const whoCell = (r) => (r.username ? esc(r.who)
-        : `<span class="pill ${r.group === 'leverancier' ? 'ok' : r.group ? '' : 'warn'}">${r.group ? GROUPS[r.group] : 'Onbekend'}</span> ${esc(r.id)} ${r.id ? groupSel(r) : ''}`);
+        : `<span class="pill ${r.group === 'leverancier' ? 'ok' : r.group ? '' : 'warn'}">${r.group ? GROUPS[r.group] : 'Onbekend'}</span> ${esc(r.id)}`);
       body.querySelector('#bList').innerHTML = `
         <div class="counters light">
           <div class="counter"><span>Meldingen</span><b>${list.length}</b></div>
@@ -420,18 +418,6 @@ export class Admin {
             ${rs.map((r) => `<tr class="${r.username ? '' : r.group ? 'grouped' : 'unknown'}"><td>${esc(localTime(r.ts))}</td><td>${whoCell(r)}</td>
               <td>${esc(r.type)}</td><td>${esc(r.dir)}</td><td class="muted small">${esc(r.raw ?? '')}</td></tr>`).join('')}`).join('')}
         </tbody></table></div>` : '<p class="muted">Geen meldingen in deze periode.</p>'}`;
-      // naam (of code) indelen bij leveranciers of andere; geldt voor alle meldingen met die naam
-      body.querySelectorAll('[data-group]').forEach((s) => s.onchange = () => {
-        const id = s.dataset.group;
-        this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
-          mm.settings ??= {};
-          mm.settings.badgeGroups = { ...(mm.settings.badgeGroups ?? {}) };
-          if (s.value) mm.settings.badgeGroups[id] = s.value; else delete mm.settings.badgeGroups[id];
-          mm.settings.updated = Date.now();
-        });
-        toast(s.value ? `"${id}" ingedeeld bij ${GROUPS[s.value]}` : `"${id}" staat terug bij onbekend`, 'ok');
-        draw();
-      });
       this._bList = list;
     };
     const f0 = this.bFilter.who;
@@ -456,6 +442,80 @@ export class Admin {
       a.download = `badges_${from}${to !== from ? `_${to}` : ''}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    };
+    draw();
+  }
+
+  // ---------- Leveranciers en andere: wie een badge/code heeft maar geen werknemer is ----------
+  async badgeGroupView(view, group) {
+    const LABEL = { leverancier: ['Leveranciers', 'leverancier'], andere: ['Andere', 'andere persoon'] }[group];
+    const setGroup = (id, value) => {
+      this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+        mm.settings ??= {};
+        mm.settings.badgeGroups = { ...(mm.settings.badgeGroups ?? {}) };
+        if (value) mm.settings.badgeGroups[id] = value; else delete mm.settings.badgeGroups[id];
+        mm.settings.updated = Date.now();
+      });
+    };
+    // onbekende namen/codes van de laatste 2 maanden, om snel toe te voegen
+    let seen = this._badgeSeen;
+    if (!seen && this.hasServer()) {
+      try {
+        const rows = await this.server(`/api/admin/badges?from=${shiftDate(today(), -60)}&to=${today()}`);
+        seen = new Map();
+        for (const r of rows) {
+          if (r.username) continue;
+          const id = badgeIdentity(r.raw);
+          if (!id) continue;
+          const s = seen.get(id) ?? { n: 0, last: 0 };
+          s.n++; s.last = Math.max(s.last, r.ts);
+          seen.set(id, s);
+        }
+        this._badgeSeen = seen;
+        setTimeout(() => { this._badgeSeen = null; }, 5 * 60000);
+      } catch { seen = new Map(); }
+    }
+    seen ??= new Map();
+    const draw = () => {
+      const g = this.ctx.master().settings?.badgeGroups ?? {};
+      const members = Object.keys(g).filter((id) => g[id] === group).sort((a, b) => a.localeCompare(b, 'nl'));
+      const unknown = [...seen.entries()].filter(([id]) => !g[id]).sort((a, b) => b[1].last - a[1].last);
+      const last = (id) => { const s = seen.get(id); return s ? `${s.n}× · laatst ${esc(fmtDate(localDateOf(s.last), { day: 'numeric', month: 'short' }))} ${esc(localTime(s.last))}` : '<span class="muted">niet in de laatste 2 maanden</span>'; };
+      view.innerHTML = `
+        <section class="card">
+          <h2>${LABEL[0]} toevoegen</h2>
+          <p class="muted">Vul de naam of code in zoals Loxone ze meldt (zie Badges). Alle meldingen met die naam staan dan bij ${LABEL[0].toLowerCase()} in plaats van bij onbekend.</p>
+          <form class="row" id="grpForm"><input name="id" list="grpSeen" placeholder="Naam of code" required style="flex:1">
+            <datalist id="grpSeen">${unknown.map(([id]) => `<option value="${esc(id)}">`).join('')}</datalist>
+            <button class="primary">Toevoegen</button></form>
+        </section>
+        <section class="card table-wrap">
+          <h2>${LABEL[0]} (${members.length})</h2>
+          ${members.length ? `<table><thead><tr><th>Naam / code</th><th>Meldingen</th><th></th></tr></thead><tbody>
+            ${members.map((id) => `<tr><td>${esc(id)}</td><td class="small">${last(id)}</td><td class="actions"><button class="link danger" data-rm="${esc(id)}">Verwijder</button></td></tr>`).join('')}
+          </tbody></table>` : `<p class="muted">Nog geen ${LABEL[0].toLowerCase()}.</p>`}
+        </section>
+        ${unknown.length ? `<section class="card table-wrap">
+          <h2>Onbekend (laatste 2 maanden)</h2>
+          <table><thead><tr><th>Naam / code</th><th>Meldingen</th><th></th></tr></thead><tbody>
+            ${unknown.map(([id]) => `<tr><td>${esc(id)}</td><td class="small">${last(id)}</td><td class="actions"><button class="link" data-add="${esc(id)}">+ ${LABEL[0]}</button></td></tr>`).join('')}
+          </tbody></table></section>` : ''}`;
+      view.querySelector('#grpForm').onsubmit = (e) => {
+        e.preventDefault();
+        const id = e.target.elements.id.value.trim();
+        if (!id) return;
+        const other = g[id] && g[id] !== group;
+        if (other && !confirm(`"${id}" staat nu bij ${g[id] === 'leverancier' ? 'Leveranciers' : 'Andere'}. Verplaatsen naar ${LABEL[0]}?`)) return;
+        setGroup(id, group);
+        toast(`"${id}" toegevoegd`, 'ok');
+        draw();
+      };
+      view.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => { setGroup(b.dataset.add, group); toast(`"${b.dataset.add}" toegevoegd`, 'ok'); draw(); });
+      view.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => {
+        if (!confirm(`"${b.dataset.rm}" verwijderen? De meldingen staan dan terug bij onbekend.`)) return;
+        setGroup(b.dataset.rm, null);
+        draw();
+      });
     };
     draw();
   }
