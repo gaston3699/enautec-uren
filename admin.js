@@ -6,11 +6,25 @@ import { today, shiftDate, fmtDate, fmtHours, localTime, isDate, localDate as lo
 import { parseLatLon, distance } from './geo.js';
 import { geocode, addressLine, splitAddress } from './geocode.js';
 import { readTable } from './xlsx.js';
-import { workTypesOf, DEFAULT_WORK_TYPES, similarTo, workTypeOptions } from './projects.js';
+import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOptions } from './projects.js';
 import { renderTodo, todoToConfirm } from './todo.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
 import { planningHtml, visibleDays } from './calendar.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
+
+/**
+ * Wie badgede, volgens de tekst van Loxone:
+ *  "…: Uitgang Deurgebruiker Hanne met toegangscode" → "Hanne"
+ *  "…: Uitgang Deur met Algemeen" → "Algemeen";  "Codetoegang geweigerd" → "Codetoegang geweigerd"
+ */
+export function badgeIdentity(raw) {
+  const t = String(raw ?? '').replace(/^\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?:?\s*/, '').trim();
+  const user = t.match(/gebruiker\s*(.+?)\s+met\b/i);
+  if (user) return user[1].trim();
+  const via = t.match(/\bmet\s+(.+)$/i);
+  if (via) return via[1].replace(/^(NFC-Tag\s+)+/i, '').trim();
+  return t;
+}
 
 const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Leverancier', thuis: 'Thuisadres werknemer' };
 
@@ -177,6 +191,10 @@ export class Admin {
     if (name === 'workTypes' && !(this.ctx.master().workTypes ?? []).length) {
       this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => { mm.workTypes = DEFAULT_WORK_TYPES.map((w) => ({ ...w, active: true, updated: Date.now() })); });
     }
+    // "Laden/lossen" (korte bezoeken aan het atelier) mee in de lijst zetten, zodat ze aanpasbaar is
+    if (name === 'workTypes' && !(this.ctx.master().workTypes ?? []).some((w) => w.id === LOAD_WORK_TYPE.id)) {
+      this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => { mm.workTypes = [...(mm.workTypes ?? []), { ...LOAD_WORK_TYPE, active: true, updated: Date.now() }]; });
+    }
     const m = this.ctx.master();
     const rows = alive(m[name]).sort(byName);
     view.innerHTML = `
@@ -341,7 +359,7 @@ export class Admin {
 
   // ---------- Badges: logboek van alle meldingen van Loxone ----------
   async badgesView(view) {
-    this.bKind ??= 'dag';
+    this.bKind ??= 'week';
     this.bDate ??= today();
     this.bFilter ??= { who: '', type: '', q: '' };
     const kind = this.bKind;
@@ -366,32 +384,61 @@ export class Admin {
     if (!body.isConnected) return;
     const typeOf = (raw) => (/nfc|tag|badge/i.test(raw ?? '') ? 'Badge' : /code/i.test(raw ?? '') ? 'Code' : 'Andere');
     const dirOf = (raw) => (/uitgang|exit/i.test(raw ?? '') ? 'Uit' : /ingang|entry/i.test(raw ?? '') ? 'In' : '');
-    const all = rows.map((r) => ({ ...r, date: localDateOf(r.ts), type: typeOf(r.raw), dir: dirOf(r.raw), who: r.name ?? 'Onbekend' }));
-    const people = [...new Set(all.map((r) => r.who))].sort((a, b) => a.localeCompare(b, 'nl'));
+    // groepen voor wie geen werknemer is (leveranciers, andere) — bewaard in de stamgegevens
+    const GROUPS = { leverancier: 'Leverancier', andere: 'Andere' };
+    const groups = () => this.ctx.master().settings?.badgeGroups ?? {};
+    const all = rows.map((r) => ({ ...r, date: localDateOf(r.ts), type: typeOf(r.raw), dir: dirOf(r.raw), id: badgeIdentity(r.raw) }))
+      .sort((a, b) => b.ts - a.ts || b.id - a.id); // recentste bovenaan
+    const people = [...new Set(all.filter((r) => r.username).map((r) => r.name ?? r.username))].sort((a, b) => a.localeCompare(b, 'nl'));
     const draw = () => {
+      const g = groups();
+      for (const r of all) {
+        r.group = r.username ? null : g[r.id] ?? null;
+        r.who = r.username ? (r.name ?? r.username) : r.id;
+      }
       const f = this.bFilter;
       const q = f.q.trim().toLowerCase();
-      const list = all.filter((r) => (!f.who || r.who === f.who) && (!f.type || r.type === f.type) && (!q || `${r.who} ${r.raw ?? ''}`.toLowerCase().includes(q)));
+      const matchWho = (r) => !f.who || (f.who === 'g:onbekend' ? !r.username && !r.group : f.who.startsWith('g:') ? r.group === f.who.slice(2) : r.username && r.who === f.who);
+      const list = all.filter((r) => matchWho(r) && (!f.type || r.type === f.type) && (!q || `${r.who} ${r.raw ?? ''}`.toLowerCase().includes(q)));
       const byDay = new Map();
       for (const r of list) { if (!byDay.has(r.date)) byDay.set(r.date, []); byDay.get(r.date).push(r); }
-      const unknown = list.filter((r) => !r.username).length;
+      const unknown = list.filter((r) => !r.username && !r.group).length;
+      const groupSel = (r) => `<select class="badge-group" data-native data-group="${esc(r.id)}" aria-label="Indelen">
+          <option value="">${r.group ? 'Niet meer indelen' : 'Indelen…'}</option>${Object.entries(GROUPS).map(([k, v]) => `<option value="${k}" ${r.group === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
+      const whoCell = (r) => (r.username ? esc(r.who)
+        : `<span class="pill ${r.group === 'leverancier' ? 'ok' : r.group ? '' : 'warn'}">${r.group ? GROUPS[r.group] : 'Onbekend'}</span> ${esc(r.id)} ${r.id ? groupSel(r) : ''}`);
       body.querySelector('#bList').innerHTML = `
         <div class="counters light">
           <div class="counter"><span>Meldingen</span><b>${list.length}</b></div>
           <div class="counter"><span>Werknemers</span><b>${new Set(list.filter((r) => r.username).map((r) => r.username)).size}</b></div>
-          <div class="counter"><span>Badges</span><b>${list.filter((r) => r.type === 'Badge').length}</b></div>
-          <div class="counter"><span>Codes</span><b>${list.filter((r) => r.type === 'Code').length}</b></div>
+          <div class="counter"><span>Leveranciers</span><b>${list.filter((r) => r.group === 'leverancier').length}</b></div>
+          <div class="counter"><span>Andere</span><b>${list.filter((r) => r.group === 'andere').length}</b></div>
           <div class="counter ${unknown ? 'warn' : ''}"><span>Onbekend</span><b>${unknown}</b></div>
         </div>
-        ${list.length ? `<div class="table-wrap" style="margin-top:12px"><table class="badge-log"><thead><tr><th>Tijd</th><th>Werknemer</th><th>Soort</th><th>In/uit</th><th>Melding van Loxone</th></tr></thead><tbody>
+        ${list.length ? `<div class="table-wrap" style="margin-top:12px"><table class="badge-log"><thead><tr><th>Tijd</th><th>Wie</th><th>Soort</th><th>In/uit</th><th>Melding van Loxone</th></tr></thead><tbody>
           ${[...byDay.entries()].map(([date, rs]) => `${kind === 'dag' ? '' : `<tr class="day-row"><td colspan="5">${esc(fmtDate(date))} · ${rs.length}</td></tr>`}
-            ${rs.map((r) => `<tr class="${r.username ? '' : 'unknown'}"><td>${esc(localTime(r.ts))}</td><td>${r.username ? esc(r.who) : '<span class="pill warn">Onbekend</span>'}</td>
+            ${rs.map((r) => `<tr class="${r.username ? '' : r.group ? 'grouped' : 'unknown'}"><td>${esc(localTime(r.ts))}</td><td>${whoCell(r)}</td>
               <td>${esc(r.type)}</td><td>${esc(r.dir)}</td><td class="muted small">${esc(r.raw ?? '')}</td></tr>`).join('')}`).join('')}
         </tbody></table></div>` : '<p class="muted">Geen meldingen in deze periode.</p>'}`;
+      // naam (of code) indelen bij leveranciers of andere; geldt voor alle meldingen met die naam
+      body.querySelectorAll('[data-group]').forEach((s) => s.onchange = () => {
+        const id = s.dataset.group;
+        this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
+          mm.settings ??= {};
+          mm.settings.badgeGroups = { ...(mm.settings.badgeGroups ?? {}) };
+          if (s.value) mm.settings.badgeGroups[id] = s.value; else delete mm.settings.badgeGroups[id];
+          mm.settings.updated = Date.now();
+        });
+        toast(s.value ? `"${id}" ingedeeld bij ${GROUPS[s.value]}` : `"${id}" staat terug bij onbekend`, 'ok');
+        draw();
+      });
       this._bList = list;
     };
+    const f0 = this.bFilter.who;
     body.innerHTML = `<div class="badge-filters">
-        <select data-f="who" aria-label="Werknemer"><option value="">Alle werknemers</option>${people.map((p) => `<option ${p === this.bFilter.who ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+        <select data-f="who" aria-label="Wie"><option value="">Iedereen</option>
+          <optgroup label="Groepen">${[['g:onbekend', 'Onbekend'], ['g:leverancier', 'Leveranciers'], ['g:andere', 'Andere']].map(([v, l]) => `<option value="${v}" ${v === f0 ? 'selected' : ''}>${l}</option>`).join('')}</optgroup>
+          <optgroup label="Werknemers">${people.map((p) => `<option ${p === f0 ? 'selected' : ''}>${esc(p)}</option>`).join('')}</optgroup></select>
         <select data-f="type" aria-label="Soort"><option value="">Alle soorten</option>${['Badge', 'Code', 'Andere'].map((t) => `<option ${t === this.bFilter.type ? 'selected' : ''}>${t}</option>`).join('')}</select>
         <input data-f="q" placeholder="Zoeken in de meldingen" value="${esc(this.bFilter.q)}" aria-label="Zoeken">
         <button class="secondary" data-act="csv">⬇ CSV</button></div>
@@ -707,13 +754,43 @@ export class Admin {
     if (!this.hasServer()) { box.innerHTML = '<p class="muted">Geen verbinding met de server ingesteld.</p>'; return; }
     try {
       const list = await this.server('/api/admin/sessions');
-      const people = new Set(list.map((s) => s.username)).size;
-      box.innerHTML = `<p class="muted small">${list.length} toestel(len) voor ${people} werknemer(s).</p>${this.ctx.sessionsHtml(list, { showUser: true })}`;
-      box.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
-        if (!confirm('Dit toestel afmelden?')) return;
-        try { await this.server(`/api/admin/sessions/${b.dataset.revoke}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'err'); }
-        this.devices(view);
-      });
+      // één toestel = het toestel dat de werknemer koos bij het aanmelden (meerdere browsers of app + browser);
+      // oudere aanmeldingen zonder keuze: per soort toestel (iPhone, Windows, …)
+      const osOf = (s) => String(s.device ?? 'Onbekend').split(' · ')[0];
+      const browserOf = (s) => String(s.device ?? '').split(' · ')[1] ?? '';
+      const groups = new Map();
+      for (const s of list) {
+        const key = `${s.username}|${s.deviceKey ?? `os:${osOf(s)}`}`;
+        if (!groups.has(key)) groups.set(key, { username: s.username, name: s.name ?? s.username, os: s.deviceName ?? osOf(s), type: s.type, sessions: [] });
+        groups.get(key).sessions.push(s);
+      }
+      const all = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'nl') || a.os.localeCompare(b.os));
+      const people = [...new Map(all.map((g) => [g.username, g.name])).entries()];
+      this.devWho ??= '';
+      const fmt = (ts) => new Date(ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const draw = () => {
+        const shown = all.filter((g) => !this.devWho || g.username === this.devWho);
+        box.innerHTML = `<div class="row dev-filter"><select id="devWho" aria-label="Werknemer"><option value="">Alle werknemers</option>
+            ${people.map(([u, n]) => `<option value="${esc(u)}" ${u === this.devWho ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+          <span class="muted small">${shown.length} toestel${shown.length === 1 ? '' : 'len'}${this.devWho ? '' : ` voor ${people.length} werknemer${people.length === 1 ? '' : 's'}`}</span></div>
+          ${shown.length ? `<div class="table-wrap"><table><thead><tr>${this.devWho ? '' : '<th>Werknemer</th>'}<th>Toestel</th><th>Browsers / app</th><th>Aangemeld sinds</th><th>Laatst actief</th><th></th></tr></thead><tbody>
+            ${shown.map((g, i) => `<tr>${this.devWho ? '' : `<td>${esc(g.name)}</td>`}
+              <td>${g.type === 'mobiel' ? '📱' : '💻'} <b>${esc(g.os)}</b></td>
+              <td>${esc([...new Set(g.sessions.map(browserOf).filter(Boolean))].join(', ') || '—')}${g.sessions.length > 1 ? ` <span class="muted small">(${g.sessions.length}×)</span>` : ''}</td>
+              <td>${fmt(Math.min(...g.sessions.map((s) => s.createdAt)))}</td><td>${fmt(Math.max(...g.sessions.map((s) => s.lastSeen)))}</td>
+              <td><button class="link danger" data-revoke="${i}">Afmelden</button></td></tr>`).join('')}
+          </tbody></table></div>` : '<p class="muted">Geen aangemelde toestellen.</p>'}`;
+        box.querySelector('#devWho').onchange = (e) => { this.devWho = e.target.value; draw(); };
+        box.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
+          const g = shown[Number(b.dataset.revoke)];
+          if (!confirm(`${g.name} afmelden op ${g.os}${g.sessions.length > 1 ? ` (${g.sessions.length} browsers)` : ''}?`)) return;
+          for (const s of g.sessions) {
+            try { await this.server(`/api/admin/sessions/${s.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'err'); }
+          }
+          this.devices(view);
+        });
+      };
+      draw();
     } catch (e) {
       box.innerHTML = `<div class="error">${esc(e.message)}</div>`;
     }

@@ -10,12 +10,17 @@ export const DEFAULT_WORK_TYPES = [
 ];
 
 /** Actieve soorten werk uit de stamgegevens (of de standaardlijst zolang er niets is ingesteld) */
-export const workTypesOf = (master) => {
-  const list = Array.isArray(master.workTypes) && master.workTypes.length ? alive(master.workTypes) : DEFAULT_WORK_TYPES;
-  return list.filter((w) => w.active !== false);
+/** Vaste soort voor korte bezoeken aan het atelier (minder dan een uur) */
+export const LOAD_WORK_TYPE = { id: 'laden', name: 'Laden/lossen' };
+export const SHORT_ATELIER_MIN = 60;
+
+/** Alle soorten (ook verwijderde); "Laden/lossen" wordt aangevuld zolang de beheerder ze niet zelf heeft */
+const allWorkTypes = (master) => {
+  const list = Array.isArray(master.workTypes) && master.workTypes.length ? master.workTypes : DEFAULT_WORK_TYPES;
+  return list.some((w) => w.id === LOAD_WORK_TYPE.id) ? list : [...list, LOAD_WORK_TYPE];
 };
-export const workTypeName = (master, id) => (Array.isArray(master.workTypes) && master.workTypes.length ? master.workTypes : DEFAULT_WORK_TYPES)
-  .find((w) => w.id === id)?.name ?? '';
+export const workTypesOf = (master) => alive(allWorkTypes(master)).filter((w) => w.active !== false);
+export const workTypeName = (master, id) => allWorkTypes(master).find((w) => w.id === id)?.name ?? '';
 
 /** Standaard type werk: "Elektrische werken" (of het eerste actieve type) */
 export const defaultWorkType = (master) => {

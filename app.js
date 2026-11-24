@@ -325,7 +325,7 @@ function deviceLabel() {
   return `${os} · ${browser}${isStandalone() ? ' (app)' : ''}`;
 }
 const isMobile = () => isIOS() || /Android|Mobile/.test(navigator.userAgent);
-const deviceInfo = () => ({ device: deviceLabel(), type: isMobile() ? 'mobiel' : 'computer' });
+const deviceInfo = () => ({ device: deviceLabel(), type: isMobile() ? 'mobiel' : 'computer', deviceKey: localDeviceKey() ?? undefined });
 
 async function postJson(path, body, token) {
   const res = await fetch(`${serverUrl()}${path}`, {
@@ -358,6 +358,95 @@ function signedIn({ session, username, name, isAdmin, mustChange }) {
   lsSet(ADMIN_OK, null);
   location.hash = '#dag';
   location.reload();
+}
+
+// ---------- Toestelkeuze ----------
+// Een browser kan niet zien op welk toestel hij draait (geen MAC-adres). Daarom vraagt de app bij de
+// eerste aanmelding in een nieuwe browser één keer welk toestel dit is; browsers op hetzelfde toestel
+// delen dan een toestelsleutel en staan in de lijst als één toestel.
+const DEVICE_KEY = 'enautec.deviceKey';
+const localDeviceKey = () => { try { return localStorage.getItem(DEVICE_KEY); } catch { return null; } };
+const setLocalDeviceKey = (k) => { try { k ? localStorage.setItem(DEVICE_KEY, k) : localStorage.removeItem(DEVICE_KEY); } catch { /* geblokkeerd */ } };
+const newDeviceKey = () => `t${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(2)).join('').slice(0, 12)}`;
+const defaultDeviceName = () => {
+  const os = deviceLabel().split(' · ')[0];
+  const me = lsGet(ME)?.name?.split(' ')[0];
+  const kind = isMobile() ? (os === 'iPhone' || os === 'iPad' ? os : `${os}-gsm`) : os === 'Mac' ? 'Mac' : 'Laptop';
+  return me ? `${kind} ${me}` : kind;
+};
+
+let deviceAsked = false;
+/** Na het aanmelden (of bij het opstarten): weet de server bij welk toestel deze browser hoort? */
+async function ensureDevice({ force = false } = {}) {
+  const dev = device();
+  if ((deviceAsked && !force) || !dev?.session) return;
+  deviceAsked = true;
+  let list;
+  try {
+    const res = await fetch(`${serverUrl()}/api/sessions`, { headers: { Authorization: `Bearer ${dev.session}` } });
+    if (!res.ok) { deviceAsked = false; return; }
+    list = await res.json();
+  } catch { deviceAsked = false; return; }
+  const cur = list.find((s) => s.current);
+  if (!cur) return;
+  const save = async (key, name, join) => {
+    setLocalDeviceKey(key);
+    try { await postJson('/api/me/device', { key, name, ...(join ? { join } : {}) }, dev.session); } catch (e) { toast(e.message, 'err'); }
+  };
+  if (!force) {
+    if (cur.deviceKey && cur.deviceName) { if (!localDeviceKey()) setLocalDeviceKey(cur.deviceKey); return; }
+    // deze browser kent zijn toestel al (bv. een collega meldt zich aan op dezelfde laptop)
+    const key = localDeviceKey();
+    if (key) return save(key, list.find((s) => s.deviceKey === key && s.deviceName)?.deviceName ?? defaultDeviceName());
+  }
+  // andere toestellen van deze werknemer (met sleutel, of oudere aanmeldingen per soort toestel)
+  const others = new Map();
+  for (const s of list) {
+    if (s.current) continue;
+    const id = s.deviceKey ?? `s${s.id}`;
+    const o = others.get(id) ?? { key: s.deviceKey, join: s.deviceKey ? null : s.id, name: s.deviceName ?? s.device, type: s.type, browsers: new Set(), lastSeen: 0 };
+    o.browsers.add(String(s.device ?? '').split(' · ')[1] ?? '');
+    o.lastSeen = Math.max(o.lastSeen, s.lastSeen);
+    others.set(id, o);
+  }
+  const options = [...others.values()].sort((a, b) => (a.type === cur.type ? -1 : 1) - (b.type === cur.type ? -1 : 1) || b.lastSeen - a.lastSeen);
+  if (!options.length && !force) return save(newDeviceKey(), defaultDeviceName());
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<form class="modal device-pick" role="dialog" aria-modal="true" aria-labelledby="dpTitle">
+      <h2 id="dpTitle">Welk toestel is dit?</h2>
+      <p class="muted small">Je bent aangemeld in <b>${esc(cur.device ?? 'een nieuwe browser')}</b>. Ben je op dit toestel al aangemeld in een andere browser of in de app? Kies het dan, zodat het maar één keer in de lijst staat.</p>
+      ${options.map((o, i) => `<label class="device-opt"><input type="radio" name="dev" value="${i}">
+        <span><b>${o.type === 'mobiel' ? '📱' : '💻'} ${esc(o.name)}</b><small class="muted">${esc([...o.browsers].filter(Boolean).join(', '))}</small></span></label>`).join('')}
+      <label class="device-opt"><input type="radio" name="dev" value="new" ${options.length ? '' : 'checked'}>
+        <span><b>➕ Een ander toestel</b><small class="muted">nog niet in de lijst</small></span></label>
+      <label class="q-field" id="dpNameBox"><span>Naam van dit toestel</span><input name="name" maxlength="40" value="${esc(cur.deviceName ?? defaultDeviceName())}"></label>
+      <div class="row modal-actions"><button class="primary">Bewaren</button></div>
+    </form>`;
+  document.body.append(wrap);
+  const f = wrap.querySelector('form');
+  const sync = () => { wrap.querySelector('#dpNameBox').style.display = f.elements.dev.value === 'new' ? '' : 'none'; };
+  f.onchange = sync;
+  sync();
+  await new Promise((done) => {
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = f.elements.dev.value;
+      if (!v) return toast('Kies een toestel.', 'err');
+      if (v === 'new') {
+        const name = f.elements.name.value.trim();
+        if (!name) return f.elements.name.focus();
+        await save(newDeviceKey(), name);
+      } else {
+        const o = options[Number(v)];
+        await save(o.key ?? newDeviceKey(), o.key ? o.name : defaultDeviceName(), o.join);
+      }
+      wrap.remove();
+      toast('Toestel bewaard', 'ok');
+      done();
+    };
+  });
 }
 
 /** Afmelden op dit toestel */
@@ -729,7 +818,7 @@ function sessionsHtml(list, { showUser = false } = {}) {
   if (!list.length) return '<p class="muted">Geen aangemelde toestellen.</p>';
   return `<div class="table-wrap"><table><thead><tr>${showUser ? '<th>Werknemer</th>' : ''}<th>Toestel</th><th>Aangemeld sinds</th><th>Laatst actief</th><th></th></tr></thead><tbody>
     ${list.map((s) => `<tr>${showUser ? `<td>${esc(s.name ?? s.username)}</td>` : ''}
-      <td>${s.type === 'mobiel' ? '📱' : '💻'} ${esc(s.device ?? 'Onbekend')}${s.current ? ' <span class="pill ok">dit toestel</span>' : ''}</td>
+      <td>${s.type === 'mobiel' ? '📱' : '💻'} ${s.deviceName ? `<b>${esc(s.deviceName)}</b> <span class="muted small">${esc(s.device ?? '')}</span>` : esc(s.device ?? 'Onbekend')}${s.current ? ' <span class="pill ok">dit toestel</span>' : ''}</td>
       <td>${fmt(s.createdAt)}</td><td>${fmt(s.lastSeen)}</td>
       <td>${s.current ? '' : `<button class="link danger" data-revoke="${s.id}">Afmelden</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -835,7 +924,8 @@ async function viewMore() {
       const res = await fetch(`${server}/api/sessions`, { headers: { Authorization: `Bearer ${dev.session}` } });
       if (res.status === 401) { signOutLocal('Je bent afgemeld op dit toestel. Meld je opnieuw aan.'); return; }
       const list = await res.json();
-      box.innerHTML = sessionsHtml(list);
+      box.innerHTML = `${sessionsHtml(list)}<p><button class="secondary" data-act="pickdev">Ander toestel kiezen voor deze browser</button></p>`;
+      box.querySelector('[data-act=pickdev]').onclick = async () => { await ensureDevice({ force: true }); loadMySessions(); };
       box.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
         if (!confirm('Dit toestel afmelden?')) return;
         await fetch(`${server}/api/sessions/${b.dataset.revoke}`, { method: 'DELETE', headers: { Authorization: `Bearer ${dev.session}` } });
@@ -1007,8 +1097,7 @@ async function start() {
   await syncNow();
   if (GOOGLE && store.status === 'login' && !device()?.session && !adminKey()) { viewWelcome(); return; }
   route();
-  offerPasswordChange();
-  refreshMe().then(offerPasswordChange);
+  refreshMe().then(offerPasswordChange).then(() => ensureDevice()).catch(() => {});
 
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60000);
   document.addEventListener('visibilitychange', () => {

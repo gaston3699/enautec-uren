@@ -5,7 +5,7 @@
    - Lettertypes en de Excel-module: bewaarde kopie gebruiken.
    - Google, de verzamelserver (/api/) en Microsoft: nooit bewaren, altijd rechtstreeks.
    VERSION wordt automatisch aangepast door scripts/stamp-version.js bij elke publicatie. */
-const VERSION = '0e5cbbf15e5b';
+const VERSION = '6abc3d58de38';
 const CACHE = `enautec-uren-${VERSION}`;
 const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './gdrive.js', './store.js', './day.js', './admin.js',
   './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './questions.js', './projects.js', './combo.js', './todo.js', './calendar.js', './manifest.webmanifest',

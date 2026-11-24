@@ -326,6 +326,14 @@ tr.total td { font-weight: 700; background: var(--surface2); }
 @media (max-width: 640px) { .badge-filters { grid-template-columns: 1fr 1fr; } }
 .badge-log td { padding: 7px 8px; } .badge-log tr.day-row td { background: var(--surface2); font-weight: 700; text-transform: capitalize; }
 .badge-log tr.unknown td:first-child { box-shadow: inset 3px 0 0 #d9a400; }
+.badge-log tr.grouped td { color: var(--muted); }
+.badge-group { font-size: 12px; padding: 2px 4px; margin-left: 4px; min-height: 0; width: auto; }
+.modal.device-pick { display: grid; gap: 8px; }
+.device-opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.device-opt span { display: grid; }
+.device-opt:has(input:checked) { border: 2px solid var(--red); background: var(--red-soft); }
+.dev-filter { align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.dev-filter .combo, .dev-filter select { min-width: 220px; }
 
 /* ToDo */
 .todo-new { display: grid; grid-template-columns: 1fr; gap: 8px; }

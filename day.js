@@ -4,7 +4,7 @@ import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, da
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, byName, toast, resolveId } from './ui.js';
 import { confirmDialog } from './update.js';
-import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType } from './projects.js';
+import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
 import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
 
@@ -43,8 +43,11 @@ export function proposal(master, planning, username, date, raw) {
     live: date === today(),
   });
   // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken; samengevoegde projecten doorverwijzen
+  const loadOk = workTypesOf(master).some((w) => w.id === LOAD_WORK_TYPE.id);
   return applyAnswers(segs, raw?.answers ?? []).segs
-    .map((s) => (s.projectId ? { ...s, projectId: resolveId(master.projects, s.projectId) } : s));
+    .map((s) => (s.projectId ? { ...s, projectId: resolveId(master.projects, s.projectId) } : s))
+    // korter dan een uur in het atelier (en al afgesloten): voorstellen als laden/lossen
+    .map((s) => (loadOk && s.kind === 'atelier' && !s.workType && !s.openBadge && s.end - s.start < SHORT_ATELIER_MIN * MIN ? { ...s, workType: LOAD_WORK_TYPE.id } : s));
 }
 
 /** Antwoordde de werknemer "Nee" op "Aan het werk?" */
