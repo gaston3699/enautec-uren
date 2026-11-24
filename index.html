@@ -395,6 +395,40 @@ tr.total td { font-weight: 700; background: var(--surface2); }
   .cal-dots { display: flex; justify-content: center; }
 }
 .cal-legend { margin-top: 12px; }
+/* Beheer: planning met selectie van dagen */
+.plan-admin { display: grid; gap: 14px; }
+main:has(.plan-admin) { max-width: 1400px; }
+@media (min-width: 700px) { .plan-admin .cal-cell { min-height: 92px; } .plan-admin .cal-chip.mini { font-size: 12px; } }
+@media (min-width: 1000px) { .plan-admin { grid-template-columns: minmax(0, 1fr) 360px; align-items: start; } .plan-panel { position: sticky; top: 12px; } }
+.plan-panel { display: grid; gap: 10px; }
+.plan-panel h2 { margin: 0; }
+.plan-sel { background: var(--surface2); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+.plan-sel b { font-size: 14px; }
+.plan-sel .btn, .plan-sel button { font-size: 13px; padding: 6px 10px; }
+.plan-form { display: grid; gap: 10px; }
+.plan-people { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.plan-people legend { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
+.pill-check { position: relative; }
+.pill-check input { position: absolute; opacity: 0; pointer-events: none; }
+.pill-check span { display: inline-block; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; cursor: pointer; user-select: none; }
+.pill-check input:checked + span { background: var(--ink); color: var(--ink-on); border-color: var(--ink); }
+.pill-check input:checked + span::before { content: '✓ '; }
+.pill-check input:focus-visible + span { outline: 2px solid var(--red); outline-offset: 2px; }
+.danger-text { color: var(--red-text); }
+.cal-wday, .cal-cell { cursor: pointer; }
+.cal-wday { position: relative; }
+.cal-wday.sel, .cal-cell.sel { background: var(--red-soft); border: 2px solid var(--red); }
+.cal-wday.sel .cal-date b, .cal-cell.sel b { color: var(--red-text); }
+.cal-wday.sel::after, .cal-cell.sel::after { content: '✓'; position: absolute; top: 4px; right: 8px; color: var(--red-text); font-weight: 700; }
+.cal-cell { position: relative; }
+.cal-cell.sel::after { top: 2px; right: 4px; font-size: 12px; }
+.cal-who { display: block; font-weight: 400; font-size: 12px; opacity: .85; overflow: hidden; text-overflow: ellipsis; }
+.cal-open { position: absolute; right: 6px; bottom: 6px; font-size: 20px; color: var(--muted); padding: 0 6px; }
+.cal-wday:has(.cal-open) { grid-template-columns: 52px 1fr 22px; }
+.cal-count { position: absolute; bottom: 2px; right: 4px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.cal-people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cal-people .pill { background: var(--surface2); display: inline-flex; align-items: center; gap: 4px; }
+.cal-people .pill button { padding: 0 2px; font-size: 13px; }
 .cal-leg-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
 .cal-leg-row i { width: 12px; height: 12px; border-radius: 50%; background: hsl(var(--h) 60% 45%); flex: none; }
 .cal-leg-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

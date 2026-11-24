@@ -8,7 +8,8 @@ import { geocode, addressLine, splitAddress } from './geocode.js';
 import { readTable } from './xlsx.js';
 import { workTypesOf, DEFAULT_WORK_TYPES, similarTo, workTypeOptions } from './projects.js';
 import { renderTodo, todoToConfirm } from './todo.js';
-import { weekStart, weekNumber, monthDays, shiftMonth } from './periods.js';
+import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
+import { planningHtml, visibleDays } from './calendar.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Leverancier', thuis: 'Thuisadres werknemer' };
@@ -814,66 +815,107 @@ export class Admin {
   }
 
   // ---------- Planning ----------
+  /**
+   * Planning als kalender (zelfde beeld als de werknemer, maar voor iedereen).
+   * Dagen aantikken = selecteren; daarna project + werknemers kiezen en in één keer inplannen.
+   * Bv. ma–vr Tomas en Gaston, daarna di–do ook Philippe.
+   */
   async planning(view) {
-    const date = this.planDate;
     const m = this.ctx.master();
     const emps = alive(m.employees).filter((e) => e.active !== false).sort(byName);
-    const projects = alive(m.projects).filter((p) => p.active !== false);
-    const items = alive(this.ctx.planning().items).filter((p) => p.date === date);
-    view.innerHTML = `<section class="card">
-        <div class="datebar"><button class="icon" data-act="prev" aria-label="Vorige dag">‹</button>
-        <div><b>${esc(fmtDate(date))}</b><input type="date" id="plDate" value="${date}"></div>
-        <button class="icon" data-act="next" aria-label="Volgende dag">›</button></div>
-        <p class="muted">De planning helpt het juiste project te kiezen als een klant meerdere open projecten heeft. Werknemers zien hun planning in de app, met een knop voor de route.</p>
-        <form class="form-grid" id="plForm">
-          <label><span>Werknemer</span><select name="username" required><option value="">—</option>${emps.map((e) => `<option value="${esc(e.username)}">${esc(e.name)}</option>`).join('')}</select></label>
-          <label><span>Project</span><select name="projectId" required><option value="">—</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(projectLabel(p, m))}</option>`).join('')}</select></label>
-          <label><span>Opmerking</span><input name="note" placeholder="bv. sleutel bij buren"></label>
-          <div><button class="primary">Inplannen</button></div>
+    const projects = alive(m.projects).filter((p) => p.active !== false).sort((a, b) => projectLabel(a, m).localeCompare(projectLabel(b, m), 'nl'));
+    this.planView ??= 'week';
+    this.planSel ??= new Set();
+    const sel = this.planSel;
+    view.innerHTML = `<div class="plan-admin">
+      <div id="plCal"></div>
+      <section class="card plan-panel">
+        <h2>Inplannen</h2>
+        <p class="muted small">Tik de dagen aan in de kalender, kies het project en de werknemers en tik op <b>Inplannen</b>. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in.</p>
+        <div class="plan-sel"><b id="plSelText"></b>
+          <div class="row"><button type="button" class="secondary small" data-act="workdays">Werkdagen in beeld</button>
+          <button type="button" class="secondary small" data-act="clear">Selectie wissen</button></div></div>
+        <form id="plForm" class="plan-form">
+          <label class="q-field"><span>Project</span><select name="projectId" required><option value="">— kies een project —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(projectLabel(p, m))}</option>`).join('')}</select></label>
+          <fieldset class="plan-people"><legend>Werknemers</legend>
+            ${emps.map((e) => `<label class="pill-check"><input type="checkbox" name="who" value="${esc(e.username)}"><span>${esc(e.name)}</span></label>`).join('')}</fieldset>
+          <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" placeholder="bv. sleutel bij buren"></label>
+          <div class="row"><button class="primary">Inplannen</button><button type="button" class="secondary danger-text" data-act="unplan">Uitplannen</button></div>
         </form>
-      </section>
-      <section class="card table-wrap"><table><thead><tr><th>Werknemer</th><th>Project</th><th>Opmerking</th><th></th></tr></thead><tbody>
-        ${items.map((it) => `<tr><td>${esc(alive(m.employees).find((e) => e.username === it.username)?.name ?? it.username)}</td>
-          <td>${esc(projectLabel(m.projects.find((p) => p.id === it.projectId), m))}</td><td>${esc(it.note ?? '')}</td>
-          <td><button class="link danger" data-del="${esc(it.id)}">Verwijder</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">Niets gepland op deze dag.</td></tr>'}
-      </tbody></table>
-      <button class="secondary" data-act="copy-prev">Planning van vorige werkdag kopiëren</button></section>`;
-    view.querySelector('[data-act=prev]').onclick = () => { this.planDate = shiftDate(date, -1); this.planning(view); };
-    view.querySelector('[data-act=next]').onclick = () => { this.planDate = shiftDate(date, 1); this.planning(view); };
-    view.querySelector('#plDate').onchange = (e) => { if (isDate(e.target.value)) { this.planDate = e.target.value; this.planning(view); } };
+      </section></div>`;
+
+    const days = () => (sel.size ? [...sel].sort() : this.planView === 'dag' && this.planDate ? [this.planDate] : []);
+    const drawCal = () => {
+      view.querySelector('#plCal').innerHTML = planningHtml({ master: m, planning: this.ctx.planning(), view: this.planView, date: this.planDate, admin: true, selected: sel });
+      const d = days();
+      view.querySelector('#plSelText').textContent = !d.length ? 'Nog geen dagen geselecteerd.'
+        : `${d.length} dag${d.length === 1 ? '' : 'en'}: ${d.map((x) => fmtDate(x, { weekday: 'short', day: 'numeric', month: 'short' })).join(', ')}`;
+    };
+    drawCal();
+    const save = (fn) => { this.ctx.store.change(PATHS.planning, { items: [] }, fn); drawCal(); };
+
+    view.onclick = (e) => {
+      const del = e.target.closest('[data-del]');
+      if (del) {
+        return save((pl) => { const it = pl.items.find((x) => x.id === del.dataset.del); if (it) Object.assign(it, { deleted: true, updated: Date.now() }); });
+      }
+      const go = e.target.closest('[data-v]');
+      if (go && view.querySelector('#plCal').contains(go)) {
+        e.preventDefault();
+        this.planView = go.dataset.v; this.planDate = go.dataset.d;
+        return drawCal();
+      }
+      const day = e.target.closest('[data-day]');
+      if (day) {
+        e.preventDefault();
+        if (sel.has(day.dataset.day)) sel.delete(day.dataset.day); else sel.add(day.dataset.day);
+        return drawCal();
+      }
+      const act = e.target.closest('[data-act]')?.dataset.act;
+      if (act === 'clear') { sel.clear(); drawCal(); }
+      if (act === 'workdays') {
+        for (const d of visibleDays(this.planView, this.planDate ?? today())) if (isoDay(d) <= 5 && !holidayName(d)) sel.add(d);
+        drawCal();
+      }
+      if (act === 'unplan') {
+        const f = view.querySelector('#plForm').elements;
+        const d = days();
+        const who = [...view.querySelectorAll('[name=who]:checked')].map((x) => x.value);
+        if (!d.length || !f.projectId.value) return toast('Kies eerst de dagen en het project.', 'err');
+        let n = 0;
+        save((pl) => {
+          for (const it of pl.items) {
+            if (!it.deleted && d.includes(it.date) && it.projectId === f.projectId.value && (!who.length || who.includes(it.username))) {
+              Object.assign(it, { deleted: true, updated: Date.now() }); n++;
+            }
+          }
+        });
+        toast(`${n} uitgepland`, 'ok');
+      }
+    };
     view.querySelector('#plForm').onsubmit = (e) => {
       e.preventDefault();
       const f = e.target.elements;
-      this.ctx.store.change(PATHS.planning, { items: [] }, (pl) => {
-        pl.items.push({ id: uid(), date, username: f.username.value, projectId: f.projectId.value, note: f.note.value.trim(), updated: Date.now() });
-      });
-      this.planning(view);
-    };
-    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => {
-      this.ctx.store.change(PATHS.planning, { items: [] }, (pl) => {
-        const it = pl.items.find((x) => x.id === b.dataset.del);
-        if (it) Object.assign(it, { deleted: true, updated: Date.now() });
-      });
-      this.planning(view);
-    });
-    view.querySelector('[data-act=copy-prev]').onclick = () => {
-      let d = shiftDate(date, -1);
-      const all = alive(this.ctx.planning().items);
-      for (let i = 0; i < 7 && !all.some((x) => x.date === d); i++) d = shiftDate(d, -1);
-      const src = all.filter((x) => x.date === d);
-      if (!src.length) return toast('Geen planning gevonden in de vorige 7 dagen.');
-      this.ctx.store.change(PATHS.planning, { items: [] }, (pl) => {
-        for (const s of src) {
-          if (!pl.items.some((x) => !x.deleted && x.date === date && x.username === s.username && x.projectId === s.projectId)) {
-            pl.items.push({ ...s, id: uid(), date, updated: Date.now() });
+      const d = days();
+      const who = [...view.querySelectorAll('[name=who]:checked')].map((x) => x.value);
+      if (!d.length) return toast('Tik eerst de dagen aan in de kalender.', 'err');
+      if (!who.length) return toast('Kies minstens één werknemer.', 'err');
+      let n = 0;
+      save((pl) => {
+        for (const date of d) {
+          for (const username of who) {
+            const same = pl.items.find((x) => !x.deleted && x.date === date && x.username === username && x.projectId === f.projectId.value);
+            if (same) { if (f.note.value.trim()) Object.assign(same, { note: f.note.value.trim(), updated: Date.now() }); continue; }
+            pl.items.push({ id: uid(), date, username, projectId: f.projectId.value, note: f.note.value.trim(), updated: Date.now() });
+            n++;
           }
         }
       });
-      toast(`Planning van ${fmtDate(d)} gekopieerd.`, 'ok');
-      this.planning(view);
+      sel.clear();
+      drawCal();
+      toast(`${n} keer ingepland (${who.length} werknemer${who.length === 1 ? '' : 's'} × ${d.length} dag${d.length === 1 ? '' : 'en'})`, 'ok');
     };
   }
-
   // ---------- Export naar facturatie ----------
   async exportView(view) {
     const m = this.ctx.master();
