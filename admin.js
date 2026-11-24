@@ -9,7 +9,7 @@ import { readTable } from './xlsx.js';
 import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOptions } from './projects.js';
 import { renderTodo, todoToConfirm } from './todo.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
-import { planningHtml, visibleDays } from './calendar.js';
+import { planningHtml, visibleDays, needId, needOf } from './calendar.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 /**
@@ -817,12 +817,13 @@ export class Admin {
       // één toestel = het toestel dat de werknemer koos bij het aanmelden (meerdere browsers of app + browser);
       // oudere aanmeldingen zonder keuze: per soort toestel (iPhone, Windows, …)
       const osOf = (s) => String(s.device ?? 'Onbekend').split(' · ')[0];
-      const browserOf = (s) => String(s.device ?? '').split(' · ')[1] ?? '';
+      const browserOf = (s) => (s.type === 'widget' ? '🧩 widget' : String(s.device ?? '').split(' · ')[1] ?? '');
       const groups = new Map();
       for (const s of list) {
         const key = `${s.username}|${s.deviceKey ?? `os:${osOf(s)}`}`;
         if (!groups.has(key)) groups.set(key, { username: s.username, name: s.name ?? s.username, os: s.deviceName ?? osOf(s), type: s.type, sessions: [] });
         groups.get(key).sessions.push(s);
+        if (s.type === 'mobiel') groups.get(key).type = 'mobiel';
       }
       const all = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'nl') || a.os.localeCompare(b.os));
       const people = [...new Map(all.map((g) => [g.username, g.name])).entries()];
@@ -977,11 +978,78 @@ export class Admin {
           <fieldset class="plan-people"><legend>Werknemers</legend>
             ${emps.map((e) => `<label class="pill-check"><input type="checkbox" name="who" value="${esc(e.username)}"><span>${esc(e.name)}</span></label>`).join('')}</fieldset>
           <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" placeholder="bv. sleutel bij buren"></label>
+          <fieldset class="plan-need"><legend>Materiaal nodig (mag leeg)</legend>
+            <div class="need-lines" id="plNeed"></div>
+            <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button>
+            <p class="muted small">Staat 's ochtends in het widget en in de planning van wie op dit project staat. Geldt voor alle geselecteerde dagen.</p></fieldset>
           <div class="row"><button class="primary">Inplannen</button><button type="button" class="secondary danger-text" data-act="unplan">Uitplannen</button></div>
         </form>
-      </section></div>`;
+      </section></div>
+      <datalist id="plArt">${alive(m.articles).filter((a) => a.active !== false).sort(byName).map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>`;
 
     const days = () => (sel.size ? [...sel].sort() : this.planView === 'dag' && this.planDate ? [this.planDate] : []);
+    // materiaal nodig: regels (artikel, aantal, eenheid)
+    const needRow = (l = {}) => `<div class="need-row"><input class="nd-desc" list="plArt" placeholder="Artikel of omschrijving" value="${esc(l.description ?? '')}" aria-label="Artikel">
+      <input class="nd-qty" type="number" inputmode="decimal" step="any" min="0" placeholder="Aantal" value="${l.qty ?? ''}" aria-label="Aantal">
+      <input class="nd-unit" placeholder="st" value="${esc(l.unit ?? '')}" aria-label="Eenheid">
+      <button type="button" class="link danger" data-act="need-del" aria-label="Regel verwijderen">✕</button></div>`;
+    const readNeed = (box) => [...box.querySelectorAll('.need-row')].map((r) => {
+      const q = r.querySelector('.nd-qty').value;
+      return { description: r.querySelector('.nd-desc').value.trim(), qty: q === '' ? null : Number(q), unit: r.querySelector('.nd-unit').value.trim() || null };
+    }).filter((l) => l.description);
+    const setNeed = (pl, date, projectId, lines) => {
+      pl.needs ??= [];
+      const id = needId(date, projectId);
+      const cur = pl.needs.find((n) => n.id === id);
+      if (cur) Object.assign(cur, { lines, deleted: !lines.length, updated: Date.now() });
+      else if (lines.length) pl.needs.push({ id, date, projectId, lines, updated: Date.now() });
+    };
+    view.addEventListener('input', (e) => {
+      if (!e.target.classList.contains('nd-desc')) return;
+      const art = alive(m.articles).find((a) => a.name === e.target.value);
+      const unit = e.target.closest('.need-row').querySelector('.nd-unit');
+      if (art?.unit && !unit.value) unit.value = art.unit;
+    });
+    const editNeed = (date, projectId) => {
+      const cur = needOf(this.ctx.planning(), date, projectId);
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-backdrop';
+      wrap.innerHTML = `<form class="modal" role="dialog" aria-modal="true" aria-labelledby="ndTitle">
+        <h2 id="ndTitle">🧰 Materiaal nodig</h2>
+        <p class="muted small">${esc(projectLabel(m.projects.find((p) => p.id === projectId), m))} · ${esc(fmtDate(date))}</p>
+        <div class="need-lines">${(cur?.lines ?? []).map(needRow).join('') || needRow()}</div>
+        <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button>
+        <label class="check" style="margin-top:10px;display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="all" style="margin-top:3px">Ook voor de andere geplande dagen van dit project in deze ${this.planView === 'maand' ? 'maand' : 'week'}</label>
+        <div class="row modal-actions"><button type="button" class="secondary" data-act="cancel">Annuleren</button><button class="primary">Bewaren</button></div>
+      </form>`;
+      // artikels voorstellen ook in de popup (de lijst staat in het beheerscherm)
+      wrap.append(view.querySelector('#plArt').cloneNode(true));
+      document.body.append(wrap);
+      const f = wrap.querySelector('form');
+      f.addEventListener('input', (e) => {
+        if (!e.target.classList.contains('nd-desc')) return;
+        const art = alive(m.articles).find((a) => a.name === e.target.value);
+        const unit = e.target.closest('.need-row').querySelector('.nd-unit');
+        if (art?.unit && !unit.value) unit.value = art.unit;
+      });
+      f.onclick = (e) => {
+        const a = e.target.closest('[data-act]')?.dataset.act;
+        if (a === 'need-add') f.querySelector('.need-lines').insertAdjacentHTML('beforeend', needRow());
+        if (a === 'need-del') e.target.closest('.need-row').remove();
+        if (a === 'cancel') wrap.remove();
+      };
+      f.onsubmit = (e) => {
+        e.preventDefault();
+        const lines = readNeed(f);
+        const dates = f.elements.all.checked
+          ? [...new Set(alive(this.ctx.planning().items).filter((it) => it.projectId === projectId && visibleDays(this.planView === 'maand' ? 'maand' : 'week', date).includes(it.date)).map((it) => it.date))]
+          : [date];
+        if (!dates.includes(date)) dates.push(date);
+        save((pl) => { for (const d of dates) setNeed(pl, d, projectId, lines); });
+        wrap.remove();
+        toast(lines.length ? `Materiaal bewaard (${dates.length} dag${dates.length === 1 ? '' : 'en'})` : 'Materiaal verwijderd', 'ok');
+      };
+    };
     const drawCal = () => {
       view.querySelector('#plCal').innerHTML = planningHtml({ master: m, planning: this.ctx.planning(), view: this.planView, date: this.planDate, admin: true, selected: sel });
       const d = days();
@@ -992,6 +1060,11 @@ export class Admin {
     const save = (fn) => { this.ctx.store.change(PATHS.planning, { items: [] }, fn); drawCal(); };
 
     view.onclick = (e) => {
+      const nb = e.target.closest('[data-need]');
+      if (nb) {
+        const [date, projectId] = nb.dataset.need.split('|');
+        return editNeed(date, projectId);
+      }
       const del = e.target.closest('[data-del]');
       if (del) {
         return save((pl) => { const it = pl.items.find((x) => x.id === del.dataset.del); if (it) Object.assign(it, { deleted: true, updated: Date.now() }); });
@@ -1009,6 +1082,8 @@ export class Admin {
         return drawCal();
       }
       const act = e.target.closest('[data-act]')?.dataset.act;
+      if (act === 'need-add') view.querySelector('#plNeed').insertAdjacentHTML('beforeend', needRow());
+      if (act === 'need-del') e.target.closest('.need-row').remove();
       if (act === 'clear') { sel.clear(); drawCal(); }
       if (act === 'workdays') {
         for (const d of visibleDays(this.planView, this.planDate ?? today())) if (isoDay(d) <= 5 && !holidayName(d)) sel.add(d);
@@ -1038,8 +1113,10 @@ export class Admin {
       if (!d.length) return toast('Tik eerst de dagen aan in de kalender.', 'err');
       if (!who.length) return toast('Kies minstens één werknemer.', 'err');
       let n = 0;
+      const lines = readNeed(view.querySelector('#plNeed'));
       save((pl) => {
         for (const date of d) {
+          if (lines.length) setNeed(pl, date, f.projectId.value, lines);
           for (const username of who) {
             const same = pl.items.find((x) => !x.deleted && x.date === date && x.username === username && x.projectId === f.projectId.value);
             if (same) { if (f.note.value.trim()) Object.assign(same, { note: f.note.value.trim(), updated: Date.now() }); continue; }
@@ -1049,8 +1126,9 @@ export class Admin {
         }
       });
       sel.clear();
+      view.querySelector('#plNeed').innerHTML = '';
       drawCal();
-      toast(`${n} keer ingepland (${who.length} werknemer${who.length === 1 ? '' : 's'} × ${d.length} dag${d.length === 1 ? '' : 'en'})`, 'ok');
+      toast(`${n} keer ingepland${lines.length ? ', met materiaal' : ''} (${who.length} werknemer${who.length === 1 ? '' : 's'} × ${d.length} dag${d.length === 1 ? '' : 'en'})`, 'ok');
     };
   }
   // ---------- Export naar facturatie ----------

@@ -1,5 +1,5 @@
 // Dagstaat: automatisch voorstel, aanpassen (tijdsblokken zoals Atree), materiaal en bevestigen.
-import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS } from './engine.js';
+import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS, DEFAULT_RULES } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, byName, toast, resolveId } from './ui.js';
@@ -7,20 +7,13 @@ import { confirmDialog } from './update.js';
 import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
 import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
+import { needOf, needHtml, hue } from './calendar.js';
 
 const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
 const WORKLIKE = new Set(['werk', 'atelier', 'leverancier']);
 const MIN = 60000;
 
-export const DEFAULT_RULES = {
-  minStayMin: 10, unknownMinStayMin: 20, maxAccuracyM: 250, clusterRadiusM: 200,
-  // Badges binnen 10 minuten na elkaar tellen als één (bv. eerst de poort, dan de deur)
-  avgSpeedKmh: 50, roadFactor: 1.3, homeTravelIsWork: false, badgeDebounceSec: 600,
-  // Afronden per kwartier: begin tot 5 min erna naar beneden, einde tot 8 min erna naar beneden
-  roundMinutes: 15, roundStartDownMax: 5, roundEndDownMax: 8,
-  // Verwachte arbeidstijd per werkdag (uren)
-  dayHours: 8,
-};
+export { DEFAULT_RULES };
 export const rulesFrom = (master) => ({ ...DEFAULT_RULES, ...(master.settings?.rules ?? {}) });
 
 export const emptyReg = (username, month) => ({ username, month, days: {} });
@@ -329,6 +322,16 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     </div>`;
   }
 
+  /** Ingepland vandaag met materiaal dat mee moet (uit de planning) */
+  function neededHtml() {
+    const ids = [...new Set(planned.map((p) => p.projectId))];
+    return ids.map((id) => {
+      const need = needOf(ctx.planning(), date, id);
+      if (!need?.lines?.some((l) => l.description)) return '';
+      return `<section class="card day-need" style="--h:${hue(id)}"><h2>${esc(projectLabel(master.projects.find((p) => p.id === id), master) || 'Project')}</h2>${needHtml(need)}</section>`;
+    }).join('');
+  }
+
   /** Materiaal: eerst het project (van de projecten van die dag), dan het materiaal */
   function materialHtml(sortedSegs) {
     const dayProj = [...new Set(sortedSegs.filter((s) => WORKLIKE.has(s.kind) && s.projectId).map((s) => s.projectId))];
@@ -374,6 +377,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       ${rawError ? `<div class="card"><p class="muted">⚠ ${esc(rawError)}</p></div>` : ''}
       ${declinedAnswer(raw) && !cur.edited && !readonly ? `<div class="notice">Je antwoordde <b>Nee</b> op "Aan het werk?" (${localTime(declinedAnswer(raw).ts)}). Vandaag wordt niets automatisch geregistreerd. Toch gewerkt? Voeg je blokken hieronder toe of <a href="#vraag/${declinedAnswer(raw).id}">wijzig je antwoord</a>.</div>` : ''}
       ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
+      ${!asAdmin && !readonly ? neededHtml() : ''}
       <section class="card">
         <div class="row spread"><h2>Tijdsblokken</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
         ${!readonly && cur.edited ? '<p style="text-align:right;margin:0"><button class="link" data-act="reset">↺ Automatisch voorstel</button></p>' : ''}

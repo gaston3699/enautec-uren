@@ -5,15 +5,15 @@
    - Lettertypes en de Excel-module: bewaarde kopie gebruiken.
    - Google, de verzamelserver (/api/) en Microsoft: nooit bewaren, altijd rechtstreeks.
    VERSION wordt automatisch aangepast door scripts/stamp-version.js bij elke publicatie. */
-const VERSION = '8b5c44196e62';
+const VERSION = '44411b39d5e1';
 const CACHE = `enautec-uren-${VERSION}`;
 const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './gdrive.js', './store.js', './day.js', './admin.js',
-  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './questions.js', './projects.js', './combo.js', './todo.js', './calendar.js', './manifest.webmanifest',
+  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './questions.js', './projects.js', './combo.js', './todo.js', './calendar.js', './setup.js', './manifest.webmanifest',
   './privacy.html', './logo.svg', './logo-mark.svg', './logo-mark-kerst.svg', './icon-kerst.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 const STATIC_ORIGINS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];
 
 self.addEventListener('install', (e) => {
-  // Altijd verse kopieën ophalen voor deze versie; NIET meteen activeren (wacht op de gebruiker)
+  // Altijd verse kopieÃ«n ophalen voor deze versie; NIET meteen activeren (wacht op de gebruiker)
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))));
 });
 

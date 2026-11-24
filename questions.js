@@ -68,6 +68,7 @@ export async function syncPlaces(master, server, headers) {
     sites: alive(master.sites).map(({ id, type, name, address, lat, lon, radius_m, customer_id, employee_id, active }) => ({ id, type, name, address, lat, lon, radius_m, customer_id, employee_id, active })),
     customers: alive(master.customers).map(({ id, name }) => ({ id, name })),
     projects: alive(master.projects).map(({ id, code, name, customer_id, site_id, active }) => ({ id, code, name, customer_id, site_id, active })),
+    rules: master.settings?.rules ?? null, // voor de widget (uren van vandaag op de server berekend)
   };
   const body = JSON.stringify(data);
   let h = 0;
@@ -79,6 +80,32 @@ export async function syncPlaces(master, server, headers) {
     const res = await fetch(`${server}/api/places`, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...headers }, body });
     if (res.ok) try { localStorage.setItem('enautec.placesHash', key); } catch { /* geen opslag */ }
   } catch { /* offline: volgende keer */ } finally { placesBusy = false; }
+}
+
+/** Planning van de komende weken (met het nodige materiaal) naar de server, voor het widget */
+let planBusy = false;
+export async function syncPlanning(planning, server, headers) {
+  if (planBusy || !server || !headers || !planning) return;
+  const from = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 62 * 86400000).toISOString().slice(0, 10);
+  const inRange = (x) => x.date >= from && x.date <= to;
+  const stamp = Math.max(0, ...[...(planning.items ?? []), ...(planning.needs ?? [])].map((x) => x.updated ?? 0));
+  const data = {
+    items: alive(planning.items).filter(inRange).map(({ date, username, projectId, note, updated }) => ({ date, username, projectId, note, updated })),
+    needs: alive(planning.needs).filter(inRange).map(({ date, projectId, lines, updated }) => ({ date, projectId, lines, updated })),
+    // laatste wijziging (ook verwijderingen), zodat een oudere kopie de nieuwere niet overschrijft
+    stamp,
+  };
+  const body = JSON.stringify(data);
+  let h = 0;
+  for (let i = 0; i < body.length; i++) h = (h * 31 + body.charCodeAt(i)) | 0;
+  const key = `${server}|${h}`;
+  try { if (localStorage.getItem('enautec.planHash') === key) return; } catch { /* geen opslag */ }
+  planBusy = true;
+  try {
+    const res = await fetch(`${server}/api/planning`, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...headers }, body });
+    if (res.ok) try { localStorage.setItem('enautec.planHash', key); } catch { /* geen opslag */ }
+  } catch { /* offline: volgende keer */ } finally { planBusy = false; }
 }
 
 /** "Pauze?" (start nu of geen pauze) en "Pauze voorbij?" (stop nu) */

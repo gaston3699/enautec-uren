@@ -16,6 +16,15 @@ export function hue(id) {
   return h % 360;
 }
 
+/** Materiaal dat nodig is voor een project op een dag (gedeeld door iedereen op dat project) */
+export const needId = (date, projectId) => `${date}|${projectId}`;
+export const needOf = (planning, date, projectId) => alive(planning?.needs).find((n) => n.id === needId(date, projectId)) ?? null;
+export const needLine = (l) => [l.qty != null && l.qty !== '' ? String(l.qty).replace('.', ',') : '', l.unit, l.description].filter(Boolean).join(' ');
+export function needHtml(need) {
+  const lines = (need?.lines ?? []).filter((l) => l.description);
+  return lines.length ? `<div class="cal-need"><b>🧰 Mee te nemen</b><ul>${lines.map((l) => `<li>${esc(needLine(l))}</li>`).join('')}</ul></div>` : '';
+}
+
 /** Alle dagen die in de huidige weergave te zien zijn (voor "selecteer alle werkdagen") */
 export function visibleDays(view, date) {
   if (view === 'dag') return [date];
@@ -48,7 +57,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     const w = mates(d, e.projectId);
     return w.length ? `<span class="cal-who">met ${esc(w.map(first).join(', '))}</span>` : '';
   };
-  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls}" style="--h:${hue(e.projectId)}">${esc(name(e.projectId))}${cls ? '' : who(e, d)}</span>`;
+  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls}" style="--h:${hue(e.projectId)}">${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}</span>`;
   const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}${of !== username ? `/${encodeURIComponent(of)}` : ''}`);
   const nav = (v, d) => `href="${link(v, d)}" data-v="${v}" data-d="${d}"`;
   const sel = (d) => (selected.has(d) ? 'sel' : '');
@@ -69,6 +78,8 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
         <div><b>${esc(name(e.projectId))}</b>
         ${site ? `<div class="muted">📍 ${esc(site.name)}${site.address ? ` · ${esc(site.address)}` : ''}</div>` : ''}
         ${notes.map((n) => `<div>${esc(n)}</div>`).join('')}
+        ${needHtml(needOf(planning, date, e.projectId))}
+        ${admin ? `<div><button type="button" class="link" data-need="${esc(`${date}|${e.projectId}`)}">🧰 ${needOf(planning, date, e.projectId)?.lines?.length ? 'Materiaal wijzigen' : 'Materiaal nodig toevoegen'}</button></div>` : ''}
         ${!admin && mates(date, e.projectId).length ? `<div class="cal-mates">👷 Samen met ${esc(mates(date, e.projectId).map(first).join(', '))}</div>` : ''}
         ${admin ? `<div class="cal-people">${e.items.map((i) => `<span class="pill">${esc(person(i.username))}<button type="button" class="link danger" data-del="${esc(i.id)}" aria-label="${esc(person(i.username))} uitplannen">✕</button></span>`).join('')}</div>` : ''}</div>
         ${!admin && site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}">Route</a>` : ''}

@@ -16,7 +16,8 @@ import { initCombos } from './combo.js';
 import { renderTodo } from './todo.js';
 import { planningHtml } from './calendar.js';
 import { weekStart } from './periods.js';
-import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, renderQuestion } from './questions.js';
+import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, syncPlanning, renderQuestion } from './questions.js';
+import { renderSetup, installHtml } from './setup.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -215,6 +216,7 @@ const syncNow = () => store.sync(myPaths(currentDate())).then((r) => { pushPlace
 function pushPlaces() {
   const hdr = device()?.session ? { Authorization: `Bearer ${device().session}` } : adminHeaders();
   if (store.has(PATHS.master)) syncPlaces(ctx.master(), ctx.serverUrl(), hdr);
+  if (store.has(PATHS.planning)) syncPlanning(ctx.planning(), ctx.serverUrl(), hdr);
 }
 
 let rerenderTimer;
@@ -229,7 +231,7 @@ navigator.serviceWorker?.addEventListener('message', (e) => {
 // stamgegevens gewijzigd (hier of elders) → zones ook naar de server
 let placesTimer = null;
 store.onChange((path) => {
-  if (path !== PATHS.master) return;
+  if (path !== PATHS.master && path !== PATHS.planning) return;
   clearTimeout(placesTimer);
   placesTimer = setTimeout(pushPlaces, 3000);
 });
@@ -287,6 +289,8 @@ function route() {
     // niet aangemeld: enkel een beheerder met beheersleutel mag (naar het beheer); anders aanmelden
     // (de beheersleutel geeft enkel toegang tot het beheer; de werknemersweergave vraagt altijd aanmelden)
     if (!hasSession) return adminKey() && view === 'beheer' ? viewAdmin(rest[0] || 'overzicht') : viewLogin();
+    // eerste keer aangemeld op een gsm: eerst de verplichte stappen
+    if (needsSetup()) return viewSetup();
   } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
   if (view === 'planning') return viewPlanning(rest);
@@ -295,6 +299,68 @@ function route() {
   if (view === 'meer') return viewMore();
   if (view === 'vraag') return viewQuestion(rest[0]);
   return viewDay(isDate(rest[0]) ? rest[0] : today(), rest[1] ?? null);
+}
+
+// ---------- Eerste keer op een gsm ----------
+// Op een gsm kan je enkel aanmelden in de app op het beginscherm (iPhone: Safari en de app op het
+// beginscherm hebben elk hun eigen opslag). Na de eerste aanmelding volgen verplichte stappen.
+const SETUP = 'enautec.setup';
+let installPrompt = null;
+let appInstalled = false;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  if ($main.querySelector('.setup')) route();
+});
+window.addEventListener('appinstalled', () => { appInstalled = true; installPrompt = null; if ($main.querySelector('.setup')) route(); });
+
+const needsInstall = () => isMobile() && !isStandalone() && !device()?.session && !adminKey();
+function needsSetup() {
+  const dev = device();
+  const s = lsGet(SETUP);
+  return isMobile() && !!dev?.session && s?.username === dev.username && !s.done;
+}
+
+function viewInstall() {
+  setNav('');
+  $nav.hidden = true;
+  $switch.hidden = true;
+  showStatus('local');
+  $main.innerHTML = installHtml({ ios: isIOS(), canPrompt: !!installPrompt, installed: appInstalled });
+  $main.querySelector('[data-act=install]')?.addEventListener('click', async () => {
+    const p = installPrompt;
+    if (!p) return;
+    p.prompt();
+    const { outcome } = await p.userChoice.catch(() => ({}));
+    if (outcome === 'accepted') appInstalled = true;
+    installPrompt = null;
+    viewInstall();
+  });
+}
+
+function viewSetup() {
+  const dev = device();
+  const me = lsGet(ME) ?? {};
+  setNav('');
+  $nav.hidden = true;
+  $switch.hidden = true;
+  renderSetup($main, {
+    server: serverUrl(), session: dev.session, name: me.name ?? dev.username, ios: isIOS(),
+    deviceKey: localDeviceKey, deviceLabel, owntracksLink,
+    optional: !!lsGet(SETUP)?.optional,
+    getState: () => lsGet(SETUP),
+    setState: (st) => lsSet(SETUP, st),
+    onDone: () => {
+      toast('Je gsm is ingesteld', 'ok');
+      if (location.hash === '#dag') route(); else location.hash = '#dag';
+    },
+  });
+}
+
+/** Stappen (opnieuw) starten vanuit Meer, bv. om het widget in te stellen */
+function startSetup(step) {
+  lsSet(SETUP, { ...(lsGet(SETUP) ?? {}), username: device().username, done: false, step, optional: true });
+  route();
 }
 
 // ---------- Schermen ----------
@@ -353,6 +419,9 @@ function forgetUser(username) {
 /** Aangemeld: sessie op dit toestel bewaren */
 function signedIn({ session, username, name, isAdmin, mustChange }) {
   rememberUser(username, name);
+  // eerste keer op deze gsm (of een andere gebruiker): verplichte stappen
+  if (isMobile() && lsGet(SETUP)?.username !== username) lsSet(SETUP, { username, done: false, step: 'push' });
+  if (isMobile() && lsGet(SETUP)?.username === username && !lsGet(SETUP).done) lsSet(SETUP, { ...lsGet(SETUP), optional: false });
   lsSet(DEVICE, { username, session });
   lsSet(ME, { username, name, isAdmin, mustChange: !!mustChange });
   lsSet(ADMIN_OK, null);
@@ -462,6 +531,7 @@ async function signOut() {
 
 /** Startscherm: aanmelden met gebruikersnaam en wachtwoord (of beheerder met beheersleutel) */
 async function viewLogin(message = '') {
+  if (needsInstall()) return viewInstall();
   setNav('');
   $nav.hidden = true;
   showStatus('local');
@@ -824,7 +894,7 @@ function sessionsHtml(list, { showUser = false } = {}) {
   if (!list.length) return '<p class="muted">Geen aangemelde toestellen.</p>';
   return `<div class="table-wrap"><table><thead><tr>${showUser ? '<th>Werknemer</th>' : ''}<th>Toestel</th><th>Aangemeld sinds</th><th>Laatst actief</th><th></th></tr></thead><tbody>
     ${list.map((s) => `<tr>${showUser ? `<td>${esc(s.name ?? s.username)}</td>` : ''}
-      <td>${s.type === 'mobiel' ? '📱' : '💻'} ${s.deviceName ? `<b>${esc(s.deviceName)}</b> <span class="muted small">${esc(s.device ?? '')}</span>` : esc(s.device ?? 'Onbekend')}${s.current ? ' <span class="pill ok">dit toestel</span>' : ''}</td>
+      <td>${s.type === 'widget' ? '🧩 <b>Widget</b> ·' : s.type === 'mobiel' ? '📱' : '💻'} ${s.deviceName ? `<b>${esc(s.deviceName)}</b> <span class="muted small">${esc(s.device ?? '')}</span>` : esc(s.device ?? 'Onbekend')}${s.current ? ' <span class="pill ok">dit toestel</span>' : ''}</td>
       <td>${fmt(s.createdAt)}</td><td>${fmt(s.lastSeen)}</td>
       <td>${s.current ? '' : `<button class="link danger" data-revoke="${s.id}">Afmelden</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -876,6 +946,11 @@ async function viewMore() {
         </div>
       </details>
     </section>` : ''}
+    ${mobile && isStandalone() ? `<section class="card"><h2>Widget en snelkoppelingen</h2>
+      ${isIOS() ? '<p class="muted">Zet je uren van vandaag als widget op je beginscherm (met de gratis app Scriptable).</p><div class="row"><button class="secondary" data-act="widget">🧩 Widget instellen</button></div>'
+        : '<p class="muted">Hou het icoon van Enautec Uren ingedrukt voor snelkoppelingen naar Vandaag, Materiaal, Planning en ToDo.</p>'}
+      <p><button class="link" data-act="setup">Instelstappen opnieuw doorlopen</button></p>
+    </section>` : ''}
     ${!mobile ? '<section class="card"><p class="muted">💻 Je gebruikt een computer. De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p></section>' : ''}
     <section class="card"><h2>Opslag</h2>
       <p>${TEST ? 'Testmodus: gegevens staan enkel in deze browser.'
@@ -891,6 +966,8 @@ async function viewMore() {
     b.textContent = '✔ Gekopieerd';
     setTimeout(() => { b.textContent = old; }, 1500);
   });
+  $main.querySelector('[data-act=widget]')?.addEventListener('click', () => startSetup('widget'));
+  $main.querySelector('[data-act=setup]')?.addEventListener('click', () => startSetup('push'));
   $main.querySelector('[data-act=signout]').onclick = () => {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;
     if (confirm('Afmelden op dit toestel? Daarna kan je (of een collega) je opnieuw aanmelden.')) signOut();
@@ -1026,7 +1103,9 @@ function parseKoppel(text) {
   return { username: decodeURIComponent(m[1]), token: m[2], server: m[3] ? decodeURIComponent(m[3]) : null };
 }
 
-const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+// testmodus: ?standalone=1 doet alsof de app op het beginscherm staat (om de eerste stappen uit te proberen)
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
+  || (TEST && new URLSearchParams(location.search).get('standalone') === '1');
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 /** Bij de server nagaan of de gekoppelde werknemer beheerder is (op de achtergrond) */
