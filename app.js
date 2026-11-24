@@ -17,7 +17,7 @@ import { renderTodo } from './todo.js';
 import { planningHtml } from './calendar.js';
 import { weekStart } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, syncPlanning, renderQuestion } from './questions.js';
-import { renderSetup, installHtml } from './setup.js';
+import { renderSetup, installHtml, autoOpenHtml } from './setup.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -310,6 +310,7 @@ function route() {
   if (view === 'overzicht') return viewHistory(rest);
   if (view === 'meer') return viewMore();
   if (view === 'vraag') return viewQuestion(rest[0]);
+  if (view === 'owntracks') return viewOwnTracks();
   return viewDay(isDate(rest[0]) ? rest[0] : today(), rest[1] ?? null);
 }
 
@@ -330,7 +331,13 @@ const needsInstall = () => isMobile() && !isStandalone() && !device()?.session &
 function needsSetup() {
   const dev = device();
   const s = lsGet(SETUP);
-  return isMobile() && !!dev?.session && s?.username === dev.username && !s.done;
+  if (!isMobile() || !dev?.session || s?.username !== dev.username) return false;
+  // nieuwe stap voor wie al ingesteld was (iPhone): OwnTracks automatisch openen, één keer tonen
+  if (s.done && isIOS() && !s.auto && !s.autoAsked) {
+    lsSet(SETUP, { ...s, done: false, step: 'auto', optional: true, only: 'auto', autoAsked: true });
+    return true;
+  }
+  return !s.done;
 }
 
 function viewInstall() {
@@ -370,9 +377,21 @@ function viewSetup() {
 }
 
 /** Stappen (opnieuw) starten vanuit Meer, bv. om het widget in te stellen */
-function startSetup(step) {
-  lsSet(SETUP, { ...(lsGet(SETUP) ?? {}), username: device().username, done: false, step, optional: true });
+function startSetup(step, only = false) {
+  lsSet(SETUP, { ...(lsGet(SETUP) ?? {}), username: device().username, done: false, step, optional: true, only: only ? step : null });
   route();
+}
+
+/** Na de melding "OwnTracks staat niet aan?": OwnTracks openen */
+function viewOwnTracks() {
+  setNav('dag');
+  $main.innerHTML = `<section class="card setup">
+    <h1>📍 OwnTracks openen</h1>
+    <p>Er kwam vandaag nog geen locatie van je gsm binnen. Waarschijnlijk is OwnTracks afgesloten (weggeveegd uit het app-overzicht). Open het even; daarna mag je gewoon terugkeren.</p>
+    <a class="btn primary big" href="owntracks:///">📍 OwnTracks openen</a>
+    ${isIOS() ? `<details><summary>Zo opent je iPhone OwnTracks voortaan zelf</summary>${autoOpenHtml()}</details>` : ''}
+    <p class="center"><a href="#dag">Naar vandaag</a></p>
+  </section>`;
 }
 
 // ---------- Schermen ----------
@@ -961,6 +980,7 @@ async function viewMore() {
     ${mobile && isStandalone() ? `<section class="card"><h2>Widget en snelkoppelingen</h2>
       ${isIOS() ? '<p class="muted">Zet je uren van vandaag als widget op je beginscherm (met de gratis app Scriptable).</p><div class="row"><button class="secondary" data-act="widget">🧩 Widget instellen</button></div>'
         : '<p class="muted">Hou het icoon van Enautec Uren ingedrukt voor snelkoppelingen naar Vandaag, Materiaal, Planning en ToDo.</p>'}
+      ${isIOS() ? '<div class="row"><button class="secondary" data-act="autoot">⏰ OwnTracks automatisch openen</button></div>' : ''}
       <p><button class="link" data-act="setup">Instelstappen opnieuw doorlopen</button></p>
     </section>` : ''}
     ${!mobile ? '<section class="card"><p class="muted">💻 Je gebruikt een computer. De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p></section>' : ''}
@@ -978,7 +998,8 @@ async function viewMore() {
     b.textContent = '✔ Gekopieerd';
     setTimeout(() => { b.textContent = old; }, 1500);
   });
-  $main.querySelector('[data-act=widget]')?.addEventListener('click', () => startSetup('widget'));
+  $main.querySelector('[data-act=widget]')?.addEventListener('click', () => startSetup('widget', true));
+  $main.querySelector('[data-act=autoot]')?.addEventListener('click', () => startSetup('auto', true));
   $main.querySelector('[data-act=setup]')?.addEventListener('click', () => startSetup('push'));
   $main.querySelector('[data-act=signout]').onclick = () => {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;

@@ -9,7 +9,7 @@ import { pushSupport, enablePush, currentSubscription } from './questions.js';
 const MIN = 60000;
 
 /** Versie van het script (de server meldt als er een nieuwere is: dan opnieuw instellen via Meer) */
-export const SCRIPT_VERSION = 2;
+export const SCRIPT_VERSION = 3;
 
 /**
  * Script voor Scriptable: toont de stand van vandaag (uren, waar, open vragen) en 's ochtends
@@ -74,6 +74,13 @@ function tapRow(t, font, color, url, button) {
   if (!button) s.addSpacer();
   return s;
 }
+/** vandaag nog geen locatie: OwnTracks is waarschijnlijk weggeveegd → tik om het te openen */
+function owntracksRow(d) {
+  if (!d.otMissing) return;
+  if (family === "small") { w.url = "owntracks:///"; text("📍 OwnTracks uit · tik", Font.semiboldSystemFont(11), RED, 1); }
+  else tapRow("📍 OwnTracks staat uit · tik om te openen", Font.semiboldSystemFont(12), RED, "owntracks:///", true);
+  w.addSpacer(3);
+}
 function pauseButton(d) {
   if (!taps || !["werk", "pauze", "onderweg"].includes(d.status)) return;
   w.addSpacer(4);
@@ -89,7 +96,8 @@ try {
     // vergrendelscherm
     w.backgroundColor = null;
     text("Enautec · " + hm(d.workedMin), Font.boldSystemFont(14), Color.white(), 1);
-    text(d.openCount ? "❓ vraag open" : status, Font.systemFont(12), Color.white(), 1);
+    text(d.otMissing ? "📍 OwnTracks uit" : d.openCount ? "❓ vraag open" : status, Font.systemFont(12), Color.white(), 1);
+    if (d.otMissing) w.url = "owntracks:///";
     if (family === "accessoryRectangular" && (d.project || d.place)) text(d.project || d.place, Font.systemFont(12), Color.white(), 1);
   } else if ((d.plan || []).length && (d.status === "geen" || new Date().getHours() < 10 || (!config.runsInWidget && openPlan && q.act === "check"))) {
     // 's ochtends: wat staat er vandaag gepland en welk materiaal moet mee (tik = ingeladen)
@@ -98,6 +106,7 @@ try {
     const max = family === "large" ? 14 : family === "medium" ? 5 : 3;
     text("ENAUTEC · VANDAAG", Font.heavySystemFont(11), RED, 1);
     w.addSpacer(3);
+    owntracksRow(d);
     let left = max;
     for (const p of d.plan.slice(0, family === "small" ? 1 : 3)) {
       text(p.project, Font.boldSystemFont(family === "small" ? 13 : 14), FG, family === "small" ? 2 : 1);
@@ -125,6 +134,7 @@ try {
     if (banner) text(banner, Font.semiboldSystemFont(11), RED, 1);
     text("ENAUTEC", Font.heavySystemFont(11), RED);
     w.addSpacer(2);
+    owntracksRow(d);
     text(hm(d.workedMin), Font.boldSystemFont(32), FG, 1);
     text(status, Font.mediumSystemFont(12), MUTED, 1);
     if (d.project || d.place) { w.addSpacer(4); text(d.project || d.place, Font.semiboldSystemFont(12), FG, family === "small" ? 2 : 1); }
@@ -168,12 +178,27 @@ export function installHtml({ ios, canPrompt, installed }) {
   </section>`;
 }
 
-const STEPS = [
+const ALL_STEPS = [
   ['home', '📲', 'Beginscherm'],
   ['push', '🔔', 'Meldingen'],
   ['owntracks', '📍', 'OwnTracks'],
+  ['auto', '⏰', 'Automatisch'], // enkel iPhone
   ['widget', '🧩', 'Widget'],
 ];
+
+/** Uitleg: OwnTracks elke werkdag zelf laten openen (Opdrachten-app op iPhone) */
+export function autoOpenHtml() {
+  return `<ol class="setup-steps">
+      <li>Open de app <b>Opdrachten</b> (blauw-roze icoon) en tik onderaan op <b>Automatisering</b>.</li>
+      <li>Tik op <b>+</b> (of <b>Nieuwe automatisering</b>) en kies <b>Tijdstip</b>.</li>
+      <li>Kies een uur vóór je vertrekt (bv. <b>06:30</b>), <b>Wekelijks</b>, en vink <b>maandag t.e.m. vrijdag</b> aan.</li>
+      <li>Kies <b>Voer onmiddellijk uit</b> (niet "Vraag vóór uitvoeren") en tik op <b>Volgende</b>.</li>
+      <li>Kies <b>Nieuwe lege automatisering</b> → <b>Voeg taak toe</b> → zoek <b>Open app</b>. Tik op het blauwe woord <b>App</b>, kies <b>OwnTracks</b> en tik op <b>Gereed</b>.</li>
+    </ol>
+    <details><summary>Rij je met CarPlay of Bluetooth in de wagen? (aangeraden)</summary>
+      <p class="muted small">Maak nog een automatisering: <b>+</b> → <b>CarPlay</b> → <b>Maakt verbinding</b> (of <b>Bluetooth</b> → kies je wagen) → <b>Voer onmiddellijk uit</b> → <b>Open app</b> → <b>OwnTracks</b>. Dan staat OwnTracks ook aan telkens je instapt.</p></details>
+    <p class="muted small">Testen: veeg OwnTracks weg uit het app-overzicht en tik op <a href="owntracks:///">OwnTracks openen</a>. Vergeet je het toch, dan krijg je om 08:00 een melding als er nog geen locatie binnenkwam.</p>`;
+}
 
 /**
  * Stappen tonen in `el`. deps: { server, session, username, name, ios, deviceKey, deviceLabel,
@@ -181,6 +206,7 @@ const STEPS = [
  */
 export function renderSetup(el, deps) {
   const { server, session } = deps;
+  const STEPS = ALL_STEPS.filter(([k]) => k !== 'auto' || deps.ios);
   let me = null;
   let timer = null;
   // het scherm kan opnieuw getekend worden (bv. terug in de app): enkel de laatste keer blijft actief
@@ -201,7 +227,8 @@ export function renderSetup(el, deps) {
   const go = (k) => { save({ step: k }); draw(); };
   const next = () => {
     const i = stepIndex(current());
-    if (i >= STEPS.length - 1) { save({ done: true, step: null, otSince: null }); clearInterval(timer); el._setupRun = null; deps.onDone(); return; }
+    // vanuit Meer voor één stap gestart: daarna klaar
+    if (i >= STEPS.length - 1 || st().only === current()) { save({ done: true, step: null, otSince: null, only: null }); clearInterval(timer); el._setupRun = null; deps.onDone(); return; }
     go(STEPS[i + 1][0]);
   };
   const poll = (fn, ms = 5000) => {
@@ -211,9 +238,10 @@ export function renderSetup(el, deps) {
 
   function frame(body) {
     const cur = stepIndex(current());
+    const left = st().only ? 1 : STEPS.length - cur;
     el.innerHTML = `<section class="card setup">
       <h1>Je gsm instellen</h1>
-      <p class="muted">Nog ${STEPS.length - cur} stap${STEPS.length - cur > 1 ? 'pen' : ''}. Daarna kan je de app gebruiken.</p>
+      <p class="muted">Nog ${left} stap${left > 1 ? 'pen' : ''}. Daarna kan je de app gebruiken.</p>
       <ol class="setup-bar">${STEPS.map(([k, ico, label], i) => `<li class="${i < cur ? 'done' : i === cur ? 'now' : ''}"><span aria-hidden="true">${i < cur ? '✔' : ico}</span>${label}</li>`).join('')}</ol>
       <div class="setup-body">${body}</div>
       ${deps.optional ? '<p class="center"><button class="link" data-act="later">Later verder</button></p>' : ''}
@@ -328,10 +356,20 @@ export function renderSetup(el, deps) {
     if (s.script && !ok) poll(async () => { try { await fetchMe(); } catch { return; } if (me?.widgetSeen && me.widgetSeen >= st().widgetAt) drawWidget(); });
   }
 
+  function drawAuto() {
+    clearInterval(timer);
+    frame(`<h2>⏰ OwnTracks automatisch openen</h2>
+      <p>Veeg je OwnTracks weg uit het app-overzicht, dan stuurt je iPhone <b>geen locaties</b> meer en worden je uren niet bijgehouden. Laat je iPhone OwnTracks daarom elke werkdag zelf openen.</p>
+      ${autoOpenHtml()}
+      <div class="row setup-nav"><button class="primary" data-act="next">✔ Ingesteld</button></div>`);
+    el.querySelector('[data-act=next]').onclick = () => { save({ auto: true }); next(); };
+  }
+
   function draw() {
     const k = current();
     if (k === 'push') return drawPush();
     if (k === 'owntracks') return drawOwnTracks();
+    if (k === 'auto') return drawAuto();
     return drawWidget();
   }
   // terug in de app (na OwnTracks of Scriptable): meteen opnieuw controleren

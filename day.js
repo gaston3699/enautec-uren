@@ -37,7 +37,7 @@ export function proposal(master, planning, username, date, raw) {
   });
   // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken; samengevoegde projecten doorverwijzen
   const loadOk = workTypesOf(master).some((w) => w.id === LOAD_WORK_TYPE.id);
-  return applyAnswers(segs, raw?.answers ?? []).segs
+  return applyAnswers(segs, raw?.answers ?? [], { now: date === today() ? Date.now() : null }).segs
     .map((s) => (s.projectId ? { ...s, projectId: resolveId(master.projects, s.projectId) } : s))
     // korter dan een uur in het atelier (en al afgesloten): voorstellen als laden/lossen
     .map((s) => (loadOk && s.kind === 'atelier' && !s.workType && !s.openBadge && s.end - s.start < SHORT_ATELIER_MIN * MIN ? { ...s, workType: LOAD_WORK_TYPE.id } : s));

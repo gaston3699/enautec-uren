@@ -277,7 +277,23 @@ export function buildTimeline({ points, badges = [], sites, projects = [], plann
  *  - "Geen klant" → dat blok wordt pauze.
  * Resultaat: { segs, declined } (declined = het antwoord "nee", of null)
  */
-export function applyAnswers(segs, answers = []) {
+export function applyAnswers(segs, answers = [], { now = null } = {}) {
+  const res = applyAnswersRaw(segs, answers, now);
+  return { ...res, segs: dropTrailingPause(res.segs, now) };
+}
+
+/** Er wordt nog gewerkt na dit moment (rijden en pauze tellen niet) */
+const workedAfter = (segs, ts) => segs.some((s) => !['pauze', 'verplaatsing', 'woon-werk'].includes(s.kind) && s.end > ts + MIN);
+
+/**
+ * Een pauze waarna niet meer gewerkt wordt, valt weg (de dag eindigt niet met een pauze).
+ * Een pauze die nu nog loopt (vandaag, einde nog niet bereikt) blijft staan.
+ */
+export function dropTrailingPause(segs, now = null) {
+  return segs.filter((s) => s.kind !== 'pauze' || (now != null && s.end > now) || workedAfter(segs, s.end));
+}
+
+function applyAnswersRaw(segs, answers, now) {
   const start = answers.filter((a) => a.kind === 'start' && a.answer).at(-1);
   if (start?.answer.answer === 'nee') return { segs: [], declined: start };
   const out = segs.map((s) => ({ ...s }));
@@ -313,7 +329,9 @@ export function applyAnswers(segs, answers = []) {
     const start = q(p.answer.at ?? p.answeredAt ?? p.ts);
     const endA = answers.filter((a) => a.kind === 'pauze_einde' && a.answer?.answer === 'ja').at(-1);
     const end = Math.max(start + Q, endA ? q(endA.answer.at ?? endA.answeredAt) : start + (p.answer.pauseMin ?? 30) * MIN);
-    if (end > start) {
+    // geen werk meer na de pauze (en ze loopt niet meer): niet als pauze uitknippen
+    const running = now != null && end > now && !endA;
+    if (end > start && (running || workedAfter(out, end - MIN))) {
       const cut = [];
       for (const s of out) {
         if (s.end <= start || s.start >= end) { cut.push(s); continue; }
