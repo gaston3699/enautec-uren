@@ -81,8 +81,20 @@ function staySegment(s) {
 }
 
 /** Zet verblijven om in segmenten (verblijf + verplaatsing ertussen) */
-function staysToSegments(stays, pts, rules) {
+function staysToSegments(stays, pts, rules, home = null) {
   const segs = [];
+  // De dag begint onderweg (de gsm stuurde thuis niets meer sinds gisteren): toch een rit tot het
+  // eerste verblijf, vanaf thuis (vertrek geschat uit de afstand tot het eerste punt).
+  const first = stays[0];
+  const before = first && first.site?.type !== 'thuis' ? pts.filter((p) => p.ts < first.pts[0].ts) : [];
+  if (before.length) {
+    const p0 = before[0];
+    const fromHome = !!home && p0.site?.id !== home.id;
+    const start = fromHome ? p0.ts - travelEstimateMs(home, p0, rules) : p0.ts;
+    const route = [...(fromHome ? [home] : []), ...before, first.pts[0]];
+    const meters = Math.max(pathLength(route), distance(route[0], first.pts[0]) * rules.roadFactor);
+    if (first.start > start) segs.push({ start, end: first.start, kind: 'woon-werk', siteId: null, source: 'gps', km: Math.round(meters / 100) / 10 });
+  }
   for (let i = 0; i < stays.length; i++) {
     const s = stays[i];
     const prev = stays[i - 1];
@@ -226,7 +238,7 @@ export function buildTimeline({ points, badges = [], sites, projects = [], plann
     .map((p) => ({ ...p, site: matchSite(p, sites) }));
 
   const stays = findStays(clusterPoints(pts, rules), rules);
-  let segs = staysToSegments(stays, pts, rules);
+  let segs = staysToSegments(stays, pts, rules, sites.find((s) => s.type === 'thuis'));
 
   const atelier = sites.find((s) => s.type === 'atelier');
   const intervals = badgeIntervals(badges, segs, rules, openEnd, { live, atelier });
