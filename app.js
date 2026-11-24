@@ -598,9 +598,14 @@ function watchDay(date, raw) {
 }
 
 /** Planning als kalender: #planning/<dag|week|maand>/<datum> (standaard: week) */
-function viewPlanning([view = 'week', date] = []) {
+function viewPlanning([view = 'week', date, of] = []) {
   setNav('planning');
-  $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: device().username, view, date });
+  const me = device().username;
+  of = of ? decodeURIComponent(of) : me;
+  $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: me, of, view, date });
+  // agenda van een collega bekijken
+  const pick = $main.querySelector('#calOf');
+  if (pick) pick.onchange = () => { location.hash = `#planning/${view}/${isDate(date) ? date : today()}${pick.value !== me ? `/${encodeURIComponent(pick.value)}` : ''}`; };
 }
 
 /** Overzicht per week, maand of jaar: #overzicht/week/<datum>, #overzicht/maand/<jjjj-mm>, #overzicht/jaar/<jjjj> */

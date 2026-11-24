@@ -23,11 +23,13 @@ export function visibleDays(view, date) {
   return monthDays(date.slice(0, 7));
 }
 
-export function planningHtml({ master: m, planning, username, view = 'week', date, admin = false, selected = new Set() }) {
+export function planningHtml({ master: m, planning, username, of = null, view = 'week', date, admin = false, selected = new Set() }) {
+  of = of || username; // wiens agenda: de eigen of die van een collega
   if (!VIEWS.some(([k]) => k === view)) view = 'week';
   const t = today();
   if (!isDate(date)) date = t;
-  const all = alive(planning.items).filter((p) => admin || p.username === username);
+  const everyone = alive(planning.items);
+  const all = everyone.filter((p) => admin || p.username === of);
   const emps = alive(m.employees);
   const person = (u) => emps.find((e) => e.username === u)?.name ?? u;
   const proj = (id) => m.projects.find((x) => x.id === id);
@@ -38,9 +40,16 @@ export function planningHtml({ master: m, planning, username, view = 'week', dat
     for (const it of all.filter((p) => p.date === d)) g.set(it.projectId, [...(g.get(it.projectId) ?? []), it]);
     return [...g.entries()].map(([projectId, items]) => ({ projectId, items }));
   };
-  const who = (e) => (admin ? `<span class="cal-who">${esc(e.items.map((i) => person(i.username).split(' ')[0]).join(', '))}</span>` : '');
-  const chip = (e, cls = '') => `<span class="cal-chip ${cls}" style="--h:${hue(e.projectId)}">${esc(name(e.projectId))}${cls ? '' : who(e)}</span>`;
-  const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}`);
+  const first = (u) => (u === username && !admin ? 'jij' : person(u).split(' ')[0]);
+  /** collega's die die dag ook op dat project staan */
+  const mates = (d, projectId) => [...new Set(everyone.filter((p) => p.date === d && p.projectId === projectId && p.username !== of).map((p) => p.username))];
+  const who = (e, d) => {
+    if (admin) return `<span class="cal-who">${esc(e.items.map((i) => first(i.username)).join(', '))}</span>`;
+    const w = mates(d, e.projectId);
+    return w.length ? `<span class="cal-who">met ${esc(w.map(first).join(', '))}</span>` : '';
+  };
+  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls}" style="--h:${hue(e.projectId)}">${esc(name(e.projectId))}${cls ? '' : who(e, d)}</span>`;
+  const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}${of !== username ? `/${encodeURIComponent(of)}` : ''}`);
   const nav = (v, d) => `href="${link(v, d)}" data-v="${v}" data-d="${d}"`;
   const sel = (d) => (selected.has(d) ? 'sel' : '');
   // werknemer: dag openen; beheer: dag (de)selecteren
@@ -60,6 +69,7 @@ export function planningHtml({ master: m, planning, username, view = 'week', dat
         <div><b>${esc(name(e.projectId))}</b>
         ${site ? `<div class="muted">📍 ${esc(site.name)}${site.address ? ` · ${esc(site.address)}` : ''}</div>` : ''}
         ${notes.map((n) => `<div>${esc(n)}</div>`).join('')}
+        ${!admin && mates(date, e.projectId).length ? `<div class="cal-mates">👷 Samen met ${esc(mates(date, e.projectId).map(first).join(', '))}</div>` : ''}
         ${admin ? `<div class="cal-people">${e.items.map((i) => `<span class="pill">${esc(person(i.username))}<button type="button" class="link danger" data-del="${esc(i.id)}" aria-label="${esc(person(i.username))} uitplannen">✕</button></span>`).join('')}</div>` : ''}</div>
         ${!admin && site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}">Route</a>` : ''}
       </section>`;
@@ -73,7 +83,7 @@ export function planningHtml({ master: m, planning, username, view = 'week', dat
       const hol = holidayName(d);
       return `<a class="cal-wday ${d === t ? 'today' : ''} ${i >= 5 ? 'weekend' : ''} ${d < t ? 'past' : ''} ${sel(d)}" ${cellAttr(d)}>
         <span class="cal-date"><small>${WD[i]}</small><b>${Number(d.slice(8))}</b></span>
-        <span class="cal-items">${hol ? `<span class="cal-hol">${esc(hol)}</span>` : ''}${on(d).map((e) => chip(e)).join('') || (hol ? '' : '<span class="muted small">—</span>')}</span>
+        <span class="cal-items">${hol ? `<span class="cal-hol">${esc(hol)}</span>` : ''}${on(d).map((e) => chip(e, d)).join('') || (hol ? '' : '<span class="muted small">—</span>')}</span>
         ${admin ? `<span class="cal-open" data-v="dag" data-d="${d}" title="Dag openen" aria-label="Dag openen">›</span>` : ''}
       </a>`;
     }).join('')}</div>`;
@@ -92,7 +102,7 @@ export function planningHtml({ master: m, planning, username, view = 'week', dat
       const tip = [hol, ...list.map((e) => `${name(e.projectId)}${admin ? `: ${e.items.map((i) => person(i.username)).join(', ')}` : ''}`)].filter(Boolean).join('\n');
       return `<a class="cal-cell ${d === t ? 'today' : ''} ${isoDay(d) > 5 ? 'weekend' : ''} ${hol ? 'holiday' : ''} ${sel(d)}" ${cellAttr(d)} title="${esc(tip)}">
         <b>${Number(d.slice(8))}</b>
-        ${list.slice(0, 2).map((e) => chip(e, 'mini')).join('')}${list.length > 2 ? `<small class="muted">+${list.length - 2}</small>` : ''}
+        ${list.slice(0, 2).map((e) => chip(e, d, 'mini')).join('')}${list.length > 2 ? `<small class="muted">+${list.length - 2}</small>` : ''}
         <span class="cal-dots">${list.map((e) => `<i style="--h:${hue(e.projectId)}"></i>`).join('')}</span>
         ${admin ? `<span class="cal-count">${list.reduce((n, e) => n + e.items.length, 0) || ''}</span>` : ''}
       </a>`;
@@ -102,13 +112,23 @@ export function planningHtml({ master: m, planning, username, view = 'week', dat
     for (const it of all.filter((p) => p.date.startsWith(mo))) count.set(it.projectId, [...(count.get(it.projectId) ?? []), it]);
     const daysOf = (list) => new Set(list.map((i) => i.date)).size;
     body += count.size ? `<section class="card cal-legend"><h3>Deze maand</h3>${[...count.values()].map((list) => `<div class="cal-leg-row">
-        <i style="--h:${hue(list[0].projectId)}"></i><span>${esc(name(list[0].projectId))}${admin ? `<small class="muted"> · ${esc([...new Set(list.map((i) => person(i.username).split(' ')[0]))].join(', '))}</small>` : ''}</span>
+        <i style="--h:${hue(list[0].projectId)}"></i><span>${esc(name(list[0].projectId))}${(() => {
+          const people = admin ? [...new Set(list.map((i) => i.username))] : [...new Set(list.flatMap((i) => mates(i.date, i.projectId)))];
+          return people.length ? `<small class="muted"> · ${admin ? '' : 'met '}${esc(people.map(first).join(', '))}</small>` : '';
+        })()}</span>
         <small class="muted">${daysOf(list)} dag${daysOf(list) === 1 ? '' : 'en'}</small></div>`).join('')}</section>`
       : '<p class="muted center">Niets ingepland deze maand.</p>';
   }
 
   const isNow = view === 'dag' ? date === t : view === 'week' ? weekStart(date) === weekStart(t) : date.slice(0, 7) === t.slice(0, 7);
-  return `${admin ? '' : '<h1 class="page-title">Mijn planning</h1>'}
+  const colleagues = emps.filter((e) => e.active !== false && e.username !== username).sort((a, b) => String(a.name).localeCompare(String(b.name), 'nl'));
+  const picker = admin ? '' : `<div class="cal-of">
+      <h1 class="page-title">${of === username ? 'Mijn planning' : `Planning van ${esc(person(of))}`}</h1>
+      ${colleagues.length ? `<label class="cal-of-pick"><span class="muted small">Agenda van</span>
+        <select id="calOf" aria-label="Agenda van"><option value="${esc(username)}">Mezelf</option>
+          ${colleagues.map((e) => `<option value="${esc(e.username)}" ${e.username === of ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></label>` : ''}
+    </div>`;
+  return `${picker}
     <nav class="subtabs" aria-label="Weergave">${VIEWS.map(([k, l]) => `<a ${nav(k, date)} class="${k === view ? 'active' : ''}">${l}</a>`).join('')}</nav>
     <div class="cal-nav">
       <a class="btn secondary" ${nav(view, prev)} aria-label="Vorige">‹</a>
