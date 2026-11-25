@@ -80,6 +80,29 @@ function saveDay(ctx, username, date, patch) {
   });
 }
 
+/**
+ * Een pauze die in een ander blok valt, knipt dat blok: midden in werk → werk in twee
+ * (08:00–18:15 + pauze 12:00–12:30 → 08:00–12:00 en 12:30–18:15); aan de rand → het blok wordt korter.
+ * Past `segs` aan (en voegt het tweede deel toe). Geeft true als er iets veranderde.
+ */
+export function fitPauses(segs) {
+  let changed = false;
+  for (const p of segs.filter((x) => x.kind === 'pauze' && x.end > x.start)) {
+    for (const o of [...segs]) {
+      if (o === p || o.kind === 'pauze' || o.end <= p.start || o.start >= p.end) continue;
+      if (o.start < p.start && o.end > p.end) {
+        const { auto, ...rest } = o;
+        segs.push({ ...rest, start: p.end, end: o.end });
+        o.end = p.start;
+      } else if (o.start < p.start) o.end = p.start;
+      else if (o.end > p.end) o.start = p.end;
+      else continue; // blok helemaal binnen de pauze: blijft een fout om zelf op te lossen
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export function validate(segments, date) {
   const [from, to] = dayRange(date);
   const s = [...segments].sort((a, b) => a.start - b.start);
@@ -504,6 +527,18 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const kind = kindKey === 'terug' ? 'verplaatsing' : kindKey;
     const pz = ctx.me?.()?.pauseMin || 30;
     const dflt = { verplaatsing: 30, terug: 30, werk: 240, atelier: 240, pauze: pz }[kindKey];
+    // pauze vergeten: nog geen pauze en er werd over de middag gewerkt → om 12:00 in dat werkblok
+    const noon = localToTs(date, '12:00');
+    if (kindKey === 'pauze' && !segs.some((s) => s.kind === 'pauze') && segs.some((s) => WORKLIKE.has(s.kind) && s.start <= noon && s.end > noon + pz * MIN)) {
+      segs.push({ start: noon, end: noon + pz * MIN, kind: 'pauze', projectId: null, candidates: [], siteId: null });
+      const k = segs.length - 1;
+      fitPauses(segs);
+      persistSegments(); draw();
+      const box = el.querySelector(`input.t[data-pi="${k}"][data-f=start], .blk[data-i="${k}"] input.t[data-f=start]`);
+      box?.focus(); box?.select();
+      toast('Pauze om 12:00 toegevoegd. Pas het uur aan als je op een ander moment pauze nam.', 'ok');
+      return;
+    }
     let start = last ? last.end : localToTs(date, kindKey === 'verplaatsing' ? '07:30' : '08:00');
     const workLike = (k) => k === 'werk' || k === 'atelier';
     if (last && workLike(kind) && workLike(last.kind)) {
@@ -577,11 +612,22 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           s = list.find((x) => !drop.includes(x));
         }
         const old = s[f];
+        const pauseMove = s.kind === 'pauze' && f === 'start';
+        // begin van een pauze = de pauze verplaatsen (ze houdt haar duur); het einde bepaalt hoe lang ze duurt
+        if (pauseMove) {
+          // de pauze knipte een blok in twee: eerst weer aan elkaar, zodat er geen gat achterblijft
+          const a = segs.find((x) => x !== s && x.kind !== 'pauze' && x.end === s.start);
+          const b = segs.find((x) => x !== s && x.kind !== 'pauze' && x.start === s.end);
+          if (a && b && a.kind === b.kind && a.projectId === b.projectId) { a.end = b.end; segs = segs.filter((x) => x !== b); }
+          s.end = ts + (s.end - s.start);
+        }
         s[f] = ts;
         if (s.auto) delete s.auto[f];
         // aansluitend blok schuift mee (einde heenrit = begin werk). Een voorgestelde pauze schuift
         // helemaal op (blijft een halfuur), zodat ook de tweede periode later begint, zoals in Atree.
-        if (f === 'end') {
+        if (pauseMove) {
+          // het blok ervoor/erna blijft staan; valt de pauze erin, dan wordt het hieronder geknipt
+        } else if (f === 'end') {
           let prevEnd = old; let newEnd = ts;
           for (let guard = 0; guard < segs.length; guard++) {
             const o = segs.find((x) => x !== s && x.start === prevEnd);
@@ -597,6 +643,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         } else {
           for (const o of segs) if (o !== s && o.end === old && ts > o.start) o.end = ts;
         }
+        // een pauze midden in een werkblok knipt het in twee
+        fitPauses(segs);
       } else if (f === 'km') s.km = t.value === '' ? null : Number(t.value);
       else if (f === 'workType') { for (const x of mem) if (x === s || WORKLIKE.has(x.kind)) x.workType = t.value || null; }
       else if (f === 'projectId' && t.value === '__new') {
