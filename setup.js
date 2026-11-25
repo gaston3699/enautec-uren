@@ -188,15 +188,20 @@ const ALL_STEPS = [
 
 /** Uitleg: OwnTracks elke werkdag zelf laten openen (Opdrachten-app op iPhone) */
 export function autoOpenHtml() {
-  return `<ol class="setup-steps">
-      <li>Open de app <b>Opdrachten</b> (blauw-roze icoon) en tik onderaan op <b>Automatisering</b>.</li>
-      <li>Tik op <b>+</b> (of <b>Nieuwe automatisering</b>) en kies <b>Tijdstip</b>.</li>
-      <li>Kies een uur vóór je vertrekt (bv. <b>06:30</b>), <b>Wekelijks</b>, en vink <b>maandag t.e.m. vrijdag</b> aan.</li>
-      <li>Kies <b>Voer onmiddellijk uit</b> (niet "Vraag vóór uitvoeren") en tik op <b>Volgende</b>.</li>
-      <li>Kies <b>Nieuwe lege automatisering</b> → <b>Voeg taak toe</b> → zoek <b>Open app</b>. Tik op het blauwe woord <b>App</b>, kies <b>OwnTracks</b> en tik op <b>Gereed</b>.</li>
+  return `<p class="muted small">In de app <b>Opdrachten</b> maak je een opdracht die zelf start op een vast uur. Ze opent OwnTracks.</p>
+    <ol class="setup-steps">
+      <li>Open de app <b>Opdrachten</b> (blauw-roze icoon) en maak een nieuwe opdracht met <b>+</b>, met een automatisering <b>Tijdstip</b>.
+        Je ziet dan bovenaan een blok <b>"Om …"</b> met Activiteit, Herhaal, Automatisering en Meld.</li>
+      <li>Tik op het uur en kies een uur vóór je vertrekt (bv. <b>06:30</b>).</li>
+      <li>Tik bij <b>Herhaal</b> op "Elke dag" en kies <b>maandag t.e.m. vrijdag</b>.</li>
+      <li>Laat <b>Automatisering</b> aan (groen): dan start ze zonder te vragen. <b>Meld</b> mag uit.</li>
+      <li>Tik onderaan in <b>Zoek</b>, typ <b>Open app</b> en tik op die actie. Tik in de actie op het blauwe woord <b>App</b> en kies <b>OwnTracks</b>.</li>
+      <li>Tik linksboven op <b>‹</b>: het is bewaard. Er is geen knop "Volgende".</li>
     </ol>
+    <details><summary>Oudere iPhone (iOS 18 of vroeger)?</summary>
+      <p class="muted small">Tik in Opdrachten onderaan op <b>Automatisering</b> → <b>+</b> → <b>Tijdstip</b>. Kies het uur en <b>Wekelijks</b> (ma–vr) en <b>Voer onmiddellijk uit</b>, en tik op <b>Volgende</b>. Kies <b>Nieuwe lege automatisering</b> → <b>Open app</b> → <b>OwnTracks</b>.</p></details>
     <details><summary>Rij je met CarPlay of Bluetooth in de wagen? (aangeraden)</summary>
-      <p class="muted small">Maak nog een automatisering: <b>+</b> → <b>CarPlay</b> → <b>Maakt verbinding</b> (of <b>Bluetooth</b> → kies je wagen) → <b>Voer onmiddellijk uit</b> → <b>Open app</b> → <b>OwnTracks</b>. Dan staat OwnTracks ook aan telkens je instapt.</p></details>
+      <p class="muted small">Maak op dezelfde manier een tweede opdracht, maar kies als activiteit <b>CarPlay</b> (verbinding maken) of <b>Bluetooth</b> (je wagen), met de actie <b>Open app</b> → <b>OwnTracks</b>. Dan gaat OwnTracks ook open telkens je instapt.</p></details>
     <p class="muted small">Testen: veeg OwnTracks weg uit het app-overzicht en tik op <a href="owntracks:///">OwnTracks openen</a>. Vergeet je het toch, dan krijg je om 08:00 een melding als er nog geen locatie binnenkwam.</p>`;
 }
 
