@@ -142,6 +142,30 @@ export async function ensureMonths(ctx, username, months) {
   if (need.length) { try { await ctx.store.sync(need); } catch { /* offline: wat er is */ } }
 }
 
+/** Eén teller onderaan: hoeveel er gewerkt is (zonder vergelijking met verwachte uren) */
+const totalHtml = (label, min) => `<div class="period-total"><span>${esc(label)}</span><b>${hm(min)}</b></div>`;
+
+/**
+ * Werkdagen die nog bevestigd moeten worden (oudste eerst), over de geladen maanden
+ * (de huidige en de twee vorige). Voor de knop "Dagen bevestigen" in het overzicht.
+ */
+export function openDays(ctx, username) {
+  START = startDate(ctx, username);
+  const end = shiftDate(today(), -1);
+  const from = [START, `${shiftMonth(today().slice(0, 7), -2)}-01`].sort().at(-1);
+  if (from > end) return [];
+  const dates = datesBetween(from, end);
+  const days = savedDays(ctx, username, dates);
+  return dates.filter((d) => isMissing(d, days[d]) || days[d]?.status === 'concept');
+}
+
+/** Smalle, gele knop: naar de eerste dag die nog bevestigd moet worden */
+export function openDaysButton(ctx, username) {
+  const list = openDays(ctx, username);
+  if (!list.length) return '';
+  return `<a class="confirm-run" href="#dag/${list[0]}" data-confirm-run>⚠ ${list.length} dag${list.length === 1 ? '' : 'en'} niet bevestigd ›</a>`;
+}
+
 // ---------- Week ----------
 export function weekHtml(ctx, username, anyDate) {
   START = startDate(ctx, username);
@@ -151,8 +175,6 @@ export function weekHtml(ctx, username, anyDate) {
   const range = hourRange(Object.entries(days).map(([date, d]) => ({ date, segs: d.segs })), mon);
   const t = { work: 0, werf: 0, atelier: 0, verpl: 0, km: 0 };
   for (const d of Object.values(days)) for (const k of Object.keys(t)) t[k] += d.tot[k];
-  const expected = dates.reduce((s, d) => s + expAt(d), 0);
-  const missing = dates.filter((d) => isMissing(d, days[d]));
   const rows = dates.map((date) => {
     const d = days[date];
     const hol = holidayName(date);
@@ -169,22 +191,14 @@ export function weekHtml(ctx, username, anyDate) {
         ${d?.status === 'concept' ? '<small>open</small>' : ''}</div></a>`;
   }).join('');
   const covered = t.work;
-  return `<section class="card">
+  return `<section class="card week">
     <div class="period-head"><a class="icon" href="#overzicht/week/${shiftDate(mon, -7)}" aria-label="Vorige week">‹</a>
       <div><h2>Week ${weekNumber(mon)}</h2><div class="muted small">${esc(fmtDate(mon, { day: 'numeric', month: 'long' }))} – ${esc(fmtDate(shiftDate(mon, 6), { day: 'numeric', month: 'long', year: 'numeric' }))}</div></div>
       <a class="icon" href="#overzicht/week/${shiftDate(mon, 7)}" aria-label="Volgende week">›</a></div>
     ${mon !== weekStart(today()) ? `<p class="center"><a href="#overzicht/week/${today()}">Naar deze week</a></p>` : ''}
-    <div class="counters light">
-      ${counterHtml('Gewerkt', covered, expected, { cls: expected && covered >= expected ? 'ok' : 'red' })}
-      ${counterHtml('Werk bij klant', t.werf)}${counterHtml('Atelier', t.atelier)}${counterHtml('Verplaatsing', t.verpl)}
-      <div class="counter"><span>Kilometers</span><b>${Math.round(t.km)}</b></div>
-      <div class="counter ${missing.length ? 'warn' : ''}"><span>Niet bevestigd</span><b>${missing.length}</b></div>
-    </div>
-  </section>
-  <section class="card week">
     <div class="wrow head"><div></div><div class="wtrack">${trackHtml([], mon, range, { gaps: false, compact: true, step: range[1] - range[0] > 8 ? 2 : 1 }).replace('class="track compact ', 'class="track compact axis ')}</div><div class="wtot muted small">Totaal</div></div>
     ${rows}
-    <div class="wrow foot"><div><b>Week</b></div><div class="muted small">${expected ? `verwacht ${hm(expected)} · ${covered >= expected ? `<span class="ok-text">${signed(covered - expected)}</span>` : `<span class="danger">${signed(covered - expected)}</span>`}` : ''}</div><div class="wtot"><b>${hm(covered)}</b></div></div>
+    ${totalHtml('Gewerkt deze week', covered)}
     ${legendHtml()}
     <p class="muted small">Tik op een dag om ze te openen. Gestreepte rand = nog niet bevestigd.</p>
   </section>`;
@@ -237,7 +251,6 @@ export function monthHtml(ctx, username, month) {
       <rect x="${x}" y="${T}" width="${colW}" height="${H - B - T}" class="${date === today() ? 'col-today' : off ? 'col-off' : 'col'}"/>
       ${d ? stackBars(bx, bw, yOf, [['f-werf', d.tot.werf], ['f-atelier', d.tot.atelier], ['f-verpl-h', d.tot.verpl]]) : ''}
       ${d?.status === 'concept' ? `<rect x="${bx}" y="${yOf(d.tot.work)}" width="${bw}" height="${yOf(0) - yOf(d.tot.work)}" class="concept-outline"/>` : ''}
-      ${exp ? `<line x1="${x + 1}" x2="${x + colW - 1}" y1="${yOf(exp)}" y2="${yOf(exp)}" class="goal"/>` : ''}
       ${miss ? `<circle cx="${x + colW / 2}" cy="${yOf(0) - 6}" r="3.5" class="miss"/>` : ''}
       ${d && colW > 18 ? `<text x="${x + colW / 2}" y="${yOf(d.tot.work) - 4}" class="val" text-anchor="middle">${(d.tot.work / 60).toFixed(1).replace('.', ',')}</text>` : ''}
       ${colW >= 14 || Number(date.slice(8)) % 2 === 1 ? `<text x="${x + colW / 2}" y="${H - B + 14}" class="ax ${off ? 'off' : ''}" text-anchor="middle">${Number(date.slice(8))}</text>` : ''}
@@ -257,23 +270,15 @@ export function monthHtml(ctx, username, month) {
       <div><h2 class="cap">${esc(title)}</h2></div>
       <a class="icon" href="#overzicht/maand/${shiftMonth(month, 1)}" aria-label="Volgende maand">›</a></div>
     ${month !== today().slice(0, 7) ? `<p class="center"><a href="#overzicht/maand/${today().slice(0, 7)}">Naar deze maand</a></p>` : ''}
-    <div class="counters light">
-      ${counterHtml('Gewerkt', work, expected, { cls: expected && work >= expected ? 'ok' : 'red' })}
-      <div class="counter"><span>${isCur ? 'Verschil tot nu' : 'Verschil'}</span><b class="${work - expSoFar >= 0 ? 'ok-text' : 'danger'}">${signed(work - expSoFar)}</b></div>
-      <div class="counter"><span>Bevestigde dagen</span><b>${confirmed}</b></div>
-      <div class="counter ${missing ? 'warn' : ''}"><span>Niet bevestigd</span><b>${missing}</b></div>
-      <div class="counter"><span>Kilometers</span><b>${Math.round(km)}</b></div>
-    </div>
-  </section>
-  <section class="card">
     <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Uren per dag">${SVG_DEFS}${grid.join('')}${cols}</svg>
+    ${totalHtml('Gewerkt deze maand', work)}
     ${legendHtml(['werf', 'atelier', 'verpl'])}
-    <p class="muted small">Stippellijn = verwachte ${hm(dayGoal)} per werkdag. Rood bolletje = werkdag zonder bevestigde uren. Tik op een dag om ze te openen.</p>
+    <p class="muted small">Rood bolletje = werkdag zonder bevestigde uren. Tik op een dag om ze te openen.</p>
   </section>
-  <section class="card table-wrap"><table class="num"><thead><tr><th>Week</th><th>Periode</th><th>Gewerkt</th><th>Verwacht</th><th>Verschil</th></tr></thead><tbody>
+  <section class="card table-wrap"><table class="num"><thead><tr><th>Week</th><th>Periode</th><th>Gewerkt</th></tr></thead><tbody>
     ${weeks.map((w) => `<tr class="click" data-href="#overzicht/week/${w.start}"><td>${w.wk}</td><td>${Number(w.start.slice(8))}–${Number(w.end.slice(8))}</td>
-      <td>${hm(w.work)}</td><td>${hm(w.exp)}</td><td class="${w.work - w.exp >= 0 ? 'ok-text' : 'danger'}">${signed(w.work - w.exp)}</td></tr>`).join('')}
-    <tr class="total"><td colspan="2">Totaal</td><td>${hm(work)}</td><td>${hm(expected)}</td><td class="${work - expected >= 0 ? 'ok-text' : 'danger'}">${signed(work - expected)}</td></tr>
+      <td>${hm(w.work)}</td></tr>`).join('')}
+    <tr class="total"><td colspan="2">Totaal</td><td>${hm(work)}</td></tr>
   </tbody></table></section>`;
 }
 
@@ -297,7 +302,7 @@ export function yearHtml(ctx, username, year) {
   const expSoFar = rows.reduce((s, r) => s + (r.mo < today().slice(0, 7) ? r.exp
     : r.mo === today().slice(0, 7) ? monthDays(r.mo).filter((d) => d <= today()).reduce((x, d) => x + expAt(d, dayGoal), 0) : 0), 0);
   const W = chartWidth(); const H = 240; const L = 36; const B = 30; const T = 18;
-  const maxMin = Math.max(...rows.map((r) => Math.max(r.exp, r.work)), 60 * 60) * 1.1;
+  const maxMin = Math.max(...rows.map((r) => r.work), 60 * 60) * 1.1;
   const colW = (W - L - 6) / 12;
   const yOf = (m) => H - B - ((H - B - T) * m) / maxMin;
   const step = maxMin > 200 * 60 ? 40 : 20;
@@ -308,35 +313,25 @@ export function yearHtml(ctx, username, year) {
     const bw = colW * 0.34;
     const cur = r.mo === today().slice(0, 7);
     const name = new Date(`${r.mo}-15T12:00:00Z`).toLocaleDateString('nl-BE', { month: 'short' }).replace('.', '');
-    return `<a href="#overzicht/maand/${r.mo}"><title>${esc(name)}: ${hm(r.work)} van ${hm(r.exp)}</title>
+    return `<a href="#overzicht/maand/${r.mo}"><title>${esc(name)}: ${hm(r.work)}</title>
       <rect x="${x}" y="${T}" width="${colW}" height="${H - B - T}" class="${cur ? 'col-today' : 'col'}"/>
-      <rect x="${x + colW * 0.12}" y="${yOf(r.exp)}" width="${bw}" height="${yOf(0) - yOf(r.exp)}" class="f-exp"/>
-      ${stackBars(x + colW * 0.12 + bw + 2, bw, yOf, [['f-werf', r.werf], ['f-atelier', r.atelier], ['f-verpl-h', r.verpl]])}
-      ${r.work ? `<text x="${x + colW * 0.12 + bw * 1.5 + 2}" y="${yOf(r.work) - 4}" class="val" text-anchor="middle">${Math.round(r.work / 60)}</text>` : ''}
+      ${stackBars(x + (colW - bw * 1.6) / 2, bw * 1.6, yOf, [['f-werf', r.werf], ['f-atelier', r.atelier], ['f-verpl-h', r.verpl]])}
+      ${r.work ? `<text x="${x + colW / 2}" y="${yOf(r.work) - 4}" class="val" text-anchor="middle">${Math.round(r.work / 60)}</text>` : ''}
       <text x="${x + colW / 2}" y="${H - B + 16}" class="ax" text-anchor="middle">${esc(name)}</text></a>`;
   }).join('');
   const y = Number(year);
   return `<section class="card">
     <div class="period-head"><a class="icon" href="#overzicht/jaar/${y - 1}" aria-label="Vorig jaar">‹</a>
       <div><h2>${y}</h2></div><a class="icon" href="#overzicht/jaar/${y + 1}" aria-label="Volgend jaar">›</a></div>
-    <div class="counters light">
-      ${counterHtml('Gewerkt', tot.work, expSoFar || null, { cls: tot.work >= expSoFar ? 'ok' : 'red' })}
-      <div class="counter"><span>Verschil tot nu</span><b class="${tot.work - expSoFar >= 0 ? 'ok-text' : 'danger'}">${signed(tot.work - expSoFar)}</b></div>
-      ${counterHtml('Verplaatsing', tot.verpl)}
-      <div class="counter"><span>Kilometers</span><b>${Math.round(tot.km)}</b></div>
-      <div class="counter ${tot.missing ? 'warn' : ''}"><span>Niet bevestigd</span><b>${tot.missing}</b></div>
-    </div>
-  </section>
-  <section class="card">
     <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Uren per maand">${SVG_DEFS}${grid.join('')}${cols}</svg>
-    <div class="legend"><span><i class="sw c-exp"></i>Verwacht</span><span><i class="sw c-werf"></i>Werk bij klant</span><span><i class="sw c-atelier"></i>Atelier</span><span><i class="sw c-verpl"></i>Verplaatsing</span></div>
+    ${totalHtml(`Gewerkt in ${y}`, tot.work)}
+    <div class="legend"><span><i class="sw c-werf"></i>Werk bij klant</span><span><i class="sw c-atelier"></i>Atelier</span><span><i class="sw c-verpl"></i>Verplaatsing</span></div>
   </section>
-  <section class="card table-wrap"><table class="num"><thead><tr><th>Maand</th><th>Verwacht</th><th>Gewerkt</th><th>Verschil</th><th>Klant</th><th>Atelier</th><th>Verpl.</th><th>km</th><th>Open</th></tr></thead><tbody>
+  <section class="card table-wrap"><table class="num"><thead><tr><th>Maand</th><th>Gewerkt</th><th>Klant</th><th>Atelier</th><th>Verpl.</th><th>km</th><th>Open</th></tr></thead><tbody>
     ${rows.map((r) => `<tr class="click" data-href="#overzicht/maand/${r.mo}"><td class="cap">${esc(new Date(`${r.mo}-15T12:00:00Z`).toLocaleDateString('nl-BE', { month: 'long' }))}</td>
-      <td>${hm(r.exp)}</td><td><b>${r.work ? hm(r.work) : ''}</b></td>
-      <td class="${r.work - r.exp >= 0 ? 'ok-text' : 'danger'}">${r.future && !r.work ? '' : signed(r.work - r.exp)}</td>
+      <td><b>${r.work ? hm(r.work) : ''}</b></td>
       <td>${r.werf ? hm(r.werf) : ''}</td><td>${r.atelier ? hm(r.atelier) : ''}</td><td>${r.verpl ? hm(r.verpl) : ''}</td><td>${r.km ? Math.round(r.km) : ''}</td>
       <td>${r.missing ? `<span class="pill red">${r.missing}</span>` : ''}</td></tr>`).join('')}
-    <tr class="total"><td>Totaal</td><td>${hm(tot.exp)}</td><td>${hm(tot.work)}</td><td></td><td>${hm(tot.werf)}</td><td>${hm(tot.atelier)}</td><td>${hm(tot.verpl)}</td><td>${Math.round(tot.km)}</td><td>${tot.missing || ''}</td></tr>
+    <tr class="total"><td>Totaal</td><td>${hm(tot.work)}</td><td>${hm(tot.werf)}</td><td>${hm(tot.atelier)}</td><td>${hm(tot.verpl)}</td><td>${Math.round(tot.km)}</td><td>${tot.missing || ''}</td></tr>
   </tbody></table></section>`;
 }

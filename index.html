@@ -679,6 +679,14 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 .ph-tap-lbl { position: absolute; right: -4px; top: calc(100% + 6px); background: #ff3b30; color: #fff; font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 9px; white-space: nowrap; z-index: 2; }
 @keyframes tapPulse { 0%, 100% { box-shadow: 0 0 0 3px #ff3b30; } 50% { box-shadow: 0 0 0 6px rgba(255,59,48,.45); } }
 @media (prefers-reduced-motion: reduce) { .ph-tap { animation: none; } }
+/* overzicht: één teller onder de grafiek, en een smalle gele knop voor de open dagen */
+.period-total { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 12px 0 6px; padding: 12px 14px; border-radius: 12px; background: var(--surface2); }
+.period-total span { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size: 13px; letter-spacing: .04em; }
+.period-total b { font-family: var(--font-head); font-size: 28px; }
+.confirm-run { display: block; margin: 0 0 12px; padding: 7px 12px; border-radius: 10px; font-weight: 800; font-size: 14px; text-align: center; text-decoration: none;
+  color: #4a3500; background: #ffd426; border: 1px solid #e0b400; animation: confirmBlink 1.6s ease-in-out infinite; }
+@keyframes confirmBlink { 0%, 100% { background: #ffd426; } 50% { background: #fff3b0; } }
+@media (prefers-reduced-motion: reduce) { .confirm-run { animation: none; } }
 /* computer: breder scherm */
 @media (min-width: 1200px) { main { max-width: 1100px; } }
 #nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: center; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }

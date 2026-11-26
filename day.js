@@ -855,6 +855,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           ctx.notWorked?.(date, true);
           toast('Aangeduid als niet gewerkt', 'ok');
           again();
+          if (!asAdmin) ctx.afterConfirm?.(date);
         });
     } else if (act === 'del-pause') {
       // pauze weg: het werk ervoor loopt door tot het werk erna
@@ -901,6 +902,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       });
       toast(`Dag bevestigd: ${fmtDate(date)}`, 'ok');
       renderDay(el, { ctx, username, date, raw, asAdmin, rawError });
+      if (!asAdmin) ctx.afterConfirm?.(date);
     } else if (act === 'reopen') {
       if (!confirm('Deze dag heropenen? De werknemer kan dan opnieuw aanpassen.')) return;
       saveDay(ctx, username, date, { status: 'concept' });

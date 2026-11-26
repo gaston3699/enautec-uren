@@ -11,11 +11,11 @@ import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
 import { esc, alive, byName, projectLabel, toast, sha256, copyText } from './ui.js';
 import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
-import { weekHtml, monthHtml, yearHtml, ensureMonths } from './report.js';
+import { weekHtml, monthHtml, yearHtml, ensureMonths, openDays, openDaysButton } from './report.js';
 import { initCombos } from './combo.js';
 import { renderTodo } from './todo.js';
 import { planningHtml } from './calendar.js';
-import { weekStart } from './periods.js';
+import { weekStart, shiftMonth } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, syncPlanning, renderQuestion } from './questions.js';
 import { renderSetup, installHtml, autoOpenHtml, owntracksGuideHtml } from './setup.js';
 
@@ -42,6 +42,8 @@ const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localSt
 
 // ---------- Voorkeuren van dit toestel (achtergrond, tellers op het dagscherm) ----------
 const PREFS = 'enautec.prefs';
+/** Bezig met de open dagen een voor een te bevestigen (knop in het overzicht) */
+const CONFIRM_RUN = 'enautec.confirmRun';
 const prefs = () => lsGet(PREFS, {}) ?? {};
 const applyTheme = () => {
   const t = prefs().theme;
@@ -149,6 +151,24 @@ const ctx = {
   serverAdmin,
   me: () => lsGet(ME),
   prefs,
+  /**
+   * Dag bevestigd (of "niet gewerkt"): kwam je via de knop "nog niet bevestigd", dan meteen
+   * naar de volgende open dag; zijn ze allemaal klaar, terug naar het overzicht.
+   */
+  afterConfirm: (date) => {
+    let run = false;
+    try { run = sessionStorage.getItem(CONFIRM_RUN) === '1'; } catch { /* geblokkeerd */ }
+    if (!run) return;
+    const next = openDays(ctx, device().username).find((d) => d !== date);
+    if (next) {
+      toast(`Volgende open dag: ${fmtDate(next)}`, 'ok');
+      setTimeout(() => { location.hash = `#dag/${next}`; }, 600);
+    } else {
+      try { sessionStorage.removeItem(CONFIRM_RUN); } catch { /* geblokkeerd */ }
+      toast('✔ Alle dagen zijn bevestigd', 'ok');
+      setTimeout(() => { location.hash = '#overzicht'; }, 900);
+    }
+  },
   /** Standaardpauze (minuten) van de aangemelde werknemer: lokaal meteen, op de server voor de meldingen */
   setPauseMin: (min) => {
     lsSet(ME, { ...(lsGet(ME) ?? {}), pauseMin: min });
@@ -859,10 +879,15 @@ async function viewHistory([kind = 'week', arg] = []) {
     <div id="period"><p class="muted center">Laden…</p></div>`;
   const months = kind === 'week' ? [...new Set([weekStart(key), shiftDate(weekStart(key), 6)].map((d) => d.slice(0, 7)))]
     : kind === 'maand' ? [key] : Array.from({ length: 12 }, (_, i) => `${key}-${String(i + 1).padStart(2, '0')}`).filter((mo) => mo <= t.slice(0, 7));
-  await ensureMonths(ctx, dev.username, months);
+  // ook de laatste drie maanden: voor de knop "nog niet bevestigd"
+  const recent = [0, -1, -2].map((n) => shiftMonth(t.slice(0, 7), n));
+  await ensureMonths(ctx, dev.username, [...new Set([...months, ...recent])]);
   const box = $main.querySelector('#period');
   if (!box) return;
-  box.innerHTML = kind === 'week' ? weekHtml(ctx, dev.username, key) : kind === 'maand' ? monthHtml(ctx, dev.username, key) : yearHtml(ctx, dev.username, key);
+  box.innerHTML = openDaysButton(ctx, dev.username)
+    + (kind === 'week' ? weekHtml(ctx, dev.username, key) : kind === 'maand' ? monthHtml(ctx, dev.username, key) : yearHtml(ctx, dev.username, key));
+  // de dagen een voor een nakijken: na bevestigen meteen naar de volgende
+  box.querySelector('[data-confirm-run]')?.addEventListener('click', () => { try { sessionStorage.setItem(CONFIRM_RUN, '1'); } catch { /* geblokkeerd */ } });
   box.querySelectorAll('[data-href]').forEach((tr) => tr.onclick = () => { location.hash = tr.dataset.href; });
 }
 
