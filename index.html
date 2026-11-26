@@ -606,8 +606,13 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 .need-add button { flex: none; min-width: 44px; font-size: 20px; padding: 4px 12px; }
 .day-need.leave { border-left-color: var(--muted); }
 /* foto's: bladeren */
-.photo-view .pv-prev, .photo-view .pv-next { position: fixed; top: 50%; transform: translateY(-50%); font-size: 28px; padding: 8px 16px; opacity: .9; }
-.photo-view .pv-prev { left: 10px; } .photo-view .pv-next { right: 10px; }
+.photo-view { background: rgba(0,0,0,.92); }
+.photo-view .pv-prev, .photo-view .pv-next, .photo-view .pv-close { position: fixed; width: 44px !important; height: 44px; min-height: 0 !important; padding: 0 !important; margin: 0;
+  display: grid; place-items: center; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+.photo-view .pv-prev, .photo-view .pv-next { top: auto; bottom: calc(14px + env(safe-area-inset-bottom)); font-size: 26px; }
+.photo-view .pv-prev { left: 16px; right: auto; } .photo-view .pv-next { right: 16px; left: auto; }
+.photo-view .pv-close { top: calc(14px + env(safe-area-inset-top)); right: 16px; font-size: 20px; }
+.photo-view .pv-count { bottom: calc(24px + env(safe-area-inset-bottom)) !important; }
 .photo-view .pv-count { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); color: #fff; font-weight: 700; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 10px; }
 /* planning: materiaal toevoegen op een project, verlof, agenda's aanvinken */
 .cal-chip { position: relative; }
