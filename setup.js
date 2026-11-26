@@ -205,6 +205,81 @@ export function autoOpenHtml() {
     <p class="muted small">Testen: veeg OwnTracks weg uit het app-overzicht en tik op <a href="owntracks:///">OwnTracks openen</a>. Vergeet je het toch, dan krijg je om 08:00 een melding als er nog geen locatie binnenkwam.</p>`;
 }
 
+// ---------- OwnTracks: handleiding met tekeningen van de schermen ----------
+// Elke stap toont een klein gsm-scherm zoals je het ziet, met een rode cirkel "tik hier".
+const tap = (inner, label = 'Tik hier') => `<span class="ph-tap">${inner}<span class="ph-tap-lbl">👆 ${label}</span></span>`;
+const phone = (title, body, { back = false } = {}) => `<div class="ph" aria-hidden="true">
+  <div class="ph-top">${back ? '<span class="ph-back">‹</span>' : '<span></span>'}<b>${title}</b><span></span></div>
+  <div class="ph-body">${body}</div></div>`;
+const row = (label, right = '', cls = '') => `<div class="ph-row ${cls}"><span>${label}</span><span class="ph-right">${right}</span></div>`;
+const sw = (on = true) => `<span class="ph-sw ${on ? 'on' : ''}"><i></i></span>`;
+
+/** De stappen voor OwnTracks, met tekeningen. link = de knop die alles in één keer instelt. */
+export function owntracksGuideHtml({ ios = true, link = '', ot = null, server = '' } = {}) {
+  const store = ios ? 'App Store' : 'Google Play';
+  const storeUrl = ios ? 'https://apps.apple.com/app/owntracks/id692424691' : 'https://play.google.com/store/apps/details?id=org.owntracks.android';
+  // pic: één tekening, of een lijst [tekst, tekening] die na elkaar komen (a, b, c…)
+  const step = (n, title, text, pic = '') => `<li class="ot-step"><div class="ot-num">${n}</div><div class="ot-txt"><h3>${title}</h3>${text}</div>${!pic ? ''
+    : Array.isArray(pic) ? `<div class="ot-pics">${pic.map(([t, p], i) => `<div class="ot-sub"><p><b class="ot-letter">${'abcdef'[i]}</b> ${t}</p><div class="ot-pic">${p}</div></div>`).join('')}</div>`
+    : `<div class="ot-pic">${pic}</div>`}</li>`;
+  const steps = [
+    step(1, 'OwnTracks installeren',
+      `<p>Tik op de knop. De ${store} opent. Tik daar op <b>${ios ? 'Download' : 'Installeren'}</b>${ios ? ' (of het wolkje ☁️)' : ''}.</p>
+       <a class="btn secondary" href="${storeUrl}" target="_blank" rel="noopener">📲 OwnTracks in de ${store}</a>
+       <p class="muted small">Daarna kom je gewoon terug naar deze app.</p>`,
+      phone(store, `<div class="ph-app"><span class="ph-icon">📍</span><span><b>OwnTracks</b><small>Your location companion</small></span>${tap(`<span class="ph-btn">${ios ? 'Download' : 'Installeren'}</span>`)}</div>`)),
+    step(2, 'Alles in één keer instellen',
+      `<p>Tik op de rode knop hieronder. OwnTracks gaat open en vraagt of het de instellingen mag overnemen. Tik op <b>${ios ? 'Importeren' : 'OK'}</b>.</p>
+       ${link ? `<a class="btn primary big" href="${esc(link)}">⚙️ OwnTracks instellen</a>` : '<span class="muted">(laden…)</span>'}`,
+      phone('OwnTracks', `<div class="ph-dialog"><b>Configuratie importeren?</b><small>enautec-uren…/api/owntracks</small>
+        <div class="ph-dialog-btns"><span>Annuleren</span>${tap('<span class="ph-btn">Importeren</span>')}</div></div>`)),
+    ios ? step(3, 'Toegang geven in de iPhone-instellingen',
+      `<p>Open de app <b>Instellingen</b> van je iPhone (het grijze tandwiel ⚙️) en volg a tot d.</p>
+       <p class="muted small">Zonder deze toegang werkt OwnTracks enkel als de app open staat.</p>`,
+      [
+        ['Scrol helemaal naar beneden en tik op <b>Apps</b>.',
+          phone('Instellingen', `<div class="ph-group">${row('🔒 Privacy en beveiliging', '›')}</div><div class="ph-group">${row('☁️ iCloud', '›')}${row('💳 Wallet en Apple Pay', '›')}</div>
+            <div class="ph-group">${tap(row('🔲 <b>Apps</b>', '›'))}</div><div class="ph-search">🔍 Zoek</div>`)],
+        ['Tik onderaan in <b>Zoek apps</b>, typ <b>Own</b> en tik op <b>OwnTracks</b>.',
+          phone('Apps', `<div class="ph-search">🔍 Own</div><div class="ph-group">${tap(row('📍 <b>OwnTracks</b>', '›'))}</div>`, { back: true })],
+        ['Zet alles zoals hier: <b>Locatie</b> op <b>Altijd</b>, en <b>Beweging en conditie</b>, <b>Ververs op achtergrond</b> en <b>Mobiele data</b> aan (groen). Tik daarna op <b>Locatie</b>.',
+          phone('OwnTracks', `<div class="ph-group">${tap(row('➤ Locatie', '<small>Altijd</small> ›'), 'Tik hier')}${row('🏃 Beweging en conditie', sw(true))}${row('🔔 Meldingen', '›')}
+            ${row('🔄 Ververs op achtergrond', tap(sw(true), 'Aan!'))}${row('📶 Mobiele data', sw(true))}</div>`, { back: true })],
+        ['Tik op <b>Altijd</b> en zet <b>Nauwkeurige locatie</b> aan.',
+          phone('Locatie', `<div class="ph-group">${row('Nooit')}${row('Vraag volgende keer')}${row('Bij gebruik van app')}${tap(row('Altijd', '<b class="ph-check">✓</b>', 'sel'))}</div>
+            <div class="ph-group">${row('Nauwkeurige locatie', tap(sw(true), 'Aan'))}</div>`, { back: true })],
+      ])
+      : step(3, 'Locatie: altijd toestaan',
+        `<p>Vraagt OwnTracks om je locatie? Kies <b>Altijd toestaan</b> (of "Toestaan, altijd").</p>
+         <p>Open daarna de <b>Instellingen</b> van je gsm → <b>Apps</b> → <b>OwnTracks</b> → <b>Batterij</b> en kies <b>Onbeperkt</b> (niet optimaliseren).</p>`,
+        phone('Locatietoegang', `<div class="ph-group">${tap(row('Altijd toestaan', '<b class="ph-check">●</b>', 'sel'))}${row('Alleen toestaan bij gebruik van app')}${row('Niet toestaan')}</div>`, { back: true })),
+    step(4, 'Kies "Significant"',
+      `<p>Open <b>OwnTracks</b>. Bovenaan op de kaart staan vier knoppen. Tik op <b>Significant</b>: dan volgt OwnTracks je de hele dag, zonder je batterij leeg te trekken.</p>`,
+      phone('Kaart', `<div class="ph-map"><div class="ph-seg"><span>Rustig</span><span>Handmatig</span>${tap('<span class="on">Significant</span>')}<span>Actie</span></div><span class="ph-pin">📍</span></div>`)),
+    step(5, 'Controleren',
+      `<p>Tik in OwnTracks linksboven op <b>ⓘ</b>. Bij <b>Plaats</b> → <b>Coördinaten</b> zie je "… seconden geleden": OwnTracks werkt.</p>
+       <p>Kom terug naar deze app: hieronder verschijnt dan een groen vinkje ✔.</p>`,
+      phone('Statusinformatie', `<div class="ph-group">${row('Toestand', '<small>inactief</small>')}</div>
+        <div class="ph-group">${tap(row('Coördinaten', '<small>51,0…° 3,1…°<br>1 seconde geleden</small>'), 'Kijk hier')}</div>`, { back: true })),
+  ];
+  // manueel: het instellingenscherm van OwnTracks met de velden genummerd
+  const fields = ot ? [['URL', `${server}/api/owntracks`], ['Gebruikersnaam', ot.username], ['Wachtwoord', ot.password], ['Apparaat ID', 'gsm']] : [];
+  const manual = ot ? `<details class="ot-manual"><summary>De knop in stap 2 lukt niet? Zo stel je het zelf in</summary>
+      <ol class="ot-mini">
+        <li>Open OwnTracks en tik linksboven op <b>ⓘ</b>, daarna op <b>Instellingen</b>.</li>
+        <li>Tik bij <b>Mode</b> op <b>HTTP</b>.</li>
+        <li>Zet <b>Authenticatie</b> aan (groen).</li>
+        <li>Tik op elk vak hieronder op <b>Kopieer</b>, tik in OwnTracks op hetzelfde vak en kies <b>Plak</b>.</li>
+      </ol>
+      ${phone('Instellingen', `<div class="ph-group">${row('Mode', `<span class="ph-seg small"><span>MQTT</span>${tap('<span class="on">HTTP</span>', 'stap 2')}</span>`)}
+        ${row('Apparaat ID', '<small>④ gsm</small>')}${row('Gebruikersnaam', '<small>②</small>')}${row('Authenticatie', tap(sw(true), 'stap 3'))}${row('Wachtwoord', '<small>③</small>')}
+        <div class="ph-row"><small>① https://…/api/owntracks</small></div></div>`, { back: true })}
+      <div class="copy-list">${fields.map(([label, value], i) => `<div class="copy-row"><span class="muted small">${'①②③④'[i]} ${label}</span><code>${esc(value)}</code><button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}</div>
+      <p class="muted small">Het OwnTracks-wachtwoord is een aparte code, niet je wachtwoord van deze app.</p>
+    </details>` : '';
+  return `<ol class="ot-guide">${steps.join('')}</ol>${manual}`;
+}
+
 /**
  * Stappen tonen in `el`. deps: { server, session, username, name, ios, deviceKey, deviceLabel,
  *   owntracksLink(ot), getState(), setState(st), onDone(), optional }
@@ -289,22 +364,13 @@ export function renderSetup(el, deps) {
     const ot = me?.owntracks;
     // een locatie van de laatste 15 minuten (of sinds deze stap) = OwnTracks werkt
     const ok = me?.lastLocation && me.lastLocation >= Math.min(startedAt, Date.now() - 15 * MIN);
-    const store = deps.ios ? 'App Store' : 'Google Play';
+    const status = ok ? `<div class="notice ok">✔ Locatie ontvangen om ${new Date(me.lastLocation).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}. OwnTracks werkt.</div>`
+      : '<div class="notice wait"><span class="spinner" aria-hidden="true"></span> Wachten op je eerste locatie…</div>';
     frame(`<h2>📍 OwnTracks instellen</h2>
-      <p>OwnTracks stuurt je locatie door, zodat de app je uren en verplaatsingen zelf voorstelt.</p>
-      <ol class="setup-steps">
-        <li>Installeer de gratis app <b>OwnTracks</b> uit de ${store}.</li>
-        <li>Tik hier: ${ot ? `<a class="btn primary" href="${esc(deps.owntracksLink(ot))}">OwnTracks instellen</a>` : '<span class="muted">(laden…)</span>'}<br><span class="muted small">Vraagt OwnTracks om de instellingen te importeren? Tik op <b>OK</b> of <b>Importeren</b>.</span></li>
-        <li>Geef OwnTracks locatietoegang <b>"Altijd"</b>${deps.ios ? ' (Instellingen → OwnTracks → Locatie → Altijd, en Nauwkeurige locatie aan)' : ' en zet batterijbesparing voor OwnTracks uit'}.</li>
-        <li>Open OwnTracks en tik op het pijltje <b>↑</b> (verzenden), zodat je eerste locatie vertrekt.</li>
-      </ol>
-      ${ok ? `<div class="notice ok">✔ Locatie ontvangen om ${new Date(me.lastLocation).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}. OwnTracks werkt.</div>`
-        : '<div class="notice wait"><span class="spinner" aria-hidden="true"></span> Wachten op je eerste locatie…</div>'}
-      ${ot ? `<details><summary>Lukt de knop niet? Manueel instellen</summary>
-        <p class="muted small">Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> en <b>cmd</b> aan en kopieer deze gegevens één voor één. Het OwnTracks-wachtwoord is een aparte code, niet je app-wachtwoord.</p>
-        <div class="copy-list">${[['URL', `${server}/api/owntracks`], ['Gebruikersnaam', ot.username], ['Wachtwoord', ot.password], ['Apparaat ID', 'gsm']].map(([label, value]) => `
-          <div class="copy-row"><span class="muted small">${label}</span><code>${esc(value)}</code><button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}</div>
-      </details>` : ''}
+      <p>OwnTracks stuurt je locatie door, zodat de app je uren en verplaatsingen zelf voorstelt. Volg de 5 stappen. Op elke tekening toont de <b class="red-text">rode cirkel</b> waar je tikt.</p>
+      ${ok ? status : ''}
+      ${owntracksGuideHtml({ ios: deps.ios, link: ot ? deps.owntracksLink(ot) : '', ot, server })}
+      ${ok ? '' : status}
       <div class="row setup-nav">${ok ? '<button class="primary" data-act="next">Volgende</button>' : '<button class="secondary" data-act="recheck">Opnieuw controleren</button>'}</div>`);
     el.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => { await copyText(b.dataset.copy); b.textContent = '✔ Gekopieerd'; });
     el.querySelector('[data-act=recheck]')?.addEventListener('click', drawOwnTracks);

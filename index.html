@@ -626,6 +626,59 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 :root[data-theme="dark"] .brand img { filter: invert(1) hue-rotate(180deg); }
 :root[data-theme="dark"] body.update-ready .brand img { filter: none; }
 :root[data-theme="dark"] .welcome-logo { background: #fff; border-radius: 12px; padding: 10px; }
+/* OwnTracks: handleiding met tekeningen van de schermen */
+.ot-guide { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 14px; }
+.ot-step { display: grid; grid-template-columns: 36px 1fr; gap: 10px 12px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.ot-num { width: 36px; height: 36px; border-radius: 50%; background: var(--red); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 18px; }
+.ot-txt h3 { margin: 6px 0 6px; font-size: 17px; }
+.ot-txt p { margin: 0 0 8px; }
+.ot-pic { grid-column: 1 / -1; display: flex; justify-content: center; }
+.ot-pics { grid-column: 1 / -1; display: grid; gap: 16px; }
+@media (min-width: 700px) { .ot-pics { grid-template-columns: 1fr 1fr; } }
+.ot-sub p { margin: 0 0 8px; }
+.ot-letter { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--fg); color: var(--surface); font-size: 13px; margin-right: 4px; }
+.ph-search { background: #2c2c2e; border-radius: 16px; padding: 7px 12px; color: #9aa0a6; }
+.ot-manual { margin-top: 6px; }
+.ot-manual .ph { margin: 10px auto; }
+.ot-mini { padding-left: 20px; }
+.ot-mini li { margin: 4px 0; }
+.red-text { color: var(--red); }
+/* nagetekend gsm-scherm (altijd donker, zoals OwnTracks) */
+.ph { width: 100%; max-width: 290px; border-radius: 22px; background: #111; color: #f2f2f2; border: 6px solid #2a2a2a; overflow: hidden; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+.ph-top { display: grid; grid-template-columns: 30px 1fr 30px; align-items: center; padding: 8px 6px; background: #1c1c1e; text-align: center; font-size: 14px; }
+.ph-back { font-size: 22px; line-height: 1; color: #9aa0a6; }
+.ph-body { padding: 10px; display: grid; gap: 10px; }
+.ph-group { background: #1c1c1e; border-radius: 10px; overflow: visible; }
+.ph-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border-bottom: 1px solid #2c2c2e; min-height: 20px; }
+.ph-row:last-child { border-bottom: 0; }
+.ph-row.sel { color: #fff; font-weight: 700; }
+.ph-right { display: flex; align-items: center; gap: 6px; text-align: right; color: #9aa0a6; }
+.ph-right small { line-height: 1.3; }
+.ph-check { color: #0a84ff; font-size: 16px; }
+.ph-sw { display: inline-block; width: 40px; height: 24px; border-radius: 12px; background: #3a3a3c; position: relative; }
+.ph-sw i { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+.ph-sw.on { background: #34c759; } .ph-sw.on i { left: 18px; }
+.ph-btn { display: inline-block; background: #0a84ff; color: #fff; font-weight: 700; border-radius: 14px; padding: 5px 12px; }
+.ph-app { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+.ph-app > span:nth-child(2) { flex: 1; display: grid; } .ph-app small { color: #9aa0a6; }
+.ph-icon { width: 44px; height: 44px; border-radius: 10px; background: #0a3d91; display: grid; place-items: center; font-size: 22px; }
+.ph-dialog { background: #2c2c2e; border-radius: 14px; padding: 14px 12px 10px; text-align: center; display: grid; gap: 4px; margin: 14px 6px; }
+.ph-dialog small { color: #9aa0a6; }
+.ph-dialog-btns { display: flex; justify-content: space-around; align-items: center; margin-top: 10px; color: #0a84ff; }
+.ph-map { height: 120px; border-radius: 10px; background: linear-gradient(160deg, #24476b 0 35%, #3d6b4f 35% 100%); position: relative; padding: 8px 4px; }
+.ph-seg { display: flex; justify-content: space-between; gap: 2px; background: rgba(255,255,255,.18); border-radius: 14px; padding: 3px; font-size: 11.5px; }
+.ph-seg > span, .ph-seg .ph-tap > span:first-child { padding: 3px 6px; border-radius: 11px; }
+.ph-seg .on { background: rgba(255,255,255,.35); font-weight: 700; display: inline-block; padding: 3px 6px; border-radius: 11px; }
+.ph-seg.small { display: inline-flex; font-size: 11px; }
+.ph-pin { position: absolute; left: 46%; top: 62%; font-size: 20px; }
+/* rode cirkel "tik hier" */
+.ph-tap { position: relative; display: inline-block; border-radius: 14px; box-shadow: 0 0 0 3px #ff3b30; animation: tapPulse 1.4s ease-in-out infinite; }
+.ph-group > .ph-tap { display: block; border-radius: 10px; }
+.ph-group > .ph-tap > .ph-tap-lbl { top: -11px; right: 8px; }
+.ph-right .ph-tap > .ph-tap-lbl { top: 50%; right: calc(100% + 8px); transform: translateY(-50%); }
+.ph-tap-lbl { position: absolute; right: -4px; top: calc(100% + 6px); background: #ff3b30; color: #fff; font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 9px; white-space: nowrap; z-index: 2; }
+@keyframes tapPulse { 0%, 100% { box-shadow: 0 0 0 3px #ff3b30; } 50% { box-shadow: 0 0 0 6px rgba(255,59,48,.45); } }
+@media (prefers-reduced-motion: reduce) { .ph-tap { animation: none; } }
 /* computer: breder scherm */
 @media (min-width: 1200px) { main { max-width: 1100px; } }
 #nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: center; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }

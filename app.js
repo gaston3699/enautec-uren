@@ -17,7 +17,7 @@ import { renderTodo } from './todo.js';
 import { planningHtml } from './calendar.js';
 import { weekStart } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, syncPlanning, renderQuestion } from './questions.js';
-import { renderSetup, installHtml, autoOpenHtml } from './setup.js';
+import { renderSetup, installHtml, autoOpenHtml, owntracksGuideHtml } from './setup.js';
 
 const params = new URLSearchParams(location.search);
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
@@ -1005,17 +1005,9 @@ async function viewMore() {
         : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Open de app daarna via het icoon.</p>'}
     </section>` : ''}
     ${mobile && ot && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)</h2>
-      <ol><li>Installeer de gratis app <b>OwnTracks</b> (App Store / Google Play).</li>
-      <li>Tik hier: <a class="btn primary" href="${esc(owntracksLink(ot))}">OwnTracks instellen</a></li>
-      <li>Geef OwnTracks locatietoegang <b>"Altijd"</b> en zet batterijbesparing voor OwnTracks uit.</li></ol>
-      <p class="muted">Buiten de werkuren kan je OwnTracks op <b>Rustig</b> zetten. Je locatie wordt enkel gebruikt om je uren voor te stellen en na enkele weken gewist.</p>
-      <details><summary>Manueel instellen</summary>
-        <p class="muted small">Werkt de knop niet (bv. op iPhone)? Open OwnTracks → ⓘ → Instellingen, kies <b>Mode: HTTP</b>, zet <b>Authenticatie</b> en <b>cmd</b> (opdrachten op afstand) aan en kopieer deze gegevens één voor één. Laat "Geheime coderingssleutel" leeg. Het OwnTracks-wachtwoord is een aparte code, niet je app-wachtwoord.</p>
-        <div class="copy-list">
-          ${[['URL', `${server}/api/owntracks`], ['Gebruikersnaam', ot.username], ['Wachtwoord', ot.password], ['Apparaat ID', 'gsm']].map(([label, value]) => `
-          <div class="copy-row"><span class="muted small">${label}</span><code>${esc(value)}</code>
-            <button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}
-        </div>
+      <p class="muted">OwnTracks stuurt je locatie door zodat de app je uren voorstelt. Je locatie wordt enkel daarvoor gebruikt en na enkele weken gewist.</p>
+      <details><summary><b>Stap voor stap instellen (met tekeningen)</b></summary>
+        ${owntracksGuideHtml({ ios: isIOS(), link: owntracksLink(ot), ot, server })}
       </details>
     </section>` : ''}
     ${mobile && isStandalone() ? `<section class="card"><h2>Widget en snelkoppelingen</h2>
