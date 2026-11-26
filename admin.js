@@ -1,6 +1,6 @@
 // Beheer: dagoverzicht, stamgegevens, planning, export naar facturatie en instellingen.
 import { PATHS, EMPTY_MASTER } from './store.js';
-import { renderDay, dayState, emptyReg, manualChanges } from './day.js';
+import { renderDay, dayState, emptyReg, manualChanges, rulesFrom } from './day.js';
 import { buildWorkbook } from './export.js';
 import { today, shiftDate, fmtDate, fmtHours, localTime, isDate, localDate as localDateOf } from './time.js';
 import { parseLatLon, distance } from './geo.js';
@@ -10,7 +10,7 @@ import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOpt
 import { renderTodo, todoToConfirm } from './todo.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
 import { planningHtml, visibleDays, needId, needOf, LEAVE, enableChipDrag } from './calendar.js';
-import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256, personPickHtml, info } from './ui.js';
+import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256, personPickHtml, info, fold, iosGroup, iosRow } from './ui.js';
 
 /**
  * Wie badgede, volgens de tekst van Loxone:
@@ -154,6 +154,7 @@ export class Admin {
     this.el = el;
     this.tab = tab;
     if (tab !== 'overzicht') clearInterval(this.ovTimer);
+    if (tab !== 'instellingen') this.setPage = '';
     const n = this.pendingCount();
     const nt = todoToConfirm(this.ctx);
     const badge = (x) => (x ? ` <span class="tab-badge">${x}</span>` : '');
@@ -197,25 +198,26 @@ export class Admin {
     }
     const m = this.ctx.master();
     const rows = alive(m[name]).sort(byName);
+    // alles dichtgeklapt; open blijft open als je een ander deel opent (geen accordeon)
     view.innerHTML = `
-      <section class="card">
-        <h2>${edit ? 'Wijzigen' : ent.newLabel}${ent.help ? info(ent.help) : ''}</h2>
+      <section class="card fold-card">
+        ${fold(edit ? `ent-${name}-edit` : `ent-${name}-new`, `${edit ? `Wijzigen: ${esc(edit.name ?? '')}` : `＋ ${ent.newLabel}`}${ent.help ? info(ent.help) : ''}`, `
         <form class="form-grid" id="entForm">
           ${ent.fields.filter((f) => !f.noForm).map((f) => `<label><span>${f.label}</span>${fieldInput(f, edit, m)}</label>`).join('')}
           <div class="row"><button class="primary">${edit ? 'Opslaan' : 'Toevoegen'}</button>${edit ? '<button type="button" class="secondary" data-act="cancel">Annuleren</button>' : ''}</div>
-        </form>
+        </form>`, { force: !!edit })}
         <div id="entErr"></div>
         <div id="entExtra"></div>
       </section>
-      <section class="card table-wrap">
-        <h2>${ent.title} (${rows.length})</h2>
+      <section class="card fold-card">
+        ${fold(`ent-${name}-list`, ent.title, `<div class="table-wrap">
         <table><thead><tr>${ent.fields.filter((f) => !f.noList).map((f) => `<th>${f.label}</th>`).join('')}<th></th></tr></thead>
         <tbody>${rows.map((r) => `<tr>${ent.fields.filter((f) => !f.noList).map((f) => `<td>${fieldValue(f, r, m)}</td>`).join('')}
-          <td class="actions"><button class="link" data-edit="${esc(r.id)}">Wijzig</button><button class="link danger" data-del="${esc(r.id)}">Verwijder</button></td></tr>`).join('')}</tbody></table>
+          <td class="actions"><button class="link" data-edit="${esc(r.id)}">Wijzig</button><button class="link danger" data-del="${esc(r.id)}">Verwijder</button></td></tr>`).join('')}</tbody></table></div>`, { extra: String(rows.length) })}
       </section>
-      ${name === 'customers' ? `<section class="card" id="importCard"><h2>Klanten importeren${info('Kies een Excel- (.xlsx) of CSV-bestand met kolommen zoals Naam, Adres, Postcode, Gemeente, Telefoonnummer, BTW-nummer (bv. de export uit de boekhouding). Bestaande klanten (zelfde btw-nummer of naam) worden bijgewerkt, niet dubbel gemaakt. Per klant met adres maakt de app een locatie en zoekt ze de coördinaten op.')}</h2>
+      ${name === 'customers' ? `<section class="card fold-card" id="importCard">${fold('ent-customers-import', `Klanten importeren${info('Kies een Excel- (.xlsx) of CSV-bestand met kolommen zoals Naam, Adres, Postcode, Gemeente, Telefoonnummer, BTW-nummer (bv. de export uit de boekhouding). Bestaande klanten (zelfde btw-nummer of naam) worden bijgewerkt, niet dubbel gemaakt. Per klant met adres maakt de app een locatie en zoekt ze de coördinaten op.')}`, `
         <input type="file" id="importFile" accept=".xlsx,.csv,text/csv">
-        <div id="importOut"></div></section>` : ''}
+        <div id="importOut"></div>`)}</section>` : ''}
       ${name === 'sites' ? '<div id="geoBox"></div>' : ''}`;
 
     const form = view.querySelector('#entForm');
@@ -479,23 +481,21 @@ export class Admin {
       const unknown = [...seen.entries()].filter(([id]) => !g[id]).sort((a, b) => b[1].last - a[1].last);
       const last = (id) => { const s = seen.get(id); return s ? `${s.n}× · laatst ${esc(fmtDate(localDateOf(s.last), { day: 'numeric', month: 'short' }))} ${esc(localTime(s.last))}` : '<span class="muted">niet in de laatste 2 maanden</span>'; };
       view.innerHTML = `
-        <section class="card">
-          <h2>${LABEL[0]} toevoegen${info(`Vul de naam of code in zoals Loxone ze meldt (zie Badges). Alle meldingen met die naam staan dan bij ${LABEL[0].toLowerCase()} in plaats van bij onbekend.`)}</h2>
+        <section class="card fold-card">
+          ${fold(`grp-${group}-new`, `＋ ${LABEL[0]} toevoegen${info(`Vul de naam of code in zoals Loxone ze meldt (zie Badges). Alle meldingen met die naam staan dan bij ${LABEL[0].toLowerCase()} in plaats van bij onbekend.`)}`, `
           <form class="row" id="grpForm"><input name="id" list="grpSeen" placeholder="Naam of code" required style="flex:1">
             <datalist id="grpSeen">${unknown.map(([id]) => `<option value="${esc(id)}">`).join('')}</datalist>
-            <button class="primary">Toevoegen</button></form>
+            <button class="primary">Toevoegen</button></form>`)}
         </section>
-        <section class="card table-wrap">
-          <h2>${LABEL[0]} (${members.length})</h2>
-          ${members.length ? `<table><thead><tr><th>Naam / code</th><th>Meldingen</th><th></th></tr></thead><tbody>
+        <section class="card fold-card">
+          ${fold(`grp-${group}-list`, LABEL[0], members.length ? `<div class="table-wrap"><table><thead><tr><th>Naam / code</th><th>Meldingen</th><th></th></tr></thead><tbody>
             ${members.map((id) => `<tr><td>${esc(id)}</td><td class="small">${last(id)}</td><td class="actions"><button class="link danger" data-rm="${esc(id)}">Verwijder</button></td></tr>`).join('')}
-          </tbody></table>` : `<p class="muted">Nog geen ${LABEL[0].toLowerCase()}.</p>`}
+          </tbody></table></div>` : `<p class="muted">Nog geen ${LABEL[0].toLowerCase()}.</p>`, { extra: String(members.length) })}
         </section>
-        ${unknown.length ? `<section class="card table-wrap">
-          <h2>Onbekend (laatste 2 maanden)</h2>
-          <table><thead><tr><th>Naam / code</th><th>Meldingen</th><th></th></tr></thead><tbody>
+        ${unknown.length ? `<section class="card fold-card">
+          ${fold(`grp-${group}-unknown`, 'Onbekend (laatste 2 maanden)', `<div class="table-wrap"><table><thead><tr><th>Naam / code</th><th>Meldingen</th><th></th></tr></thead><tbody>
             ${unknown.map(([id]) => `<tr><td>${esc(id)}</td><td class="small">${last(id)}</td><td class="actions"><button class="link" data-add="${esc(id)}">+ ${LABEL[0]}</button></td></tr>`).join('')}
-          </tbody></table></section>` : ''}`;
+          </tbody></table></div>`, { extra: String(unknown.length) })}</section>` : ''}`;
       view.querySelector('#grpForm').onsubmit = (e) => {
         e.preventDefault();
         const id = e.target.elements.id.value.trim();
@@ -821,23 +821,20 @@ export class Admin {
       }
       const all = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'nl') || a.os.localeCompare(b.os));
       const people = [...new Map(all.map((g) => [g.username, g.name])).entries()];
-      this.devWho ??= '';
       const fmt = (ts) => new Date(ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      // alle namen onder elkaar; tik = toestellen eronder, een andere naam openen klapt de vorige dicht
       const draw = () => {
-        const shown = all.filter((g) => !this.devWho || g.username === this.devWho);
-        box.innerHTML = `<div class="row dev-filter"><select id="devWho" aria-label="Werknemer"><option value="">Alle werknemers</option>
-            ${people.map(([u, n]) => `<option value="${esc(u)}" ${u === this.devWho ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-          <span class="muted small">${shown.length} toestel${shown.length === 1 ? '' : 'len'}${this.devWho ? '' : ` voor ${people.length} werknemer${people.length === 1 ? '' : 's'}`}</span></div>
-          ${shown.length ? `<div class="table-wrap"><table><thead><tr>${this.devWho ? '' : '<th>Werknemer</th>'}<th>Toestel</th><th>Browsers / app</th><th>Aangemeld sinds</th><th>Laatst actief</th><th></th></tr></thead><tbody>
-            ${shown.map((g, i) => `<tr>${this.devWho ? '' : `<td>${esc(g.name)}</td>`}
-              <td>${g.type === 'mobiel' ? '📱' : '💻'} <b>${esc(g.os)}</b></td>
-              <td>${esc([...new Set(g.sessions.map(browserOf).filter(Boolean))].join(', ') || '—')}${g.sessions.length > 1 ? ` <span class="muted small">(${g.sessions.length}×)</span>` : ''}</td>
-              <td>${fmt(Math.min(...g.sessions.map((s) => s.createdAt)))}</td><td>${fmt(Math.max(...g.sessions.map((s) => s.lastSeen)))}</td>
-              <td><button class="link danger" data-revoke="${i}">Afmelden</button></td></tr>`).join('')}
-          </tbody></table></div>` : '<p class="muted">Geen aangemelde toestellen.</p>'}`;
-        box.querySelector('#devWho').onchange = (e) => { this.devWho = e.target.value; draw(); };
+        box.innerHTML = people.length ? `<div class="dev-people">${people.map(([u, n]) => {
+          const mine = all.map((g, i) => ({ g, i })).filter(({ g }) => g.username === u);
+          return fold(`dev-${u}`, esc(n), `<ul class="dev-list">${mine.map(({ g, i }) => `<li>
+              <span class="dev-ico" aria-hidden="true">${g.type === 'mobiel' ? '📱' : '💻'}</span>
+              <span class="dev-main"><b>${esc(g.os)}</b><small class="muted">${esc([...new Set(g.sessions.map(browserOf).filter(Boolean))].join(', ') || '—')}${g.sessions.length > 1 ? ` (${g.sessions.length}×)` : ''}
+                · sinds ${fmt(Math.min(...g.sessions.map((s) => s.createdAt)))} · laatst ${fmt(Math.max(...g.sessions.map((s) => s.lastSeen)))}</small></span>
+              <button class="link danger" data-revoke="${i}">Afmelden</button></li>`).join('')}</ul>`,
+          { group: 'devices', extra: String(mine.length) });
+        }).join('')}</div>` : '<p class="muted">Geen aangemelde toestellen.</p>';
         box.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
-          const g = shown[Number(b.dataset.revoke)];
+          const g = all[Number(b.dataset.revoke)];
           if (!confirm(`${g.name} afmelden op ${g.os}${g.sessions.length > 1 ? ` (${g.sessions.length} browsers)` : ''}?`)) return;
           for (const s of g.sessions) {
             try { await this.server(`/api/admin/sessions/${s.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'err'); }
@@ -860,7 +857,7 @@ export class Admin {
         <button class="icon" data-act="prev" aria-label="Vorige dag">‹</button>
         <div><b>${esc(fmtDate(date))}</b><input type="date" id="ovDate" value="${date}"></div>
         <button class="icon" data-act="next" aria-label="Volgende dag">›</button></div></section>
-      <section class="card table-wrap" id="ovTable"><p class="muted">Laden…</p></section>
+      <section class="card fold-card" id="ovTable"><p class="muted">Laden…</p></section>
       <div id="ovDay"></div><div id="ovBadges"></div>`;
     view.querySelector('[data-act=prev]').onclick = () => { this.date = shiftDate(date, -1); this.openEmp = null; this.overview(view); };
     view.querySelector('[data-act=next]').onclick = () => { this.date = shiftDate(date, 1); this.openEmp = null; this.overview(view); };
@@ -908,10 +905,11 @@ export class Admin {
     if (typing()) return; // niet storen tijdens het typen; volgende ronde opnieuw
 
     const rows = emps.map((e) => ({ e, st: dayState(this.ctx, e.username, date, raws[e.username]) }));
-    view.querySelector('#ovTable').innerHTML = `
+    const nOk = rows.filter(({ st }) => st.status === 'bevestigd').length;
+    view.querySelector('#ovTable').innerHTML = fold('ov-emps', 'Werknemers', `
       ${rawErr ? `<p class="muted">⚠ ${esc(rawErr)}</p>` : ''}
       <p class="muted small live-note">● Live · bijgewerkt ${localTime(Date.now())}</p>
-      <table><thead><tr><th>Werknemer</th><th>Status</th><th>Van – tot</th><th>Arbeidstijd</th><th>Km</th><th>Materiaal</th><th>Manueel aangepast</th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>Werknemer</th><th>Status</th><th>Van – tot</th><th>Arbeidstijd</th><th>Km</th><th>Materiaal</th><th>Manueel aangepast</th></tr></thead><tbody>
       ${rows.map(({ e, st }) => {
         const ok = st.status === 'bevestigd';
         return `<tr class="click" data-emp="${esc(e.username)}">
@@ -921,9 +919,9 @@ export class Admin {
         <td>${ok ? fmtHours(st.summary.workMinutes) : ''}</td>
         <td>${ok ? st.summary.km : ''}</td>
         <td>${ok ? st.material.length || '' : ''}</td>
-        <td>${(() => { const ch = ok ? manualChanges(st) : null; return ch == null ? '' : ch.length ? `<span class="pill warn">${ch.length}</span>` : '<span class="muted">nee</span>'; })()}</td></tr>`;
+        <td>${(() => { const ch = ok ? manualChanges(st, rulesFrom(st.master)) : null; return ch == null ? '' : ch.length ? `<span class="pill warn">${ch.length}</span>` : '<span class="muted">nee</span>'; })()}</td></tr>`;
       }).join('')}
-      </tbody></table>`;
+      </tbody></table></div>`, { extra: `${nOk}/${rows.length} bevestigd` });
     const showDay = (u, scroll) => {
       const box = view.querySelector('#ovDay');
       box.innerHTML = `<h2 class="section-title">${esc(alive(m.employees).find((x) => x.username === u)?.name ?? u)} · ${esc(fmtDate(date))}</h2><div></div>`;
@@ -938,8 +936,8 @@ export class Admin {
       try {
         const unknown = await this.server('/api/admin/badges/unknown');
         if (unknown.length) {
-          view.querySelector('#ovBadges').innerHTML = `<section class="card"><h2>Onbekende badges${info('Deze tekst kwam van Loxone, maar hoort bij geen enkele werknemer. Vul bij Werknemers het veld "Loxone-gebruiker" aan.')}</h2>
-            <table>${unknown.slice(0, 15).map((u) => `<tr><td>${new Date(u.ts).toLocaleString('nl-BE')}</td><td><code>${esc(u.raw)}</code></td></tr>`).join('')}</table></section>`;
+          view.querySelector('#ovBadges').innerHTML = `<section class="card fold-card">${fold('ov-unknown', `Onbekende badges${info('Deze tekst kwam van Loxone, maar hoort bij geen enkele werknemer. Vul bij Werknemers het veld "Loxone-gebruiker" aan.')}`,
+            `<div class="table-wrap"><table>${unknown.slice(0, 15).map((u) => `<tr><td>${new Date(u.ts).toLocaleString('nl-BE')}</td><td><code>${esc(u.raw)}</code></td></tr>`).join('')}</table></div>`, { extra: String(unknown.length) })}</section>`;
         }
       } catch { /* niet erg */ }
     }
@@ -1299,8 +1297,28 @@ export class Admin {
     let gsErr = '';
     if (google) { try { gs = await this.ctx.googleStatus(); } catch (e) { gsErr = e.message; } }
     const since = (c) => (c?.connectedAt ? ` · sinds ${new Date(c.connectedAt).toLocaleDateString('nl-BE')}` : '');
-    view.innerHTML = `
-    ${google ? `<section class="card">
+    // zoals Instellingen op de iPhone: lijst met rijen, tik = subpagina met terugknop
+    const page = this.setPage ?? '';
+    const host = (() => { try { return new URL(this.ctx.serverUrl()).host; } catch { return 'niet ingesteld'; } })();
+    if (!page) {
+      view.innerHTML = `
+        ${iosGroup([
+          google ? iosRow({ icon: '☁', color: '#34c759', label: 'Google Drive', value: esc(gs?.A?.email ?? (gs ? 'niet gekoppeld' : '')), act: 'page:google' }) : '',
+          iosRow({ icon: '🛰', color: '#007aff', label: 'Verzamelserver', value: esc(host), act: 'page:server' }),
+        ], { header: 'Verbindingen' })}
+        ${iosGroup([
+          iosRow({ icon: '⚖', color: '#ff9500', label: 'Regels', value: `${rules.minStayMin ?? 10} min`, act: 'page:rules' }),
+          iosRow({ icon: '🔒', color: '#8e8e93', label: 'Beheer-pincode', act: 'page:pin' }),
+          iosRow({ icon: '🏷', color: '#5856d6', label: 'Loxone', act: 'page:loxone' }),
+        ], { header: 'App' })}`;
+      view.querySelectorAll('[data-act^="page:"]').forEach((b) => b.onclick = () => { this.setPage = b.dataset.act.slice(5); this.settings(view); });
+      return;
+    }
+    const titles = { google: 'Google Drive', server: 'Verzamelserver', rules: 'Regels', pin: 'Beheer-pincode', loxone: 'Loxone' };
+    const show = (k) => page === k;
+    view.innerHTML = `<button type="button" class="ios-back" data-act="setback"><span aria-hidden="true">‹</span> Instellingen</button>
+    <h1 class="page-title">${titles[page] ?? ''}</h1>
+    ${google && show('google') ? `<section class="card">
       <h2>Google Drive (gegevens)${info('Hier staan de uren, planning, het materiaal en de stamgegevens, in de map Enautec Uren. De verzamelserver bewaart de koppeling; werknemers melden zich nooit aan bij Google.')}</h2>
       ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
       ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).</div>' : ''}
@@ -1308,15 +1326,15 @@ export class Admin {
       <div class="row">${gs?.configured ? `<button class="primary" data-act="gconnect">${gs.A ? 'Opnieuw koppelen' : 'Koppelen met Google Drive'}</button>` : ''}
         ${gs?.A ? '<button class="link danger" data-act="gdisconnect">Ontkoppelen</button>' : ''}</div>
     </section>` : ''}
-    <section class="card">
+    ${show('server') ? `<section class="card">
       <h2>Verzamelserver (Cloudflare)${info(`De server ontvangt de gsm-locaties (OwnTracks) en de badges (Loxone)${google ? ' en bewaart de koppeling met Google Drive' : ''}. Het adres en de beheersleutel worden enkel op dit toestel bewaard; werknemers krijgen het adres via hun koppellink.`)}</h2>
       <form class="form-grid" id="srvForm">
         <label><span>Adres van de server</span><input name="serverUrl" placeholder="https://enautec-uren.…workers.dev" value="${esc(this.ctx.serverUrl())}"></label>
         <label><span>Beheersleutel (ADMIN_KEY)</span><input name="adminKey" type="password" autocomplete="off" value="${esc(this.ctx.adminKey())}"></label>
         <div class="row"><button class="primary">Opslaan</button><button type="button" class="secondary" data-act="test">Verbinding testen</button></div>
       </form><div id="srvOut"></div>
-    </section>
-    <section class="card">
+    </section>` : ''}
+    ${show('rules') ? `<section class="card">
       <h2>Regels</h2>
       <form class="form-grid" id="ruleForm">
         <label><span>Minimale tijd op een locatie (min)</span><input type="number" name="minStayMin" value="${rules.minStayMin ?? 10}" min="3" max="60"></label>
@@ -1325,20 +1343,22 @@ export class Admin {
         <label><span>Map voor de export (facturatie)</span><input name="billingFolder" value="${esc(s.billingFolder ?? 'Facturatie/Uren Enautec')}"></label>
         <div><button class="primary">Opslaan</button></div>
       </form>
-    </section>
-    <section class="card">
+    </section>` : ''}
+    ${show('pin') ? `<section class="card">
       <h2>Beheer-pincode${info('Beschermt het beheer in de app op een toestel waar de beheersleutel staat.')}</h2>
       ${google ? '' : '<p class="muted">Let op: iedereen met het gedeelde Microsoft-account kan de bestanden in OneDrive wel openen.</p>'}
       <form class="row" id="pinForm"><input name="pin" type="password" inputmode="numeric" placeholder="Nieuwe pincode (min. 4 cijfers)" autocomplete="new-password"><button class="secondary">Wijzigen</button></form>
-    </section>
-    <section class="card">
+    </section>` : ''}
+    ${show('loxone') ? `<section class="card">
       <h2>Loxone${info('Zie HANDLEIDING.md voor de volledige uitleg.')}</h2>
       <p>Virtuele uitgang in Loxone Config:</p>
       <ul><li>Adres: <code>${esc(this.ctx.serverUrl() || 'https://enautec-uren.…workers.dev')}</code></li>
       <li>Opdracht bij AAN: <code>/api/loxone/badge?key=&lt;LOXONE_KEY&gt;&amp;user=&lt;v&gt;</code></li></ul>
-    </section>`;
+    </section>` : ''}`;
+    view.querySelector('[data-act=setback]').onclick = () => { this.setPage = ''; this.settings(view); };
+    const on = (sel, ev, fn) => { const el = view.querySelector(sel); if (el) el[ev] = fn; };
     const out = view.querySelector('#srvOut');
-    view.querySelector('#srvForm').onsubmit = (e) => {
+    on('#srvForm', 'onsubmit', (e) => {
       e.preventDefault();
       const f = e.target.elements;
       const url = f.serverUrl.value.trim().replace(/\/+$/, '');
@@ -1346,14 +1366,14 @@ export class Admin {
       this.ctx.setAdminKey(f.adminKey.value.trim());
       this.ctx.setServerUrl(url);
       toast('Bewaard op dit toestel', 'ok');
-    };
+    });
     view.querySelector('[data-act=gconnect]')?.addEventListener('click', () => this.ctx.connectGoogle('A').catch((e) => toast(e.message, 'err')));
     view.querySelector('[data-act=gdisconnect]')?.addEventListener('click', async () => {
       if (!confirm('Google Drive ontkoppelen? Niemand kan dan nog uren bewaren tot je opnieuw koppelt. De bestanden in Google Drive blijven bestaan.')) return;
       try { await this.ctx.disconnectGoogle('A'); toast('Ontkoppeld'); } catch (e) { toast(e.message, 'err'); }
       this.settings(view);
     });
-    view.querySelector('[data-act=test]').onclick = async () => {
+    on('[data-act=test]', 'onclick', async () => {
       out.innerHTML = '<p class="muted">Testen…</p>';
       try {
         const emps = await this.server('/api/admin/employees');
@@ -1363,8 +1383,8 @@ export class Admin {
         for (const e of missing) await this.server(`/api/admin/employees/${encodeURIComponent(e.username)}`, { method: 'PUT', body: JSON.stringify({ name: e.name, loxone_user: e.loxone_user }) });
         if (missing.length) out.innerHTML += `<p class="muted">${missing.length} werknemer(s) toegevoegd op de server.</p>`;
       } catch (e) { out.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
-    };
-    view.querySelector('#ruleForm').onsubmit = (e) => {
+    });
+    on('#ruleForm', 'onsubmit', (e) => {
       e.preventDefault();
       const f = e.target.elements;
       this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => {
@@ -1376,8 +1396,8 @@ export class Admin {
         };
       });
       toast('Regels bewaard', 'ok');
-    };
-    view.querySelector('#pinForm').onsubmit = async (e) => {
+    });
+    on('#pinForm', 'onsubmit', async (e) => {
       e.preventDefault();
       const pin = e.target.elements.pin.value;
       if (!/^\d{4,8}$/.test(pin)) return toast('Gebruik 4 tot 8 cijfers.', 'err');
@@ -1385,7 +1405,7 @@ export class Admin {
       this.ctx.store.change(PATHS.master, EMPTY_MASTER(), (mm) => { mm.settings = { ...mm.settings, adminPinHash: hash, updated: Date.now() }; });
       e.target.reset();
       toast('Pincode gewijzigd', 'ok');
-    };
+    });
   }
 }
 

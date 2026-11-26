@@ -8,7 +8,7 @@ import { renderDay, emptyReg, rulesFrom } from './day.js';
 import { Admin } from './admin.js';
 import { summarize } from './engine.js';
 import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
-import { esc, alive, byName, projectLabel, toast, sha256, copyText, info } from './ui.js';
+import { esc, alive, byName, projectLabel, toast, sha256, copyText, info, iosGroup, iosRow, iosPageHead, initials } from './ui.js';
 import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths, openDays, openDaysButton } from './report.js';
@@ -358,7 +358,7 @@ function route() {
   if (view === 'planning') return viewPlanning(rest);
   if (view === 'todo') { setNav('todo'); return renderTodo($main, { ctx }); }
   if (view === 'overzicht') return viewHistory(rest);
-  if (view === 'meer') return viewMore();
+  if (view === 'meer') return viewMore(rest[0] ?? '');
   if (view === 'vraag') return viewQuestion(rest[0]);
   if (view === 'owntracks') return viewOwnTracks();
   return viewDay(isDate(rest[0]) ? rest[0] : today(), rest[1] ?? null);
@@ -949,7 +949,7 @@ async function pushCard(box) {
   const sup = pushSupport();
   const draw = async (msg = '') => {
     if (!sup.ok) {
-      box.innerHTML = `<h2>Meldingen</h2><p class="muted">${sup.reason === 'ios-home'
+      box.innerHTML = `<p class="ios-foot">${sup.reason === 'ios-home'
         ? 'Op een iPhone werken meldingen enkel in de app op je beginscherm: Safari → Deel → <b>Zet op beginscherm</b>, open de app via het icoon en zet hier de meldingen aan.'
         : 'Deze browser ondersteunt geen meldingen.'}</p>`;
       return;
@@ -959,14 +959,19 @@ async function pushCard(box) {
     if (sub) {
       try { on = (await (await fetch(`${server}/api/push/status?endpoint=${encodeURIComponent(sub.endpoint)}`, { headers: { Authorization: `Bearer ${dev.session}` } })).json()).subscribed; } catch { on = true; }
     }
-    box.innerHTML = `<h2>Meldingen${info('Je krijgt een melding als je ergens toekomt: "Aan het werk?" (\'s ochtends), "Bij wie ben je?" (na een verplaatsing) en "Dag bevestigen?" als je thuiskomt. Zo kies je meteen het juiste project.')}</h2>
-      ${Notification.permission === 'denied' ? '<p class="error">Meldingen zijn geblokkeerd voor deze app. Zet ze aan in de instellingen van je toestel of browser.</p>' : ''}
-      <p>${on ? '<span class="pill ok">Aan op dit toestel</span>' : '<span class="pill warn">Uit op dit toestel</span>'}</p>
-      <div class="row">${on ? '<button class="secondary" data-act="ptest">Testmelding sturen</button><button class="link danger" data-act="poff">Uitzetten</button>'
-        : '<button class="primary" data-act="pon">🔔 Meldingen aanzetten</button>'}</div>${msg}`;
+    // zoals iOS: schakelaar "Sta meldingen toe", daaronder de uitleg
+    box.innerHTML = `${Notification.permission === 'denied' ? '<p class="error">Meldingen zijn geblokkeerd voor deze app. Zet ze aan in de instellingen van je toestel of browser.</p>' : ''}
+      ${iosGroup([iosRow({ icon: '🔔', color: '#ff3b30', label: 'Sta meldingen toe', toggle: `data-act="ptoggle" ${on ? 'checked' : ''}` }),
+        on ? iosRow({ label: 'Testmelding sturen', act: 'ptest' }) : ''],
+        { footer: 'Je krijgt een melding als je ergens toekomt: "Aan het werk?" (\'s ochtends), "Bij wie ben je?" (na een verplaatsing) en "Dag bevestigen?" als je thuiskomt. Zo kies je meteen het juiste project.' })}${msg}`;
+  };
+  box.onchange = (e) => {
+    if (e.target.dataset.act !== 'ptoggle') return;
+    e.target.disabled = true;
+    box.onclick({ target: e.target, act: e.target.checked ? 'pon' : 'poff' });
   };
   box.onclick = async (e) => {
-    const act = e.target.closest('[data-act]')?.dataset.act;
+    const act = e.act ?? e.target.closest('button[data-act]')?.dataset.act;
     if (!act) return;
     e.target.disabled = true;
     try {
@@ -993,7 +998,7 @@ function sessionsHtml(list, { showUser = false } = {}) {
   </tbody></table></div>`;
 }
 
-async function viewMore() {
+async function viewMore(sub = '') {
   setNav('meer');
   const dev = device();
   const me = lsGet(ME) ?? {};
@@ -1002,51 +1007,58 @@ async function viewMore() {
   const server = ctx.serverUrl();
   const ot = me.owntracks;
   const mobile = isMobile();
-  $main.innerHTML = `<h1 class="page-title">Meer</h1>
-    <section class="card"><h2>Mijn account</h2>
-      <p><b>${esc(emp?.name ?? me.name ?? dev.username)}</b> <span class="muted">(gebruikersnaam: ${esc(dev.username)})</span>${me.isAdmin ? ' <span class="pill red">beheerder</span>' : ''}</p>
-      <div class="row"><button class="secondary" data-act="signout">Afmelden / andere gebruiker</button></div>
-      <details><summary>Wachtwoord wijzigen</summary>
-        <form id="pwChange" class="link-form">
+  // Zoals Instellingen op de iPhone: hoofdlijst met gegroepeerde rijen, tik = subpagina met terugknop
+  const name = emp?.name ?? me.name ?? dev.username;
+  const THEMES = [['', 'Automatisch'], ['light', 'Wit'], ['dark', 'Zwart']];
+  const themeName = THEMES.find(([v]) => v === (prefs().theme ?? ''))?.[1] ?? 'Automatisch';
+  const storeName = TEST ? 'Testmodus' : acc ? STORE_NAME : GOOGLE ? 'Google Drive' : 'Niet aangemeld';
+  const back = () => iosPageHead(esc({ account: name, weergave: 'Weergave', meldingen: 'Meldingen', owntracks: 'OwnTracks', widget: 'Widget en snelkoppelingen', beginscherm: 'App op je beginscherm', opslag: 'Opslag' }[sub] ?? ''), '#meer', 'Meer');
+  const pages = {
+    account: () => `${back()}
+      ${iosGroup([iosRow({ label: 'Gebruikersnaam', value: esc(dev.username) }), me.isAdmin ? iosRow({ label: 'Rol', value: 'Beheerder' }) : ''])}
+      ${iosGroup([`<li class="ios-form"><form id="pwChange" class="link-form">
           <input name="current" type="password" autocomplete="current-password" placeholder="Huidig wachtwoord" required aria-label="Huidig wachtwoord">
           <input name="pw1" type="password" autocomplete="new-password" placeholder="Nieuw wachtwoord (min. 8 tekens)" required minlength="8" aria-label="Nieuw wachtwoord">
           <input name="pw2" type="password" autocomplete="new-password" placeholder="Herhaal nieuw wachtwoord" required minlength="8" aria-label="Herhaal nieuw wachtwoord">
-          <div class="row"><button class="primary">Wachtwoord wijzigen</button>${info('Na het wijzigen word je op je andere toestellen afgemeld.')}</div>
-        </form><div id="pwMsg"></div>
-      </details>
-    </section>
-    <section class="card prefs"><h2>Weergave</h2>
-      <label class="q-field"><span>Achtergrond</span><select data-pref="theme" data-native>
-        ${[['', 'Automatisch (zoals je toestel)'], ['light', 'Wit'], ['dark', 'Zwart']].map(([v, l]) => `<option value="${v}" ${(prefs().theme ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label class="check-row"><span>Tellers (werk, pauze, netto) tonen op het dagscherm</span><input type="checkbox" class="ios-switch" data-pref="counters" ${prefs().counters ? 'checked' : ''}></label>
-    </section>
-    <section class="card" id="pushCard"><h2>Meldingen</h2><p class="muted">Laden…</p></section>
-    <section class="card"><h2>Mijn toestellen${info('Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.')}</h2>
-      <div id="mySessions"><p class="muted">Laden…</p></div>
-    </section>
-    ${mobile && !isStandalone() ? `<section class="card"><h2>App op je beginscherm</h2>
-      ${isIOS() ? '<p>Tik in Safari onderaan op <b>Deel</b> (vierkantje met pijl) → <b>Zet op beginscherm</b>. Open de app daarna via het icoon en meld je daar één keer aan.</p>'
-        : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Open de app daarna via het icoon.</p>'}
-    </section>` : ''}
-    ${mobile && ot && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)${info('OwnTracks stuurt je locatie door zodat de app je uren voorstelt. Je locatie wordt enkel daarvoor gebruikt en na enkele weken gewist.')}</h2>
-      <details><summary><b>Stap voor stap instellen (met tekeningen)</b></summary>
-        ${owntracksGuideHtml({ ios: isIOS(), link: owntracksLink(ot), ot, server })}
-      </details>
-    </section>` : ''}
-    ${mobile && isStandalone() ? `<section class="card"><h2>Widget en snelkoppelingen${info(isIOS() ? 'Zet je uren van vandaag als widget op je beginscherm (met de gratis app Scriptable).'
-        : 'Hou het icoon van Enautec Uren ingedrukt voor snelkoppelingen naar Vandaag, Materiaal, Planning en ToDo.')}</h2>
-      ${isIOS() ? '<div class="row"><button class="secondary" data-act="widget">🧩 Widget instellen</button></div>' : ''}
-      ${isIOS() ? '<div class="row"><button class="secondary" data-act="autoot">⏰ OwnTracks automatisch openen</button></div>' : ''}
-      <p><button class="link" data-act="setup">Instelstappen opnieuw doorlopen</button></p>
-    </section>` : ''}
-    ${!mobile ? '<section class="card"><p class="muted">💻 Je gebruikt een computer. De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p></section>' : ''}
-    <section class="card"><h2>Opslag</h2>
-      <p>${TEST ? 'Testmodus: gegevens staan enkel in deze browser.'
-        : acc ? `${esc(STORE_NAME)}: <b>${esc(acc.username || acc.name)}</b>` : GOOGLE ? 'Google Drive (via de koppeling van de beheerder).' : 'Niet aangemeld.'}</p>
-      <div class="row"><button class="secondary" data-act="sync">Nu synchroniseren</button>
-      ${TEST ? '<button class="link danger" data-act="testreset">Testgegevens wissen</button>' : ''}</div>
-    </section>
-    <section class="card"><p class="muted small">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p></section>`;
+          <button class="primary">Wachtwoord wijzigen</button></form><div id="pwMsg"></div></li>`],
+        { header: 'Wachtwoord', footer: 'Na het wijzigen word je op je andere toestellen afgemeld.' })}
+      ${iosGroup([`<li class="ios-form"><div id="mySessions"><p class="muted">Laden…</p></div></li>`],
+        { header: 'Mijn toestellen', footer: 'Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.' })}
+      ${iosGroup([iosRow({ label: 'Afmelden / andere gebruiker', act: 'signout', danger: true })])}`,
+    weergave: () => `${back()}
+      ${iosGroup(THEMES.map(([v, l]) => `<li><button type="button" class="ios-row" data-theme-pick="${v}"><span class="ios-label">${l}${v ? '' : '<small>Zoals je toestel</small>'}</span>
+        <span class="ios-check" aria-hidden="true">${(prefs().theme ?? '') === v ? '✓' : ''}</span></button></li>`), { header: 'Achtergrond' })}
+      ${iosGroup([iosRow({ label: 'Tellers tonen', toggle: `data-pref="counters" ${prefs().counters ? 'checked' : ''}` })],
+        { footer: 'Werk, pauze en netto als tellers bovenaan het dagscherm.' })}`,
+    meldingen: () => `${back()}<div id="pushCard"><p class="muted">Laden…</p></div>`,
+    owntracks: () => `${back()}${mobile && ot && server ? `<section class="card">${owntracksGuideHtml({ ios: isIOS(), link: owntracksLink(ot), ot, server })}</section>`
+      : '<p class="ios-foot">De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p>'}
+      <p class="ios-foot">OwnTracks stuurt je locatie door zodat de app je uren voorstelt. Je locatie wordt enkel daarvoor gebruikt en na enkele weken gewist.</p>`,
+    widget: () => `${back()}
+      ${iosGroup([isIOS() ? iosRow({ icon: '🧩', color: '#5856d6', label: 'Widget instellen', act: 'widget' }) : '',
+        isIOS() ? iosRow({ icon: '⏰', color: '#ff9500', label: 'OwnTracks automatisch openen', act: 'autoot' }) : '',
+        iosRow({ icon: '↺', color: '#8e8e93', label: 'Instelstappen opnieuw doorlopen', act: 'setup' })],
+        { footer: isIOS() ? 'Zet je uren van vandaag als widget op je beginscherm (met de gratis app Scriptable).' : 'Hou het icoon van Enautec Uren ingedrukt voor snelkoppelingen naar Vandaag, Materiaal, Planning en ToDo.' })}`,
+    beginscherm: () => `${back()}<section class="card">${isIOS() ? '<p>Tik in Safari onderaan op <b>Deel</b> (vierkantje met pijl) → <b>Zet op beginscherm</b>. Open de app daarna via het icoon en meld je daar één keer aan.</p>'
+      : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Open de app daarna via het icoon.</p>'}</section>`,
+    opslag: () => `${back()}
+      ${iosGroup([iosRow({ label: TEST ? 'Testmodus' : acc ? STORE_NAME : GOOGLE ? 'Google Drive' : 'Opslag', value: TEST ? 'enkel deze browser' : acc ? esc(acc.username || acc.name) : GOOGLE ? 'via de beheerder' : 'niet aangemeld' }),
+        iosRow({ label: 'Nu synchroniseren', act: 'sync' }), TEST ? iosRow({ label: 'Testgegevens wissen', act: 'testreset', danger: true }) : ''])}`,
+  };
+  $main.innerHTML = pages[sub] ? pages[sub]() : `<h1 class="page-title">Meer</h1>
+    <a class="ios-profile" href="#meer/account"><span class="ios-avatar">${esc(initials(name) || '?')}</span>
+      <span class="ios-label"><b>${esc(name)}</b><small>Account, wachtwoord en toestellen${me.isAdmin ? ' · beheerder' : ''}</small></span><span class="ios-chev" aria-hidden="true">›</span></a>
+    ${iosGroup([
+      iosRow({ icon: '🔔', color: '#ff3b30', label: 'Meldingen', href: '#meer/meldingen' }),
+      iosRow({ icon: '◐', color: '#5856d6', label: 'Weergave', value: themeName, href: '#meer/weergave' }),
+    ])}
+    ${iosGroup([
+      mobile && ot && server ? iosRow({ icon: '📍', color: '#34c759', label: 'OwnTracks', sub: 'Automatische registratie', href: '#meer/owntracks' }) : '',
+      mobile && isStandalone() ? iosRow({ icon: '🧩', color: '#007aff', label: 'Widget en snelkoppelingen', href: '#meer/widget' }) : '',
+      mobile && !isStandalone() ? iosRow({ icon: '📲', color: '#007aff', label: 'App op je beginscherm', href: '#meer/beginscherm' }) : '',
+    ], { footer: mobile ? '' : 'Je gebruikt een computer. De automatische registratie (OwnTracks) stel je enkel in op je gsm.' })}
+    ${iosGroup([iosRow({ icon: '☁', color: '#8e8e93', label: 'Opslag', value: esc(storeName), href: '#meer/opslag' })])}
+    <p class="ios-foot center">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p>`;
 
   $main.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
     await copyText(b.dataset.copy);
@@ -1061,11 +1073,13 @@ async function viewMore() {
   $main.querySelector('[data-act=widget]')?.addEventListener('click', () => startSetup('widget', true));
   $main.querySelector('[data-act=autoot]')?.addEventListener('click', () => startSetup('auto', true));
   $main.querySelector('[data-act=setup]')?.addEventListener('click', () => startSetup('push'));
-  $main.querySelector('[data-act=signout]').onclick = () => {
+  $main.querySelectorAll('[data-theme-pick]').forEach((b) => b.onclick = () => { setPref('theme', b.dataset.themePick || null); viewMore(sub); });
+  const on = (sel, fn) => { const el = $main.querySelector(sel); if (el) el.onclick = fn; };
+  on('[data-act=signout]', () => {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;
     if (confirm('Afmelden op dit toestel? Daarna kan je (of een collega) je opnieuw aanmelden.')) signOut();
-  };
-  $main.querySelector('[data-act=sync]').onclick = async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); };
+  });
+  on('[data-act=sync]', async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); });
   $main.querySelector('[data-act=testreset]')?.addEventListener('click', () => {
     if (!confirm('Alle testgegevens in deze browser wissen?')) return;
     Object.keys(localStorage).filter((k) => k.startsWith('enautec.')).forEach((k) => localStorage.removeItem(k));
@@ -1073,14 +1087,12 @@ async function viewMore() {
   });
 
   const pc = $main.querySelector('#pwChange');
-  if (openPwChange) {
+  if (openPwChange && pc) {
     openPwChange = false;
-    const d = pc.closest('details');
-    d.open = true;
-    d.scrollIntoView({ block: 'center' });
+    pc.scrollIntoView({ block: 'center' });
     pc.elements.current.focus();
   }
-  pc.onsubmit = async (e) => {
+  if (pc) pc.onsubmit = async (e) => {
     e.preventDefault();
     const msg = (t, cls = 'error') => { $main.querySelector('#pwMsg').innerHTML = `<div class="${cls}">${esc(t)}</div>`; };
     if (pc.elements.pw1.value !== pc.elements.pw2.value) return msg('De twee nieuwe wachtwoorden zijn niet gelijk.');
@@ -1112,7 +1124,8 @@ async function viewMore() {
     }
   }
   loadMySessions();
-  pushCard($main.querySelector('#pushCard'));
+  const pcBox = $main.querySelector('#pushCard');
+  if (pcBox) pushCard(pcBox);
 }
 
 /** Sessie ongeldig (afgemeld vanop een ander toestel of nieuw wachtwoord): lokaal afmelden */
@@ -1139,7 +1152,7 @@ async function offerPasswordChange() {
   });
   if (change) {
     openPwChange = true;
-    if (location.hash === '#meer') viewMore(); else location.hash = '#meer';
+    if (location.hash === '#meer/account') viewMore('account'); else location.hash = '#meer/account';
     return;
   }
   try {

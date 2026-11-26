@@ -65,8 +65,10 @@ export function personPickHtml({ id = '', name = '', people = [], selected = [],
         <input type="checkbox" class="ios-switch" ${name ? `name="${esc(name)}"` : ''} value="${esc(p.value)}" ${sel.has(p.value) ? 'checked' : ''}></label>`).join('')}
     </div></details>`;
 }
+// hoogstens 3 initialen, daarna "+N" (zo blijft de knop even breed en springt hij niet weg)
 const pickSummary = (on, empty) => (on.length
-  ? on.map((p) => `<b class="pp-ini">${esc(p.short ?? initials(p.label))}</b>`).join('')
+  ? on.slice(0, on.length > 3 ? 2 : 3).map((p) => `<b class="pp-ini">${esc(p.short ?? initials(p.label))}</b>`).join('')
+    + (on.length > 3 ? `<b class="pp-ini more">+${on.length - 2}</b>` : '')
   : `<span class="muted">${esc(empty)}</span>`);
 
 // samenvatting (initialen) en accent bijwerken bij elke schakelaar; dicht bij tikken ernaast
@@ -81,6 +83,50 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', (e) => {
     document.querySelectorAll('.person-pick[open]').forEach((d) => { if (!d.contains(e.target)) d.open = false; });
   });
+}
+
+// ---------- Instellingen zoals iOS ----------
+/** Groep afgeronde rijen, met grijze titel erboven en kleine uitleg eronder (beide mogen leeg) */
+export const iosGroup = (rows, { header = '', footer = '' } = {}) => (rows.filter(Boolean).length
+  ? `<div class="ios-group-wrap">${header ? `<h3 class="ios-head">${header}</h3>` : ''}<ul class="ios-group">${rows.filter(Boolean).join('')}</ul>${footer ? `<p class="ios-foot">${footer}</p>` : ''}</div>` : '');
+/**
+ * Eén rij: gekleurd vierkant icoon, label, waarde rechts (grijs) en › (link), of een schakelaar.
+ * toggle: HTML-attributen voor de checkbox (bv. 'data-pref="counters" checked').
+ */
+export function iosRow({ icon = '', color = '#8e8e93', label, value = '', href = '', act = '', toggle = null, danger = false, sub = '' }) {
+  const ico = icon ? `<span class="ios-ico" style="background:${color}" aria-hidden="true">${icon}</span>` : '';
+  const text = `<span class="ios-label ${danger ? 'danger' : ''}">${label}${sub ? `<small>${sub}</small>` : ''}</span>`;
+  if (toggle != null) return `<li><label class="ios-row">${ico}${text}<input type="checkbox" class="ios-switch" ${toggle}></label></li>`;
+  const tail = `${value ? `<span class="ios-value">${value}</span>` : ''}${href || act ? '<span class="ios-chev" aria-hidden="true">›</span>' : ''}`;
+  if (href) return `<li><a class="ios-row" href="${esc(href)}">${ico}${text}${tail}</a></li>`;
+  if (act) return `<li><button type="button" class="ios-row" data-act="${esc(act)}">${ico}${text}${tail}</button></li>`;
+  return `<li><div class="ios-row">${ico}${text}${tail}</div></li>`;
+}
+/** Kop van een subpagina: terugknop (‹ Vorige) en grote titel */
+export const iosPageHead = (title, back, backLabel) => `<a class="ios-back" href="${esc(back)}"><span aria-hidden="true">‹</span> ${esc(backLabel)}</a>
+  <h1 class="page-title">${title}</h1>`;
+
+/**
+ * Uitklapblok (standaard dicht). De open/dicht-stand wordt onthouden per sleutel, ook als het scherm
+ * opnieuw getekend wordt. group: blokken met dezelfde groep gedragen zich als accordeon (één tegelijk open).
+ */
+const foldState = new Map();
+export function fold(key, title, body, { open = false, force = false, group = '', extra = '', cls = '' } = {}) {
+  if (force) foldState.set(key, true);
+  const isOpen = foldState.has(key) ? foldState.get(key) : open;
+  return `<details class="fold ${cls}" data-fold="${esc(key)}" ${group ? `data-group="${esc(group)}"` : ''} ${isOpen ? 'open' : ''}>
+    <summary><span class="fold-title">${title}</span>${extra ? `<span class="fold-extra">${extra}</span>` : ''}<span class="chev" aria-hidden="true">›</span></summary>
+    <div class="fold-body">${body}</div></details>`;
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (!d.matches?.('details.fold')) return;
+    foldState.set(d.dataset.fold, d.open);
+    if (d.open && d.dataset.group) {
+      document.querySelectorAll(`details.fold[data-group="${CSS.escape(d.dataset.group)}"][open]`).forEach((o) => { if (o !== d) o.open = false; });
+    }
+  }, true);
 }
 
 /**

@@ -654,6 +654,7 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 .pp-label { color: var(--muted); font-size: 14px; }
 .pp-sum { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 .pp-ini { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 99px; background: var(--accent); color: #141414; font-size: 12px; font-weight: 700; }
+.pp-ini.more { background: var(--fill-strong); color: var(--fg); }
 .person-pick .chev { color: var(--muted); font-size: 20px; line-height: 1; transition: transform .2s; }
 .person-pick[open] .chev { transform: rotate(90deg); }
 .pp-list { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 6px); min-width: 240px; max-height: min(60vh, 420px); overflow-y: auto;
@@ -666,8 +667,10 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 .plan-form .person-pick { width: 100%; margin-top: 16px; }
 .plan-form .pp-list { position: static; margin-top: 6px; box-shadow: none; border: .5px solid var(--line); max-height: none; }
 .person-pick[open] { z-index: 40; }
-.cal-of .person-pick { min-width: 0; }
-.cal-of .pp-list { left: auto; right: 0; }
+/* "Agenda's": altijd rechts, ook als de knop door veel initialen op een eigen regel komt; lijst nooit buiten beeld */
+.cal-of .person-pick { min-width: 0; margin-left: auto; }
+.cal-of .pp-list { left: auto; right: 0; width: max-content; min-width: 260px; max-width: calc(100vw - 32px); }
+.pp-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* iOS-schakelaar (geel als hij aanstaat) */
 /* elke keuze (aan/uit) is een iOS-schakelaar; afvinklijstjes hebben ronde bolletjes (zie .round-check / .need-check) */
 input[type=checkbox].ios-switch, input[type=checkbox]:not(.round-check):not([data-ck]):not([data-act=toggle]) {
@@ -850,6 +853,51 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 .tab-badge { background: var(--red); font-weight: 600; }
 .notice, .error, .callout { border-radius: 12px; }
 #toast { border-radius: 99px; padding: 11px 18px; font-weight: 600; box-shadow: 0 8px 30px rgba(0,0,0,.18); }
+/* Instellingen zoals iOS: gegroepeerde rijen met gekleurd icoon, waarde en › */
+.ios-group-wrap { margin: 0 0 26px; }
+.ios-head { margin: 0 16px 7px; font-size: 13px; font-weight: 400; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
+.ios-foot { margin: 7px 16px 0; font-size: 13px; color: var(--muted); line-height: 1.4; }
+.ios-group { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: 12px; overflow: hidden; }
+.ios-group > li { position: relative; }
+.ios-group > li + li::before { content: ''; position: absolute; top: 0; right: 0; left: 16px; border-top: .5px solid var(--line); }
+.ios-group > li:has(.ios-ico) + li::before, .ios-group > li + li:has(.ios-ico)::before { left: 58px; }
+.ios-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 48px; padding: 8px 16px; background: none; border: none; border-radius: 0;
+  color: var(--fg); text-decoration: none; font: inherit; font-weight: 400; font-size: 17px; text-align: left; cursor: pointer; }
+.ios-row:active { background: var(--fill); transform: none; opacity: 1; }
+div.ios-row { cursor: default; }
+.ios-ico { flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: #fff; font-size: 17px; line-height: 1; }
+.ios-label { flex: 1; min-width: 0; }
+.ios-label small { display: block; color: var(--muted); font-size: 13px; margin-top: 1px; }
+.ios-label.danger { color: var(--red-text); }
+.ios-value { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.ios-chev { color: #c4c4c7; font-size: 22px; line-height: 1; margin-left: -6px; }
+.ios-check { color: var(--accent-ink); font-weight: 700; font-size: 18px; min-width: 18px; text-align: right; }
+.ios-form { padding: 12px 16px; }
+.ios-form .link-form { margin: 0; }
+.ios-profile { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin: 0 0 26px; background: var(--surface); border-radius: 12px; color: var(--fg); text-decoration: none; }
+.ios-profile b { font-size: 20px; font-weight: 600; }
+.ios-profile small { display: block; color: var(--muted); font-size: 14px; }
+.ios-avatar { flex: none; width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; font-size: 24px; font-weight: 600; color: #fff;
+  background: linear-gradient(180deg, #a6b1c9, #7d88a8); }
+.ios-back { display: inline-flex; align-items: center; gap: 4px; margin: 4px 0 2px -4px; color: var(--info, #007aff); text-decoration: none; font-size: 17px; }
+.ios-back span { font-size: 28px; line-height: 1; margin-top: -3px; }
+/* uitklapblokken (standaard dicht) */
+details.fold > summary { list-style: none; display: flex; align-items: center; gap: 10px; min-height: 46px; cursor: pointer; user-select: none; font-weight: 700; font-size: 17px; }
+details.fold > summary::-webkit-details-marker { display: none; }
+.fold-title { flex: 1; min-width: 0; }
+.fold-extra { color: var(--muted); font-weight: 400; font-size: 15px; }
+details.fold > summary .chev { color: var(--muted); font-size: 22px; line-height: 1; transition: transform .2s; }
+details.fold[open] > summary .chev { transform: rotate(90deg); }
+details.fold > .fold-body { padding-top: 6px; }
+.card.fold-card { padding-top: 6px; padding-bottom: 6px; }
+.card.fold-card details.fold[open] { padding-bottom: 10px; }
+.card > details.fold + details.fold { border-top: .5px solid var(--line); }
+.dev-people details.fold + details.fold { border-top: .5px solid var(--line); }
+.dev-list { list-style: none; padding: 0; margin: 0; }
+.dev-list li { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; }
+.dev-list li + li { border-top: .5px solid var(--line); }
+.dev-main small { display: block; font-size: 12px; }
+.dev-ico { font-size: 20px; }
 /* pop-ups: op de gsm als sheet die van onder openschuift, op de computer als venster in het midden */
 .modal-backdrop:not(.photo-view) { background: rgba(0,0,0,.35); animation: fadeIn .2s ease-out; }
 .modal { border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
