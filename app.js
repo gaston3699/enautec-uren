@@ -1012,7 +1012,7 @@ async function viewMore(sub = '') {
   const THEMES = [['', 'Automatisch'], ['light', 'Wit'], ['dark', 'Zwart']];
   const themeName = THEMES.find(([v]) => v === (prefs().theme ?? ''))?.[1] ?? 'Automatisch';
   const storeName = TEST ? 'Testmodus' : acc ? STORE_NAME : GOOGLE ? 'Google Drive' : 'Niet aangemeld';
-  const back = () => iosPageHead(esc({ account: name, weergave: 'Weergave', meldingen: 'Meldingen', owntracks: 'OwnTracks', widget: 'Widget en snelkoppelingen', beginscherm: 'App op je beginscherm', opslag: 'Opslag' }[sub] ?? ''), '#meer', 'Meer');
+  const back = () => iosPageHead(esc({ account: name, pauze: 'Standaardpauze', weergave: 'Weergave', meldingen: 'Meldingen', owntracks: 'OwnTracks', widget: 'Widget en snelkoppelingen', beginscherm: 'App op je beginscherm', opslag: 'Opslag' }[sub] ?? ''), '#meer', 'Meer');
   const pages = {
     account: () => `${back()}
       ${iosGroup([iosRow({ label: 'Gebruikersnaam', value: esc(dev.username) }), me.isAdmin ? iosRow({ label: 'Rol', value: 'Beheerder' }) : ''])}
@@ -1025,6 +1025,10 @@ async function viewMore(sub = '') {
       ${iosGroup([`<li class="ios-form"><div id="mySessions"><p class="muted">Laden…</p></div></li>`],
         { header: 'Mijn toestellen', footer: 'Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.' })}
       ${iosGroup([iosRow({ label: 'Afmelden / andere gebruiker', act: 'signout', danger: true })])}`,
+    pauze: () => `${back()}
+      ${iosGroup([0, 15, 30, 45, 60].map((v) => `<li><button type="button" class="ios-row" data-pause-pick="${v}"><span class="ios-label">${v ? fmtHours(v) : 'Geen pauze'}</span>
+        <span class="ios-check" aria-hidden="true">${(me.pauseMin ?? 30) === v ? '✓' : ''}</span></button></li>`),
+        { header: 'Standaardpauze', footer: 'Werk je na de middag, dan stelt de app deze pauze voor in je uren. Je kan ze per dag nog aanpassen. Om 12:00 krijg je een melding om je pauze te starten.' })}`,
     weergave: () => `${back()}
       ${iosGroup(THEMES.map(([v, l]) => `<li><button type="button" class="ios-row" data-theme-pick="${v}"><span class="ios-label">${l}${v ? '' : '<small>Zoals je toestel</small>'}</span>
         <span class="ios-check" aria-hidden="true">${(prefs().theme ?? '') === v ? '✓' : ''}</span></button></li>`), { header: 'Achtergrond' })}
@@ -1050,6 +1054,7 @@ async function viewMore(sub = '') {
       <span class="ios-label"><b>${esc(name)}</b><small>Account, wachtwoord en toestellen${me.isAdmin ? ' · beheerder' : ''}</small></span><span class="ios-chev" aria-hidden="true">›</span></a>
     ${iosGroup([
       iosRow({ icon: '🔔', color: '#ff3b30', label: 'Meldingen', href: '#meer/meldingen' }),
+      iosRow({ icon: '☕', color: '#a2845e', label: 'Standaardpauze', value: (me.pauseMin ?? 30) ? fmtHours(me.pauseMin ?? 30) : 'geen', href: '#meer/pauze' }),
       iosRow({ icon: '◐', color: '#5856d6', label: 'Weergave', value: themeName, href: '#meer/weergave' }),
     ])}
     ${iosGroup([
@@ -1073,6 +1078,7 @@ async function viewMore(sub = '') {
   $main.querySelector('[data-act=widget]')?.addEventListener('click', () => startSetup('widget', true));
   $main.querySelector('[data-act=autoot]')?.addEventListener('click', () => startSetup('auto', true));
   $main.querySelector('[data-act=setup]')?.addEventListener('click', () => startSetup('push'));
+  $main.querySelectorAll('[data-pause-pick]').forEach((b) => b.onclick = () => { ctx.setPauseMin(Number(b.dataset.pausePick)); toast('Bewaard', 'ok'); viewMore(sub); });
   $main.querySelectorAll('[data-theme-pick]').forEach((b) => b.onclick = () => { setPref('theme', b.dataset.themePick || null); viewMore(sub); });
   const on = (sel, fn) => { const el = $main.querySelector(sel); if (el) el.onclick = fn; };
   on('[data-act=signout]', () => {

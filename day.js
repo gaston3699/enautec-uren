@@ -39,10 +39,29 @@ export function proposal(master, planning, username, date, raw) {
   });
   // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken; samengevoegde projecten doorverwijzen
   const loadOk = workTypesOf(master).some((w) => w.id === LOAD_WORK_TYPE.id);
-  return applyAnswers(segs, raw?.answers ?? [], { now: date === today() ? Date.now() : null }).segs
+  return fillBadgeGaps(applyAnswers(segs, raw?.answers ?? [], { now: date === today() ? Date.now() : null }).segs)
     .map((s) => (s.projectId ? { ...s, projectId: resolveId(master.projects, s.projectId) } : s))
     // korter dan een uur in het atelier (en al afgesloten): voorstellen als laden/lossen
     .map((s) => (loadOk && s.kind === 'atelier' && !s.workType && !s.openBadge && s.end - s.start < SHORT_ATELIER_MIN * MIN ? { ...s, workType: LOAD_WORK_TYPE.id } : s));
+}
+
+/**
+ * Badgen maakt geen nieuwe regel: tussen twee atelierblokken van badges waar niets anders tussen zit
+ * (even buiten en terug binnen), loopt het atelier gewoon door. Eerste badge = begin, laatste = einde.
+ */
+export function fillBadgeGaps(segs) {
+  const s = [...segs].sort((a, b) => a.start - b.start).map((x) => ({ ...x }));
+  for (let i = 0; i + 1 < s.length;) {
+    const a = s[i]; const b = s[i + 1];
+    if (a.kind === 'atelier' && b.kind === 'atelier' && a.source === 'badge' && b.source === 'badge'
+      && b.start > a.end && (!a.projectId || !b.projectId || a.projectId === b.projectId)) {
+      a.end = b.end;
+      a.projectId ??= b.projectId;
+      a.openBadge = b.openBadge;
+      s.splice(i + 1, 1);
+    } else i++;
+  }
+  return s;
 }
 
 /** Antwoordde de werknemer "Nee" op "Aan het werk?" */
@@ -62,6 +81,7 @@ export function dayState(ctx, username, date, raw) {
     date, username, master,
     status: rec?.status === 'bevestigd' ? 'bevestigd' : rec?.status === 'nietgewerkt' ? 'nietgewerkt' : 'voorstel',
     edited: !!rec?.segmentsEdited,
+    pauseSet: !!rec?.pauseSet,
     segments,
     material: rec?.material ?? [],
     note: rec?.note ?? '',
@@ -207,7 +227,9 @@ export function employeeBlocks(segs, rules = DEFAULT_RULES) {
   const first = (g) => segs[g.members[0]];
   const last = (g) => segs[g.members.at(-1)];
   const workP = (g) => g && WORKLIKE.has(segs[g.main].kind) && !!segs[g.main].projectId;
-  const sameWork = (a, b) => workP(a) && workP(b) && segs[a.main].kind === segs[b.main].kind && segs[a.main].projectId === segs[b.main].projectId;
+  // een zelf toegevoegde regel (row) wordt nooit met een andere samengevoegd
+  const sameWork = (a, b) => workP(a) && workP(b) && segs[a.main].kind === segs[b.main].kind && segs[a.main].projectId === segs[b.main].projectId
+    && (segs[a.main].row ?? '') === (segs[b.main].row ?? '');
   // zelfde project vlak na elkaar (bv. twee plekken op dezelfde werf): ook één blok
   const mergeTouching = () => {
     for (let k = 0; k + 1 < groups.length;) {
@@ -546,6 +568,79 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     </div>`;
   }
 
+  /**
+   * Werknemer: één regel zoals in Excel, in iOS-stijl. Project bovenaan, Werf/Atelier, daaronder
+   * start · stop · pauze en het totaal. (Ritten en de pauze zitten in de regel.)
+   */
+  function rowHtml(s, i, members = [i], pauses = []) {
+    if (s.kind === 'pauze') {
+      // losse pauze tussen twee verschillende regels
+      return `<div class="row-card pause-only blk" data-kind="pauze" data-i="${i}" data-g="${members.join(',')}">
+        <span>☕ Pauze ${localTime(s.start)}–${localTime(s.end)}</span><b>${fmtHours(Math.round((s.end - s.start) / MIN))}</b>
+        ${readonly ? '' : '<button class="link danger" data-act="del-seg" aria-label="Pauze verwijderen">✕</button>'}</div>`;
+    }
+    const pauseMin = Math.round(pauses.reduce((t, k) => t + (segs[k].end - segs[k].start), 0) / MIN);
+    const dur = Math.round((s.end - s.start) / MIN) - pauseMin;
+    const bad = !(s.end > s.start);
+    const dis = readonly ? 'disabled' : '';
+    const pauseAuto = pauses.some((k) => segs[k].auto);
+    const work = WORKLIKE.has(s.kind);
+    const time = (f, label) => `<label class="rc-field"><span>${label}</span><input class="t ${s.auto?.[f] || (f === 'end' && s.openEnd) ? 'auto' : ''}" data-f="${f}"
+      value="${localTime(s[f])}" inputmode="decimal" autocomplete="off" aria-label="${label}" ${dis}></label>`;
+    const opts = [...new Set([0, 15, 30, 45, 60, 75, 90, 120, pauseMin])].sort((a, b) => a - b);
+    const noProj = work && !s.projectId && workTypeNoProject(master, s.workType);
+    return `<div class="row-card blk ${bad ? 'err' : ''}" data-kind="${s.kind}" data-i="${i}" data-g="${members.join(',')}">
+      <div class="rc-head">
+        ${readonly || s.kind === 'onbekend' ? `<b class="rc-title">${esc(s.projectId ? projectLabel(master.projects.find((p) => p.id === s.projectId), master) : KINDS[s.kind] ?? s.kind)}</b>`
+          : noProj ? `<b class="rc-title">${esc(workTypeName(master, s.workType))} <small class="muted">zonder project</small></b>`
+          : `<select class="rc-proj ${needsProject(s, master) ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select>`}
+      </div>
+      ${work ? `<div class="rc-kind seg-ctl" role="group" aria-label="Werf of atelier">
+        ${[['werk', '⛑️ Werf'], ['atelier', '🏭 Atelier']].map(([k, l]) => `<button type="button" class="${s.kind === k ? 'on' : ''}" data-act="rowkind" data-k="${k}" ${dis}>${l}</button>`).join('')}</div>`
+        : `<div class="rc-kind muted small">${esc(KINDS[s.kind] ?? s.kind)}</div>`}
+      <div class="rc-times">
+        ${time('start', 'Start')}${time('end', 'Stop')}
+        <label class="rc-field"><span>Pauze</span><select data-f="pause" class="${pauseAuto ? 'auto' : ''}" aria-label="Pauze" ${dis}>
+          ${opts.map((m) => `<option value="${m}" ${m === pauseMin ? 'selected' : ''}>${m ? fmtHours(m) : 'geen'}</option>`).join('')}</select></label>
+        <div class="rc-total"><span>Totaal</span><b class="${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</b></div>
+      </div>
+      ${s.kind === 'onbekend' && !readonly ? `<div class="blk-more"><select data-f="kind" aria-label="Wat gebeurde er">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}
+      ${readonly && s.workType ? `<div class="blk-msg muted">${esc(workTypeName(master, s.workType))}</div>` : ''}
+      ${matHosts.get(s.projectId) === i ? blockMaterial(s.projectId) : ''}
+      ${readonly ? '' : `<details class="blk-more-wrap"><summary class="small muted">Soort werk, opmerking, verwijderen</summary>
+        <div class="blk-more">
+          ${work ? `<select data-f="workType" aria-label="Soort werk">${workTypeOptions(master, s.workType)}</select>` : ''}
+          <input type="text" data-f="note" placeholder="Opmerking" value="${esc(s.note ?? '')}">
+          <button class="link danger full" style="justify-self:end" data-act="del-seg">Regel verwijderen</button>
+        </div></details>`}
+      ${readonly && s.note ? `<div class="blk-msg muted">${esc(s.note)}</div>` : ''}
+      ${bad ? '<div class="blk-msg danger">Stop ligt voor de start.</div>' : ''}
+    </div>`;
+  }
+
+  /** Pauze van een regel instellen: de oude pauze eruit, de nieuwe om 12:00 (of in het midden) */
+  function setRowPause(mem, minutes) {
+    const list = mem.map((k) => segs[k]).sort((a, b) => a.start - b.start);
+    const rowStart = list[0].start; const rowEnd = list.at(-1).end;
+    const old = list.filter((x) => x.kind === 'pauze');
+    let rest = list.filter((x) => x.kind !== 'pauze');
+    segs = segs.filter((x) => !old.includes(x));
+    // stukken die door de pauze geknipt waren weer aan elkaar
+    for (let k = 0; k + 1 < rest.length;) {
+      const a = rest[k]; const b = rest[k + 1];
+      if (a.kind === b.kind && a.projectId === b.projectId && old.some((p) => p.start >= a.end && p.end <= b.start)) {
+        a.end = b.end; segs = segs.filter((x) => x !== b); rest.splice(k + 1, 1);
+      } else k++;
+    }
+    if (minutes > 0) {
+      const noon = localToTs(date, '12:00');
+      const len = minutes * MIN;
+      const ps = noon >= rowStart && noon + len <= rowEnd ? noon : quarter(rowStart + Math.max(0, (rowEnd - rowStart - len) / 2));
+      segs.push({ start: ps, end: Math.min(ps + len, rowEnd), kind: 'pauze', projectId: null, candidates: [], siteId: null, row: list[0].row });
+      fitPauses(segs);
+    }
+  }
+
   /** Gebruikt materiaal in het blok van het project (onder het soort werk) */
   let matHosts = new Map();
   function blockMaterial(pid) {
@@ -604,6 +699,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
 
   function draw() {
     const cur = dayState(ctx, username, date, raw);
+    // standaardpauze voorstellen: geen pauze en je werkt na de middag (voorbij 12:00 + pauze) → om 12:00 in die regel
+    if (merged && !readonly && !cur.pauseSet && pauseMin > 0 && !segs.some((x) => x.kind === 'pauze')) {
+      const noon = localToTs(date, '12:00');
+      const g = employeeBlocks(segs, rules).groups.find((x) => WORKLIKE.has(segs[x.main].kind)
+        && segs[x.members.at(-1)].end >= noon + pauseMin * MIN && segs[x.members[0]].start < noon + pauseMin * MIN);
+      if (g) {
+        setRowPause(g.members, pauseMin);
+        const p = segs.find((x) => x.kind === 'pauze');
+        if (p) p.auto = { start: true, end: true };
+      }
+    }
     const order = [...segs].map((s, i) => ({ s, i })).sort((a, b) => a.s.start - b.s.start);
     // werknemer: ritten bij het project van het aansluitende werk (en het project mee op de rit zetten)
     const blocks = merged ? employeeBlocks(segs, rules).groups : order.map(({ i }) => ({ main: i, members: [i], pauses: [] }));
@@ -628,17 +734,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
       ${!asAdmin && !readonly ? neededHtml() : ''}
       <section class="card mat-card">
-        <div class="row spread"><h2>Tijdsblokken</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
+        <div class="row spread"><h2>${merged ? 'Uren' : 'Tijdsblokken'}</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
         ${!showCounters && segs.length ? `<p class="day-total">Totaal <b>${fmtHours(tot.work)}</b>${tot.pauze ? ` <span class="muted small">· pauze ${fmtHours(tot.pauze)}</span>` : ''}</p>` : ''}
         ${!readonly && cur.edited ? '<p style="text-align:right;margin:0"><button class="link" data-act="reset">↺ Automatisch voorstel</button></p>' : ''}
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
-        ${shown.length ? shown.map(({ g, s }) => segHtml(s, g.main, g.members, g.pauses)).join('') : '<p class="muted">Nog geen blokken voor deze dag.</p>'}
-        ${readonly ? '' : `<div class="quick-add">
-          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="verplaatsing">🚗 + Heenrit</button>'}
+        ${shown.length ? shown.map(({ g, s }) => (merged ? rowHtml : segHtml)(s, g.main, g.members, g.pauses)).join('') : `<p class="muted">Nog geen ${merged ? 'regels' : 'blokken'} voor deze dag.</p>`}
+        ${readonly ? '' : merged ? '<button class="row-add" data-act="addrow"><span aria-hidden="true">＋</span> Regel toevoegen</button>' : `<div class="quick-add">
+          <button class="secondary" data-act="add" data-kind="verplaatsing">🚗 + Heenrit</button>
           <button class="secondary" data-act="add" data-kind="werk">⛑️ + Werk</button>
           <button class="secondary" data-act="add" data-kind="atelier">🏭 + Atelier</button>
           <button class="secondary" data-act="add" data-kind="pauze">☕ + Pauze</button>
-          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button>'}</div>
+          <button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button></div>
           ${!asAdmin && date === today() && ctx.badge ? '<p class="small" style="margin:8px 0 0"><button class="link" data-act="badge">🏷 Vergeten te badgen in het atelier? Badge nu met je gsm</button></p>' : ''}`}
         <datalist id="artikels">${articles.map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
         ${materialHtml(order.map((x) => x.s))}
@@ -674,10 +780,33 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           <h3>Controle van de dag</h3>
           <ul class="check-list">${dayCheck.length ? dayCheck.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
         </div>
-      </section>
-      ${asAdmin ? '' : `<div class="pause-set"><span>☕ <b>Standaard pauze</b>${info('Om 12:00 krijg je een melding om je pauze te starten.')}</span>
-        <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>`}`;
+      </section>`;
     showChecks();
+  }
+
+  /**
+   * Nieuwe regel (werknemer): staat altijd apart. Vandaag begint ze nu en vul je de stop in als je
+   * klaar bent (tik op Stop = het huidige uur); een andere dag sluit ze aan op de vorige regel.
+   */
+  function addRow() {
+    const sorted = [...segs].filter((x) => x.kind !== 'pauze').sort((a, b) => a.start - b.start);
+    const last = sorted.at(-1);
+    const [dayStart, dayEnd] = dayRange(date);
+    const isToday = date === today();
+    const nowQ = isToday ? quarter(Date.now()) : null;
+    let start = isToday ? Math.max(nowQ, last?.end ?? 0) : last ? last.end : localToTs(date, '08:00');
+    start = Math.max(dayStart, Math.min(start, dayEnd - 15 * MIN));
+    const end = isToday ? Math.min(start + 15 * MIN, dayEnd - MIN) : Math.min(start + 4 * 60 * MIN, dayEnd - MIN);
+    const lastWork = [...sorted].reverse().find((x) => WORKLIKE.has(x.kind));
+    segs.push({
+      start, end, kind: lastWork?.kind ?? 'werk', candidates: [], siteId: null, row: uid(),
+      auto: { start: true, end: true }, ...(isToday ? { openEnd: true } : {}),
+      projectId: lastWork?.projectId ?? planned[0]?.projectId ?? null, workType: dfltType,
+    });
+    persistSegments(); draw();
+    const box = el.querySelector(`.blk[data-i="${segs.length - 1}"] input.t[data-f=${isToday ? 'start' : 'end'}]`);
+    box?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    toast(isToday ? 'Nieuwe regel vanaf nu. Tik op Stop als je klaar bent.' : 'Nieuwe regel toegevoegd', 'ok');
   }
 
   /** Nieuw blok: vandaag vanaf nu (een gat met het vorige blok wordt pauze), anders aansluitend */
@@ -753,6 +882,15 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       const mem = pi != null ? [main] : (box.dataset.g || String(i)).split(',').map((k) => segs[Number(k)]);
       const f = t.dataset.f;
       let s = main;
+      if (f === 'pause') {
+        // pauze van de regel (in minuten); 0 = bewust geen pauze (dan niet opnieuw voorstellen)
+        const idx = (box.dataset.g || String(i)).split(',').map(Number);
+        setRowPause(idx, Number(t.value));
+        if (!editingConfirmed) saveDay(ctx, username, date, { pauseSet: true });
+        persistSegments(); draw();
+        return;
+      }
+      if (f === 'end') delete s.openEnd;
       if (f === 'start' || f === 'end') {
         const hhmm = parseTime(t.value);
         if (!hhmm) { t.classList.add('bad'); toast('Tijd niet herkend. Typ bv. 8, 730, 7u30 of 16.45', 'err'); return; }
@@ -819,7 +957,6 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           refreshMaster();
           if (p) {
             s.projectId = p.id;
-            if (p.work_type && !s.workType && WORKLIKE.has(s.kind)) s.workType = p.work_type;
             toast(`Project "${p.name}" aangemaakt`, 'ok');
             persistSegments();
           }
@@ -829,8 +966,6 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       } else if (f === 'projectId') {
         s.projectId = t.value || null;
         for (const x of mem) if (x.kind !== 'pauze') x.projectId = s.projectId;
-        const p = projects.find((x) => x.id === s.projectId);
-        if (p?.work_type && !s.workType && WORKLIKE.has(s.kind)) s.workType = p.work_type;
         if (s.kind === 'werk' && s.projectId) {
           const sorted = [...segs].sort((a, b) => a.start - b.start);
           const k = sorted.indexOf(s);
@@ -872,7 +1007,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const i = t.dataset.pi ?? box?.dataset.i;
     const mem = t.dataset.pi != null ? [i] : (box?.dataset.g || String(i ?? '')).split(',').filter(Boolean);
     const s = mem.length ? segs[Number(mem.at(-1))] : null;
-    if (t.dataset.f === 'end' && date === today() && s && s.end > Date.now() && quarter(Date.now()) > segs[Number(mem[0])].start) {
+    if (t.dataset.f === 'end' && date === today() && s && (s.end > Date.now() || s.openEnd) && quarter(Date.now()) > segs[Number(mem[0])].start) {
       t.value = localTime(quarter(Date.now()));
       t.dispatchEvent(new Event('change', { bubbles: true }));
       const sel = t.dataset.pi != null ? `input.t[data-pi="${i}"][data-f=end]` : `.blk[data-i="${i}"] input.t[data-f=end]`;
@@ -905,6 +1040,14 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const act = btn?.dataset.act;
     if (!act) return;
     if (act === 'add') addBlock(btn.dataset.kind);
+    else if (act === 'addrow') addRow();
+    else if (act === 'rowkind') {
+      // Werf of Atelier voor de hele regel (ritten blijven ritten)
+      const box = btn.closest('.blk');
+      const mem = (box.dataset.g || box.dataset.i).split(',').map((k) => segs[Number(k)]);
+      for (const x of mem) if (WORKLIKE.has(x.kind)) x.kind = btn.dataset.k;
+      persistSegments(); draw();
+    }
     else if (act === 'badge') {
       confirmDialog({ title: 'Badgen met je gsm', text: `Dit telt als een badge in het atelier om ${localTime(Date.now())}, net zoals aan de deur. De eerste badge van de dag is je begin, de laatste je einde.`, ok: '🏷 Badge nu', cancel: 'Annuleren' })
         .then((ok) => ok && ctx.badge().then(() => toast('Badge geregistreerd', 'ok')).catch((err) => toast(err.message, 'err')));
@@ -959,7 +1102,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       if (err) { slot.innerHTML = `<div class="error">${esc(err)}</div>`; return; }
       if (!segs.length && !confirm('Er staan geen blokken op deze dag. Toch bevestigen?')) return;
       material = material.filter((m) => m.description);
-      const finalSegs = [...segs].sort((a, b) => a.start - b.start).map(({ candidates, ...s }) => s);
+      const finalSegs = [...segs].sort((a, b) => a.start - b.start).map(({ candidates, openEnd, ...s }) => s);
       // automatisch voorstel bewaren (enkel bij de eerste keer bevestigen) om manuele aanpassingen te tonen aan de beheerder
       const proposalSaved = st.savedProposal ?? compactSegments(roundSegments((st.auto ?? []).map(({ openBadge, ...s }) => s), rules));
       const changes = diffSegments(proposalSaved, compactSegments(finalSegs)).length;

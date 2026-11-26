@@ -881,6 +881,35 @@ div.ios-row { cursor: default; }
   background: linear-gradient(180deg, #a6b1c9, #7d88a8); }
 .ios-back { display: inline-flex; align-items: center; gap: 4px; margin: 4px 0 2px -4px; color: var(--info, #007aff); text-decoration: none; font-size: 17px; }
 .ios-back span { font-size: 28px; line-height: 1; margin-top: -3px; }
+/* Dag voor de werknemer: regels zoals Excel, in iOS-stijl */
+.row-card, .row-card.blk { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px; margin: 0 0 12px; background: var(--surface); border-radius: 14px; border: .5px solid var(--line); }
+.row-card > * { min-width: 0; }
+.rc-field input.t.bad { box-shadow: inset 0 0 0 1.5px var(--red); }
+.mat-card .row-card { background: var(--bg); border: none; }
+.row-card.err { box-shadow: inset 0 0 0 1.5px var(--red); }
+.rc-head { display: flex; align-items: center; gap: 8px; }
+.rc-title { font-size: 17px; font-weight: 600; }
+.rc-proj { width: 100%; font-weight: 600; font-size: 16px; background-color: var(--surface) !important; }
+.seg-ctl { display: flex; background: var(--fill); border-radius: 9px; padding: 2px; }
+.seg-ctl button { flex: 1; min-height: 32px; padding: 4px 8px; border-radius: 7px; background: none; color: var(--fg); font-weight: 600; font-size: 14px; justify-content: center; }
+.seg-ctl button.on { background: var(--surface); box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04); }
+:root[data-theme="dark"] .seg-ctl button.on { background: #636366; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .seg-ctl button.on { background: #636366; } }
+.rc-times { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px; align-items: end; }
+.rc-field { display: grid; gap: 3px; min-width: 0; }
+.rc-field span, .rc-total span { font-size: 12px; color: var(--muted); font-weight: 600; }
+.rc-field input.t, .rc-field select { width: 100%; min-width: 0; text-align: center; font-size: 17px; font-weight: 600; padding: 8px 4px; background-color: var(--surface) !important; }
+.rc-field select { padding-right: 18px; background-position: right 6px center; text-align-last: center; }
+.rc-field .auto { color: var(--info, #007aff); font-style: italic; }
+.rc-total { display: grid; gap: 3px; text-align: right; padding-left: 4px; }
+.rc-total b { font-size: 20px; font-weight: 700; line-height: 42px; white-space: nowrap; }
+.rc-total b.bad { color: var(--red-text); }
+.row-card .blk-more-wrap summary { cursor: pointer; }
+.row-card.pause-only, .row-card.pause-only.blk { grid-template-columns: 1fr auto auto; align-items: center; padding: 10px 14px; color: var(--muted); }
+.row-add { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 50px; margin: 2px 0 6px; border-radius: 14px;
+  background: var(--fill); color: var(--info, #007aff); font-size: 17px; font-weight: 600; }
+.row-add span { font-size: 20px; }
+@media (max-width: 380px) { .rc-times { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rc-total { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; } .rc-total b { line-height: 1.2; } }
 /* manuele aanpassingen: automatisch voorstel naast bevestigd */
 .cmp-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 15px; }
 .cmp-table th { text-align: left; font-size: 13px; color: var(--muted); font-weight: 600; padding: 4px 8px; }

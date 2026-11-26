@@ -184,7 +184,7 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
           <label><span>Project (mag leeg)</span><input id="qNewProj" placeholder="bv. Renovatie keuken"></label></div>
       </details>
       <label class="q-field"><span>Project</span><select id="qProject">${projOptions(chosen, prev?.projectId)}</select></label>`}
-    <label class="q-field"><span>Type werk</span><select id="qWorkType">${workTypeOptions(m, prev?.workType ?? projects.find((p) => p.id === prev?.projectId)?.work_type)}</select></label>
+    <label class="q-field"><span>Type werk</span><select id="qWorkType">${workTypeOptions(m, prev?.workType)}</select></label>
     <div class="err-slot"></div>
     <div class="q-actions">
       ${q.kind === 'start' ? '<button class="primary big" data-act="ja">✔ Ja, aan het werk</button><button class="secondary" data-act="nee">Nee, ik werk vandaag niet</button>'
@@ -199,11 +199,10 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
       const p = await newProjectDialog(ctx, { customerId: inAtelier ? null : chosen, siteId: inAtelier ? null : chosenSite, workType: wtSel.value || null });
       projects = alive(ctx.master().projects).filter((x) => x.active !== false);
       projSel.innerHTML = projOptions(inAtelier ? null : chosen, p?.id ?? null);
-      if (p) { projSel.value = p.id; if (p.work_type) wtSel.value = p.work_type; }
+      if (p) projSel.value = p.id;
       return;
     }
-    const p = projects.find((x) => x.id === projSel.value);
-    if (p?.work_type && !wtSel.value) wtSel.value = p.work_type;
+    // soort werk blijft standaard "Elektrische werken" (niet overnemen van het project)
   };
   const setCustomer = (cid, siteId) => {
     chosen = cid || null;
