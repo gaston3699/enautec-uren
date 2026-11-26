@@ -254,7 +254,10 @@ export function summaryHtml(st) {
  * (Een pauze die een blok in twee knipt is zo één aanpassing "pauze", niet drie gewijzigde blokken.)
  * Geeft een lijst { what, from, to, delta } terug; leeg = bevestigd zoals voorgesteld.
  */
-export function changeSummary(proposal = [], final = [], rules = DEFAULT_RULES) {
+export function changeSummary(proposal = [], final = [], rules = DEFAULT_RULES, { all = false } = {}) {
+  // het voorstel eerst afronden zoals bij het bevestigen (een open atelierblok of een begin uit
+  // "Aan het werk?" stond soms nog niet afgerond): 08:50 → 08:45 is geen manuele aanpassing
+  proposal = roundSegments(proposal.map(({ openBadge, ...s }) => s), rules);
   const facts = (list) => {
     const s = summarize(list, rules);
     const byP = new Map();
@@ -268,13 +271,14 @@ export function changeSummary(proposal = [], final = [], rules = DEFAULT_RULES) 
   const a = facts(proposal); const b = facts(final);
   const out = [];
   const t = (ts) => (ts == null ? '—' : localTime(ts));
-  if (Math.abs((a.start ?? 0) - (b.start ?? 0)) >= MIN) out.push({ what: 'Begin van de dag', from: t(a.start), to: t(b.start) });
-  if (Math.abs((a.end ?? 0) - (b.end ?? 0)) >= MIN) out.push({ what: 'Einde van de dag', from: t(a.end), to: t(b.end) });
-  const minRow = (what, x, y) => { if (x !== y) out.push({ what, from: fmtHours(x), to: fmtHours(y), delta: y - x }); };
+  const push = (row, changed) => { if (changed || all) out.push({ ...row, changed }); };
+  push({ what: 'Begin van de dag', from: t(a.start), to: t(b.start) }, Math.abs((a.start ?? 0) - (b.start ?? 0)) >= MIN);
+  push({ what: 'Einde van de dag', from: t(a.end), to: t(b.end) }, Math.abs((a.end ?? 0) - (b.end ?? 0)) >= MIN);
+  const minRow = (what, x, y) => push({ what, from: fmtHours(x), to: fmtHours(y), delta: y - x }, x !== y);
   minRow('Arbeidstijd', a.work, b.work);
   minRow('Pauze', a.pauze, b.pauze);
   for (const id of new Set([...a.byP.keys(), ...b.byP.keys()])) minRow({ project: id }, a.byP.get(id) ?? 0, b.byP.get(id) ?? 0);
-  if (Math.abs(a.km - b.km) >= 0.5) out.push({ what: 'Kilometers', from: `${a.km} km`, to: `${b.km} km`, delta: null });
+  if (a.km || b.km) push({ what: 'Kilometers', from: `${a.km} km`, to: `${b.km} km`, delta: null }, Math.abs(a.km - b.km) >= 0.5);
   return out;
 }
 
@@ -287,10 +291,15 @@ export function manualChanges(st, rules = DEFAULT_RULES) {
 function changesHtml(st, master) {
   const list = manualChanges(st, rulesFrom(master));
   if (!list) return '<section class="card"><h2>Manuele aanpassingen</h2><p class="muted">Geen gegevens: deze dag werd bevestigd vóór deze functie bestond.</p></section>';
-  const blocks = diffSegments(st.savedProposal, compactSegments(st.segments));
+  const rules = rulesFrom(master);
+  const rows = changeSummary(st.savedProposal, compactSegments(st.segments), rules, { all: true });
+  const blocks = diffSegments(roundSegments(st.savedProposal.map(({ openBadge, ...s }) => s), rules), compactSegments(st.segments));
   const proj = (id) => (id ? projectLabel(master.projects.find((p) => p.id === id), master) || '?' : 'geen project');
   const delta = (d) => (d == null || !d ? '' : ` <span class="muted">(${d > 0 ? '+' : '−'}${fmtHours(Math.abs(d))})</span>`);
-  const sumRow = (c) => `<li class="mod"><b>${esc(typeof c.what === 'string' ? c.what : `Uren op ${proj(c.what.project)}`)}:</b> ${esc(c.from)} → <b>${esc(c.to)}</b>${delta(c.delta)}</li>`;
+  // tabel: automatisch voorstel naast de bevestigde uren; gewijzigd = geel
+  const cmpTable = `<div class="table-wrap"><table class="cmp-table"><thead><tr><th></th><th>Automatisch</th><th>Bevestigd</th></tr></thead><tbody>
+    ${rows.map((c) => `<tr class="${c.changed ? 'changed' : ''}"><td>${esc(typeof c.what === 'string' ? c.what : proj(c.what.project))}</td>
+      <td>${esc(c.from)}</td><td><b>${esc(c.to)}</b>${c.changed ? delta(c.delta) : ''}</td></tr>`).join('')}</tbody></table></div>`;
   const span = (s) => `${localTime(s.start)}–${localTime(s.end)}`;
   const line = (c) => {
     const k = KINDS[c.kind] ?? c.kind;
@@ -305,9 +314,9 @@ function changesHtml(st, master) {
     return `<li class="mod"><b>${esc(k)} ${span(c.to)}:</b> ${parts.join(', ')}</li>`;
   };
   const noAuto = st.savedProposal && !st.savedProposal.length;
-  return `<section class="card changes"><h2>Manuele aanpassingen ${list.length ? `<span class="pill warn">${list.length}</span>` : '<span class="pill ok">geen</span>'}${info('Wat de werknemer veranderde tegenover het automatische voorstel (gsm en badges): begin en einde van de dag, arbeidstijd, pauze, uren per project en kilometers. Het voorstel is al per kwartier afgerond, afronden telt dus niet als aanpassing. Enkel zichtbaar voor de beheerder.')}</h2>
+  return `<section class="card changes"><h2>Manuele aanpassingen ${list.length ? `<span class="pill warn">${list.length}</span>` : '<span class="pill ok">geen</span>'}${info('Links het automatische voorstel (gsm en badges), rechts wat de werknemer bevestigde. Gele regels zijn manueel aangepast. Beide zijn per kwartier afgerond, afronden telt dus niet als aanpassing. Enkel zichtbaar voor de beheerder.')}</h2>
     ${noAuto ? '<p class="muted">Er was geen automatisch voorstel voor deze dag: alle uren werden manueel ingegeven.</p>' : ''}
-    ${list.length ? `<ul class="change-list">${list.map(sumRow).join('')}</ul>` : noAuto ? '' : '<p class="ok-text">✓ Bevestigd zoals voorgesteld.</p>'}
+    ${noAuto ? '' : `${list.length ? '' : '<p class="ok-text">✓ Bevestigd zoals voorgesteld.</p>'}${cmpTable}`}
     ${list.length && blocks.length ? `<details><summary>Details per blok (${blocks.length})</summary><ul class="change-list">${blocks.map(line).join('')}</ul></details>` : ''}
     ${st.log.length ? `<details><summary>Historiek</summary><ul class="change-list">${st.log.map((l) => `<li>${esc(new Date(l.ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}: ${esc(l.action)} door ${esc(l.by)}${l.changes ? ` (${l.changes} aanpassing${l.changes > 1 ? 'en' : ''})` : ''}</li>`).join('')}</ul></details>` : ''}
   </section>`;
@@ -952,7 +961,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       material = material.filter((m) => m.description);
       const finalSegs = [...segs].sort((a, b) => a.start - b.start).map(({ candidates, ...s }) => s);
       // automatisch voorstel bewaren (enkel bij de eerste keer bevestigen) om manuele aanpassingen te tonen aan de beheerder
-      const proposalSaved = st.savedProposal ?? compactSegments(st.auto ?? []);
+      const proposalSaved = st.savedProposal ?? compactSegments(roundSegments((st.auto ?? []).map(({ openBadge, ...s }) => s), rules));
       const changes = diffSegments(proposalSaved, compactSegments(finalSegs)).length;
       const me = ctx.me?.() ?? {};
       saveDay(ctx, username, date, {

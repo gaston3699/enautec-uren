@@ -881,6 +881,13 @@ div.ios-row { cursor: default; }
   background: linear-gradient(180deg, #a6b1c9, #7d88a8); }
 .ios-back { display: inline-flex; align-items: center; gap: 4px; margin: 4px 0 2px -4px; color: var(--info, #007aff); text-decoration: none; font-size: 17px; }
 .ios-back span { font-size: 28px; line-height: 1; margin-top: -3px; }
+/* manuele aanpassingen: automatisch voorstel naast bevestigd */
+.cmp-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 15px; }
+.cmp-table th { text-align: left; font-size: 13px; color: var(--muted); font-weight: 600; padding: 4px 8px; }
+.cmp-table td { padding: 7px 8px; border-top: .5px solid var(--line); }
+.cmp-table td:first-child { color: var(--muted); }
+.cmp-table tr.changed td { background: var(--accent-soft); }
+.cmp-table tr.changed td:first-child { color: var(--fg); font-weight: 600; }
 /* uitklapblokken (standaard dicht) */
 details.fold > summary { list-style: none; display: flex; align-items: center; gap: 10px; min-height: 46px; cursor: pointer; user-select: none; font-weight: 700; font-size: 17px; }
 details.fold > summary::-webkit-details-marker { display: none; }
