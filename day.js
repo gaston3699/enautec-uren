@@ -497,6 +497,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     ...(!readonly && WORKLIKE.has(s.kind) && !s.workType ? { workType: dfltType } : {}),
   }));
   let material = st.material.map((m) => ({ ...m }));
+  let dayNote = st.note ?? '';
   let projects = alive(master.projects).filter((p) => p.active !== false);
   const sitesById = new Map(master.sites.map((s) => [s.id, s]));
   /** Na het aanmaken van een project: lijsten opnieuw inlezen */
@@ -600,8 +601,9 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         : `<div class="rc-kind muted small">${esc(KINDS[s.kind] ?? s.kind)}</div>`}
       <div class="rc-times">
         ${time('start', 'Start')}${time('end', 'Stop')}
-        <label class="rc-field"><span>Pauze</span><select data-f="pause" class="${pauseAuto ? 'auto' : ''}" aria-label="Pauze" ${dis}>
-          ${opts.map((m) => `<option value="${m}" ${m === pauseMin ? 'selected' : ''}>${m ? fmtHours(m) : 'geen'}</option>`).join('')}</select></label>
+        <label class="rc-field"><span>Pauze</span>${readonly ? `<input class="rc-val" value="${pauseMin ? fmtHours(pauseMin) : 'geen'}" disabled aria-label="Pauze">`
+          : `<select data-f="pause" class="${pauseAuto ? 'auto' : ''}" aria-label="Pauze">
+          ${opts.map((m) => `<option value="${m}" ${m === pauseMin ? 'selected' : ''}>${m ? fmtHours(m) : 'geen'}</option>`).join('')}</select>`}</label>
         <div class="rc-total"><span>Totaal</span><b class="${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</b></div>
       </div>
       ${s.kind === 'onbekend' && !readonly ? `<div class="blk-more"><select data-f="kind" aria-label="Wat gebeurde er">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}
@@ -734,7 +736,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       ${asAdmin && cur.status === 'bevestigd' ? changesHtml(cur, master) : ''}
       ${!asAdmin && !readonly ? neededHtml() : ''}
       <section class="card mat-card">
-        <div class="row spread"><h2>${merged ? 'Uren' : 'Tijdsblokken'}</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
+        <div class="row spread uren-head"><h2>${merged ? 'Uren' : 'Tijdsblokken'}</h2><span class="row">${pill}${readonly ? '<button class="secondary small" data-act="edit">✎ Uren aanpassen</button>' : ''}</span>${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
         ${!showCounters && segs.length ? `<p class="day-total">Totaal <b>${fmtHours(tot.work)}</b>${tot.pauze ? ` <span class="muted small">· pauze ${fmtHours(tot.pauze)}</span>` : ''}</p>` : ''}
         ${!readonly && cur.edited ? '<p style="text-align:right;margin:0"><button class="link" data-act="reset">↺ Automatisch voorstel</button></p>' : ''}
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
@@ -749,16 +751,18 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         <datalist id="artikels">${articles.map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
         ${materialHtml(order.map((x) => x.s))}
       </section>
-      <section class="card">
-        ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd.${info('Klopt er iets niet? Pas de uren aan en bevestig opnieuw.')}</p>
-          <div class="row"><button class="secondary" data-act="edit">✎ Uren aanpassen</button>${asAdmin ? '<button class="link" data-act="reopen">Terug naar de werknemer (heropenen)</button>' : ''}</div>`
-        : `<label class="muted" for="daynote">Opmerking bij deze dag</label>
-          <textarea id="daynote" data-f="daynote">${esc(cur.note)}</textarea>
-          <div class="err-slot"></div>
-          <button class="primary big" data-act="confirm">${editingConfirmed ? 'Opnieuw bevestigen' : 'Dag bevestigen'}</button>
+      ${readonly && !cur.note && !asAdmin ? '' : `<section class="card">
+        ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}
+          ${asAdmin ? '<div class="row"><button class="link" data-act="reopen">Terug naar de werknemer (heropenen)</button></div>' : ''}`
+        : `<div class="err-slot"></div>
+          ${dayNote ? `<p class="day-note-show">📝 ${esc(dayNote)}</p>` : ''}
+          <div class="confirm-bar">
+            <button type="button" class="secondary note-btn ${dayNote ? 'has' : ''}" data-act="daynote" aria-label="Opmerking bij deze dag" title="Opmerking bij deze dag">📝</button>
+            <button class="primary big" data-act="confirm">${editingConfirmed ? 'Opnieuw bevestigen' : 'Dag bevestigen'}</button>
+          </div>
           ${editingConfirmed ? '<button class="secondary" style="margin-top:8px" data-act="cancel-edit">Annuleren</button>'
             : asAdmin ? '' : '<p class="center"><button class="link" data-act="notworked">Niet gewerkt op deze dag</button></p>'}`}
-      </section>
+      </section>`}
       ${showCounters ? `<div class="counters dark day-totals">
         ${counterHtml('Werk', tot.werf + tot.atelier)}
         ${merged ? '' : counterHtml('Verplaatsing', tot.verpl)}
@@ -1041,6 +1045,26 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     if (!act) return;
     if (act === 'add') addBlock(btn.dataset.kind);
     else if (act === 'addrow') addRow();
+    else if (act === 'daynote') {
+      // opmerking bij de dag in een venster (zoals een notitie)
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-backdrop';
+      wrap.innerHTML = `<form class="modal" role="dialog" aria-modal="true" aria-labelledby="dnTitle">
+        <h2 id="dnTitle">📝 Opmerking bij deze dag</h2>
+        <textarea name="note" rows="5" placeholder="Bv. sleutel opgehaald bij de buren, langer gebleven voor de keuring…">${esc(dayNote)}</textarea>
+        <div class="row modal-actions"><button type="button" class="secondary" data-a="cancel">Annuleren</button><button class="primary">Bewaren</button></div></form>`;
+      document.body.append(wrap);
+      const f = wrap.querySelector('form');
+      setTimeout(() => f.elements.note.focus(), 50);
+      wrap.addEventListener('click', (ev) => { if (ev.target === wrap || ev.target.closest('[data-a=cancel]')) wrap.remove(); });
+      f.onsubmit = (ev) => {
+        ev.preventDefault();
+        dayNote = f.elements.note.value.trim();
+        if (!editingConfirmed) saveDay(ctx, username, date, { note: dayNote, ...(st.edited ? {} : { segments: clean(segs) }) });
+        wrap.remove();
+        draw();
+      };
+    }
     else if (act === 'rowkind') {
       // Werf of Atelier voor de hele regel (ritten blijven ritten)
       const box = btn.closest('.blk');
@@ -1110,7 +1134,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       saveDay(ctx, username, date, {
         segments: finalSegs,
         material, segmentsEdited: true, status: 'bevestigd', confirmedAt: Date.now(),
-        note: el.querySelector('#daynote')?.value ?? '',
+        note: dayNote,
         proposal: proposalSaved, ...(st.savedProposal ? {} : { autoAvailable: !!raw }),
         log: [...st.log, { ts: Date.now(), by: me.username ?? (asAdmin ? 'beheerder' : username), action: editingConfirmed ? 'aangepast na bevestiging' : 'bevestigd', changes }].slice(-30),
       });

@@ -881,6 +881,14 @@ div.ios-row { cursor: default; }
   background: linear-gradient(180deg, #a6b1c9, #7d88a8); }
 .ios-back { display: inline-flex; align-items: center; gap: 4px; margin: 4px 0 2px -4px; color: var(--info, #007aff); text-decoration: none; font-size: 17px; }
 .ios-back span { font-size: 28px; line-height: 1; margin-top: -3px; }
+/* bevestigen met links het notitie-icoontje (opmerking bij de dag) */
+.confirm-bar { display: flex; gap: 10px; align-items: stretch; margin-top: 4px; }
+.confirm-bar .big { flex: 1; margin-top: 0; }
+.note-btn { flex: none; width: 56px; justify-content: center; font-size: 24px; padding: 0; border-radius: 14px; position: relative; }
+.note-btn.has::after { content: ''; position: absolute; top: 8px; right: 8px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+.day-note-show { margin: 0 0 10px; color: var(--muted); font-size: 15px; white-space: pre-wrap; }
+.uren-head > .row { gap: 8px; justify-content: flex-end; }
+.uren-head .small { min-height: 32px; padding: 5px 11px; font-size: 14px; }
 /* Dag voor de werknemer: regels zoals Excel, in iOS-stijl */
 .row-card, .row-card.blk { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px; margin: 0 0 12px; background: var(--surface); border-radius: 14px; border: .5px solid var(--line); }
 .row-card > * { min-width: 0; }
@@ -895,21 +903,24 @@ div.ios-row { cursor: default; }
 .seg-ctl button.on { background: var(--surface); box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04); }
 :root[data-theme="dark"] .seg-ctl button.on { background: #636366; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .seg-ctl button.on { background: #636366; } }
-.rc-times { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px; align-items: end; }
-.rc-field { display: grid; gap: 3px; min-width: 0; }
+/* start · stop · pauze in drie gelijke kolommen; het totaal op een eigen regel eronder (past altijd op een gsm) */
+.rc-times { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.rc-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; overflow: hidden; }
+.rc-field input.rc-val { width: 100%; min-width: 0; text-align: center; font-size: 17px; font-weight: 600; padding: 8px 4px; }
+.rc-field input.t, .rc-field select { display: block; box-sizing: border-box; max-width: 100%; -webkit-appearance: none; appearance: none; }
 .rc-field span, .rc-total span { font-size: 12px; color: var(--muted); font-weight: 600; }
 .rc-field input.t, .rc-field select { width: 100%; min-width: 0; text-align: center; font-size: 17px; font-weight: 600; padding: 8px 4px; background-color: var(--surface) !important; }
-.rc-field select { padding-right: 18px; background-position: right 6px center; text-align-last: center; }
+.rc-field select { padding: 8px 18px 8px 6px; background-position: right 6px center; text-align-last: center; width: 100%; }
 .rc-field .auto { color: var(--info, #007aff); font-style: italic; }
-.rc-total { display: grid; gap: 3px; text-align: right; padding-left: 4px; }
-.rc-total b { font-size: 20px; font-weight: 700; line-height: 42px; white-space: nowrap; }
+.rc-total { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; padding: 8px 2px 0; border-top: .5px solid var(--line); margin-top: 2px; }
+.rc-total span { font-size: 15px; }
+.rc-total b { font-size: 22px; font-weight: 700; white-space: nowrap; }
 .rc-total b.bad { color: var(--red-text); }
 .row-card .blk-more-wrap summary { cursor: pointer; }
 .row-card.pause-only, .row-card.pause-only.blk { grid-template-columns: 1fr auto auto; align-items: center; padding: 10px 14px; color: var(--muted); }
 .row-add { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 50px; margin: 2px 0 6px; border-radius: 14px;
   background: var(--fill); color: var(--info, #007aff); font-size: 17px; font-weight: 600; }
 .row-add span { font-size: 20px; }
-@media (max-width: 380px) { .rc-times { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rc-total { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; } .rc-total b { line-height: 1.2; } }
 /* manuele aanpassingen: automatisch voorstel naast bevestigd */
 .cmp-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 15px; }
 .cmp-table th { text-align: left; font-size: 13px; color: var(--muted); font-weight: 600; padding: 4px 8px; }
