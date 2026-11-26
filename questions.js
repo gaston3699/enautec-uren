@@ -2,7 +2,7 @@
 import { PATHS, EMPTY_MASTER } from './store.js';
 import { distance } from './geo.js';
 import { localTime, today } from './time.js';
-import { esc, uid, alive, byName, toast, projectLabel } from './ui.js';
+import { esc, uid, alive, byName, toast, projectLabel, info } from './ui.js';
 import { confirmDialog } from './update.js';
 import { workTypeOptions, newProjectDialog } from './projects.js';
 
@@ -179,10 +179,9 @@ export function renderQuestion(el, { q, ctx, answer, planned = [] }) {
       <details class="q-more"><summary>Andere klant kiezen</summary>
         <select id="qOther"><option value="">— kies een klant —</option>${customers.map((c) => `<option value="${esc(c.id)}" ${c.id === chosen && !sug.some((s) => s.cust.id === c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
       </details>
-      <details class="q-more"><summary>+ Nieuwe klant aanmaken</summary>
+      <details class="q-more"><summary>+ Nieuwe klant aanmaken${info('De app maakt meteen een locatie op de plek waar je nu bent, zodat je de volgende keer herkend wordt.')}</summary>
         <div class="form-grid"><label><span>Naam klant</span><input id="qNewName" placeholder="bv. Bv Vandenberghe"></label>
           <label><span>Project (mag leeg)</span><input id="qNewProj" placeholder="bv. Renovatie keuken"></label></div>
-        <p class="muted small">De app maakt meteen een locatie op de plek waar je nu bent, zodat je de volgende keer herkend wordt.</p>
       </details>
       <label class="q-field"><span>Project</span><select id="qProject">${projOptions(chosen, prev?.projectId)}</select></label>`}
     <label class="q-field"><span>Type werk</span><select id="qWorkType">${workTypeOptions(m, prev?.workType ?? projects.find((p) => p.id === prev?.projectId)?.work_type)}</select></label>

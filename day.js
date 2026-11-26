@@ -2,7 +2,7 @@
 import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS, DEFAULT_RULES } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
-import { esc, uid, alive, projectLabel, byName, toast, resolveId } from './ui.js';
+import { esc, uid, alive, projectLabel, byName, toast, resolveId, info } from './ui.js';
 import { confirmDialog } from './update.js';
 import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN, needsProject, workTypeNoProject } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
@@ -103,6 +103,31 @@ export function fitPauses(segs) {
     }
   }
   return changed;
+}
+
+/**
+ * "Automatisch voorstel" zonder iets te wissen: een eigen blok van dezelfde soort dat een voorstelblok
+ * overlapt, krijgt de uren van het voorstel (project en soort werk blijven); voorstelblokken die met
+ * niets overlappen worden toegevoegd. Eigen blokken zonder tegenhanger blijven zoals ze zijn.
+ */
+export function mergeProposal(own, auto) {
+  const out = own.map((s) => ({ ...s }));
+  const overlaps = (a, b) => a.start < b.end && b.start < a.end;
+  const used = new Set();
+  for (const a of auto) {
+    const c = out.find((s) => !used.has(s) && s.kind === a.kind && s.kind !== 'pauze' && overlaps(s, a));
+    if (c) {
+      used.add(c);
+      c.start = a.start; c.end = a.end;
+    } else if (!out.some((s) => overlaps(s, a))) {
+      out.push({ ...a, candidates: a.candidates ?? [], auto: { start: true, end: true } });
+    }
+  }
+  // een aangepast blok mag geen eigen blok overlappen: inkorten tegen de buren
+  out.sort((a, b) => a.start - b.start);
+  for (let i = 1; i < out.length; i++) if (out[i].start < out[i - 1].end && used.has(out[i - 1])) out[i - 1].end = Math.max(out[i - 1].start, out[i].start);
+  fitPauses(out);
+  return out.filter((s) => s.end > s.start);
 }
 
 export function validate(segments, date, master = null) {
@@ -247,8 +272,7 @@ function changesHtml(st, master) {
     return `<li class="mod"><b>${esc(k)} ${span(c.to)}:</b> ${parts.join(', ')}</li>`;
   };
   const noAuto = st.savedProposal && !st.savedProposal.length;
-  return `<section class="card changes"><h2>Manuele aanpassingen ${list.length ? `<span class="pill warn">${list.length}</span>` : '<span class="pill ok">geen</span>'}</h2>
-    <p class="muted small">Vergelijking tussen het automatische voorstel (gsm en badges) en de bevestigde uren. Enkel zichtbaar voor de beheerder.</p>
+  return `<section class="card changes"><h2>Manuele aanpassingen ${list.length ? `<span class="pill warn">${list.length}</span>` : '<span class="pill ok">geen</span>'}${info('Vergelijking tussen het automatische voorstel (gsm en badges) en de bevestigde uren. Enkel zichtbaar voor de beheerder.')}</h2>
     ${noAuto ? '<p class="muted">Er was geen automatisch voorstel voor deze dag: alle uren werden manueel ingegeven.</p>' : ''}
     ${list.length ? `<ul class="change-list">${list.map(line).join('')}</ul>` : noAuto ? '' : '<p class="ok-text">✓ Bevestigd zoals voorgesteld.</p>'}
     ${st.log.length ? `<details><summary>Historiek</summary><ul class="change-list">${st.log.map((l) => `<li>${esc(new Date(l.ts).toLocaleString('nl-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}: ${esc(l.action)} door ${esc(l.by)}${l.changes ? ` (${l.changes} aanpassing${l.changes > 1 ? 'en' : ''})` : ''}</li>`).join('')}</ul></details>` : ''}
@@ -379,13 +403,13 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   // De beheerder ziet enkel bevestigde uren (voorstellen en open dagen blijven bij de werknemer)
   if (asAdmin && st.status !== 'bevestigd' && !editing) {
     el.innerHTML = `<section class="card"><p class="muted">${st.status === 'nietgewerkt' ? 'Aangeduid als <b>niet gewerkt</b>.'
-      : 'Deze dag is nog <b>niet bevestigd</b>. Voorgestelde uren zijn enkel zichtbaar voor de werknemer zelf.'}</p></section>`;
+      : `Deze dag is nog <b>niet bevestigd</b>.${info('Voorgestelde uren zijn enkel zichtbaar voor de werknemer zelf.')}`}</p></section>`;
     return;
   }
   // Niet gewerkt aangevinkt
   if (st.status === 'nietgewerkt') {
-    el.innerHTML = `<section class="card"><h2>Niet gewerkt</h2>
-      <p class="muted">Deze dag is aangeduid als niet gewerkt. Er wordt niets geregistreerd en je krijgt voor deze dag geen vragen meer.</p>
+    el.innerHTML = `<section class="card"><h2>Niet gewerkt${info('Er wordt niets geregistreerd en je krijgt voor deze dag geen vragen meer.')}</h2>
+      <p class="muted">Deze dag is aangeduid als niet gewerkt.</p>
       <button class="secondary" data-act="worked">Toch gewerkt: uren ingeven</button></section>`;
     el.querySelector('[data-act=worked]').onclick = () => {
       saveDay(ctx, username, date, { status: 'concept', segmentsEdited: false, segments: [] });
@@ -577,7 +601,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         ${materialHtml(order.map((x) => x.s))}
       </section>
       <section class="card">
-        ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd. Klopt er iets niet? Pas de uren aan en bevestig opnieuw.</p>
+        ${readonly ? `${cur.note ? `<p>Opmerking: ${esc(cur.note)}</p>` : ''}<p class="muted">Deze dag is bevestigd.${info('Klopt er iets niet? Pas de uren aan en bevestig opnieuw.')}</p>
           <div class="row"><button class="secondary" data-act="edit">✎ Uren aanpassen</button>${asAdmin ? '<button class="link" data-act="reopen">Terug naar de werknemer (heropenen)</button>' : ''}</div>`
         : `<label class="muted" for="daynote">Opmerking bij deze dag</label>
           <textarea id="daynote" data-f="daynote">${esc(cur.note)}</textarea>
@@ -608,12 +632,12 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           <ul class="check-list">${dayCheck.length ? dayCheck.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('') : segs.length ? '<li class="ok">Geen overlappingen of gaten.</li>' : '<li class="let">Nog niets ingegeven voor deze dag.</li>'}</ul>
         </div>
       </section>
-      ${asAdmin ? '' : `<div class="pause-set"><span>☕ <b>Standaard pauze</b><small>Om 12:00 krijg je een melding om je pauze te starten.</small></span>
+      ${asAdmin ? '' : `<div class="pause-set"><span>☕ <b>Standaard pauze</b>${info('Om 12:00 krijg je een melding om je pauze te starten.')}</span>
         <span class="stepper"><button class="secondary" data-act="pause-" aria-label="Pauze korter">−</button><b id="pauseVal">${fmtHours(pauseMin)}</b><button class="secondary" data-act="pause+" aria-label="Pauze langer">+</button></span></div>`}`;
     showChecks();
   }
 
-  /** Nieuw blok met voorgestelde tijden (zoals Atree: aansluitend, na werk eerst een halfuur pauze) */
+  /** Nieuw blok: vandaag vanaf nu (een gat met het vorige blok wordt pauze), anders aansluitend */
   function addBlock(kindKey) {
     const sorted = [...segs].sort((a, b) => a.start - b.start);
     const last = sorted.at(-1);
@@ -639,10 +663,9 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const later = nowQ != null && last && nowQ > last.end;
     if (later) start = nowQ;
     const workLike = (k) => k === 'werk' || k === 'atelier';
-    if (last && !later && workLike(kind) && workLike(last.kind)) {
-      // tweede periode: eerst de standaardpauze
-      segs.push({ start, end: start + pz * MIN, kind: 'pauze', projectId: null, candidates: [], siteId: null, auto: { start: true, end: true } });
-      start += pz * MIN;
+    // enkel een pauze als er echt een gat is (vandaag: tussen het vorige blok en nu); anders sluit het nieuwe blok aan
+    if (later && kind !== 'pauze' && last.kind !== 'pauze') {
+      segs.push({ start: last.end, end: nowQ, kind: 'pauze', projectId: null, candidates: [], siteId: null, auto: { start: true, end: true } });
     }
     const prevWork = [...sorted].reverse().find((s) => workLike(s.kind) && s.projectId);
     const end = Math.min(start + dflt * MIN, dayEnd - MIN);
@@ -813,7 +836,11 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       requestAnimationFrame(() => { const n = el.querySelector(sel); n?.focus(); n?.select(); });
       return;
     }
-    setTimeout(() => t.select(), 0);
+    // iPhone zet de cursor na de tik opnieuw: daarom ook na de tik nog eens alles selecteren
+    const selAll = () => { try { t.setSelectionRange(0, t.value.length); } catch { t.select(); } };
+    setTimeout(selAll, 0);
+    setTimeout(selAll, 80);
+    t.addEventListener('mouseup', (ev) => ev.preventDefault(), { once: true });
   };
 
   // Enter in een tijdveld = naar het volgende tijdveld
@@ -870,9 +897,10 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       segs = segs.filter((_, k) => !mem.includes(k));
       persistSegments(); draw();
     } else if (act === 'reset') {
-      saveDay(ctx, username, date, { segmentsEdited: false });
-      segs = dayState(ctx, username, date, raw).segments.map((s) => ({ ...s, auto: { start: true, end: true } }));
-      draw();
+      // niets wissen: eigen blokken blijven, het voorstel vult aan (en neemt de juiste uren van badges/gsm over)
+      segs = mergeProposal(clean(segs), st.auto ?? []);
+      persistSegments(); draw();
+      toast('Aangevuld met het automatische voorstel. Je eigen blokken bleven staan.', 'ok');
     } else if (act === 'add-mat') {
       material.push({ id: uid(), description: '', qty: 1, unit: '', projectId: btn.dataset.p || null, articleId: null });
       persistMaterial(); draw();

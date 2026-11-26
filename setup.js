@@ -3,7 +3,7 @@
 //  2. Meldingen aanzetten
 //  3. OwnTracks instellen (klaar zodra de eerste locatie binnenkomt)
 //  4. Widget (iPhone: Scriptable; klaar zodra het widget de eerste keer gegevens ophaalt)
-import { esc, toast, copyText } from './ui.js';
+import { esc, toast, copyText, info } from './ui.js';
 import { pushSupport, enablePush, currentSubscription } from './questions.js';
 
 const MIN = 60000;
@@ -162,8 +162,7 @@ Script.complete();
 export function installHtml({ ios, canPrompt, installed }) {
   return `<section class="card setup">
     <img src="logo.svg" alt="Enautec" class="welcome-logo">
-    <h1>Eerst de app op je beginscherm</h1>
-    <p>Op je gsm gebruik je Enautec Uren als app op je beginscherm. Enkel zo krijg je meldingen en blijf je aangemeld.</p>
+    <h1>Eerst de app op je beginscherm${info('Op je gsm gebruik je Enautec Uren als app op je beginscherm. Enkel zo krijg je meldingen en blijf je aangemeld. Op een computer kan je gewoon in de browser aanmelden.')}</h1>
     ${installed ? '<div class="notice ok">✔ Geïnstalleerd. Open nu <b>Enautec Uren</b> via het icoon op je beginscherm en meld je daar aan.</div>'
       : ios ? `<ol class="setup-steps">
         <li>Open deze pagina in <b>Safari</b> (niet in een andere app).</li>
@@ -174,7 +173,6 @@ export function installHtml({ ios, canPrompt, installed }) {
         <ol class="setup-steps">
         ${canPrompt ? '' : '<li>Tik in Chrome rechtsboven op <b>⋮</b>.</li><li>Kies <b>App installeren</b> of <b>Toevoegen aan startscherm</b>.</li>'}
         <li>Open <b>Enautec Uren</b> via het icoon op je beginscherm en meld je daar aan.</li></ol>`}
-    <p class="muted small">Op een computer kan je gewoon in de browser aanmelden.</p>
   </section>`;
 }
 
@@ -233,9 +231,8 @@ export function owntracksGuideHtml({ ios = true, link = '', ot = null, server = 
        ${link ? `<a class="btn primary big" href="${esc(link)}">⚙️ OwnTracks instellen</a>` : '<span class="muted">(laden…)</span>'}`,
       phone('OwnTracks', `<div class="ph-dialog"><b>Configuratie importeren?</b><small>enautec-uren…/api/owntracks</small>
         <div class="ph-dialog-btns"><span>Annuleren</span>${tap('<span class="ph-btn">Importeren</span>')}</div></div>`)),
-    ios ? step(3, 'Toegang geven in de iPhone-instellingen',
-      `<p>Open de app <b>Instellingen</b> van je iPhone (het grijze tandwiel ⚙️) en volg a tot d.</p>
-       <p class="muted small">Zonder deze toegang werkt OwnTracks enkel als de app open staat.</p>`,
+    ios ? step(3, `Toegang geven in de iPhone-instellingen${info('Zonder deze toegang werkt OwnTracks enkel als de app open staat.')}`,
+      `<p>Open de app <b>Instellingen</b> van je iPhone (het grijze tandwiel ⚙️) en volg a tot d.</p>`,
       [
         ['Scrol helemaal naar beneden en tik op <b>Apps</b>.',
           phone('Instellingen', `<div class="ph-group">${row('🔒 Privacy en beveiliging', '›')}</div><div class="ph-group">${row('☁️ iCloud', '›')}${row('💳 Wallet en Apple Pay', '›')}</div>
@@ -274,8 +271,7 @@ export function owntracksGuideHtml({ ios = true, link = '', ot = null, server = 
       ${phone('Instellingen', `<div class="ph-group">${row('Mode', `<span class="ph-seg small"><span>MQTT</span>${tap('<span class="on">HTTP</span>', 'stap 2')}</span>`)}
         ${row('Apparaat ID', '<small>④ gsm</small>')}${row('Gebruikersnaam', '<small>②</small>')}${row('Authenticatie', tap(sw(true), 'stap 3'))}${row('Wachtwoord', '<small>③</small>')}
         <div class="ph-row"><small>① https://…/api/owntracks</small></div></div>`, { back: true })}
-      <div class="copy-list">${fields.map(([label, value], i) => `<div class="copy-row"><span class="muted small">${'①②③④'[i]} ${label}</span><code>${esc(value)}</code><button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}</div>
-      <p class="muted small">Het OwnTracks-wachtwoord is een aparte code, niet je wachtwoord van deze app.</p>
+      <div class="copy-list">${fields.map(([label, value], i) => `<div class="copy-row"><span class="muted small">${'①②③④'[i]} ${label}${label === 'Wachtwoord' ? info('Het OwnTracks-wachtwoord is een aparte code, niet je wachtwoord van deze app.') : ''}</span><code>${esc(value)}</code><button class="secondary" data-copy="${esc(value)}">Kopieer</button></div>`).join('')}</div>
     </details>` : '';
   return `<ol class="ot-guide">${steps.join('')}</ol>${manual}`;
 }
@@ -339,8 +335,7 @@ export function renderSetup(el, deps) {
       }
     }
     const denied = sup.ok && Notification.permission === 'denied';
-    frame(`<h2>🔔 Meldingen aanzetten</h2>
-      <p>De app vraagt via een melding <b>"Aan het werk?"</b> en <b>"Bij wie ben je?"</b>, zodat je het juiste project meteen kiest.</p>
+    frame(`<h2>🔔 Meldingen aanzetten${info('De app vraagt via een melding "Aan het werk?" en "Bij wie ben je?", zodat je het juiste project meteen kiest.')}</h2>
       ${on ? '<div class="notice ok">✔ Meldingen staan aan op deze gsm.</div>'
         : denied ? '<div class="error">Meldingen zijn geweigerd. Zet ze aan bij Instellingen van je gsm → Meldingen → Enautec Uren, en tik daarna op Opnieuw controleren.</div>'
         : !sup.ok ? '<div class="notice">Deze gsm of browser ondersteunt geen meldingen. Je kan verder, maar je krijgt geen vragen.</div>'
@@ -366,8 +361,8 @@ export function renderSetup(el, deps) {
     const ok = me?.lastLocation && me.lastLocation >= Math.min(startedAt, Date.now() - 15 * MIN);
     const status = ok ? `<div class="notice ok">✔ Locatie ontvangen om ${new Date(me.lastLocation).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}. OwnTracks werkt.</div>`
       : '<div class="notice wait"><span class="spinner" aria-hidden="true"></span> Wachten op je eerste locatie…</div>';
-    frame(`<h2>📍 OwnTracks instellen</h2>
-      <p>OwnTracks stuurt je locatie door, zodat de app je uren en verplaatsingen zelf voorstelt. Volg de 5 stappen. Op elke tekening toont de <b class="red-text">rode cirkel</b> waar je tikt.</p>
+    frame(`<h2>📍 OwnTracks instellen${info('OwnTracks stuurt je locatie door, zodat de app je uren en verplaatsingen zelf voorstelt.')}</h2>
+      <p>Volg de 5 stappen. Op elke tekening toont de <b class="red-text">rode cirkel</b> waar je tikt.</p>
       ${ok ? status : ''}
       ${owntracksGuideHtml({ ios: deps.ios, link: ot ? deps.owntracksLink(ot) : '', ot, server })}
       ${ok ? '' : status}
@@ -393,12 +388,11 @@ export function renderSetup(el, deps) {
     const s = st();
     try { await fetchMe(); } catch { /* offline */ }
     const ok = s.widgetAt && me?.widgetSeen && me.widgetSeen >= s.widgetAt;
-    frame(`<h2>🧩 Widget op je beginscherm</h2>
-      <p>Het widget toont 's ochtends je planning en het materiaal dat mee moet, en daarna je uren van vandaag, waar je bent en of er een vraag openstaat. Kies <b>middelgroot</b>: dan tik je op een materiaalregel om ze af te vinken als ingeladen, en op <b>☕ Pauze starten/stoppen</b>. Scriptable opent dan even; veeg daarna terug naar je beginscherm.</p>
+    frame(`<h2>🧩 Widget op je beginscherm${info("Het widget toont 's ochtends je planning en het materiaal dat mee moet, en daarna je uren van vandaag, waar je bent en of er een vraag openstaat. Kies middelgroot: dan tik je op een materiaalregel om ze af te vinken als ingeladen, en op ☕ Pauze starten/stoppen. Scriptable opent dan even; veeg daarna terug naar je beginscherm.")}</h2>
       <ol class="setup-steps">
         <li>Installeer de gratis app <b>Scriptable</b> uit de App Store.</li>
         <li>${s.script ? '<button class="primary" data-act="copy">📋 Kopieer het script</button>' : '<button class="primary" data-act="make">Script klaarzetten</button>'}
-          ${s.script ? '<span class="muted small"> (opnieuw kopiëren kan altijd)</span>' : ''}</li>
+          ${s.script ? info('Opnieuw kopiëren kan altijd.') : ''}</li>
         <li>Open <b>Scriptable</b>, tik rechtsboven op <b>+</b>, tik in het lege blad en kies <b>Plak</b>.</li>
         <li>Tik bovenaan op de naam en noem het script <b>Enautec</b>. Tik onderaan op <b>▶</b>: je ziet het widget. Tik op <b>Klaar</b>.</li>
         <li>Op je beginscherm: hou een lege plek ingedrukt → <b>Wijzig</b> → <b>Voeg widget toe</b> → <b>Scriptable</b> → klein of middelgroot formaat → <b>Voeg widget toe</b>.</li>

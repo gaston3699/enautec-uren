@@ -1,6 +1,6 @@
 // Soorten werk en "nieuw project" (overal bruikbaar: tijdsblok, atelier, verplaatsing, pushmelding).
 import { PATHS, EMPTY_MASTER } from './store.js';
-import { esc, uid, alive, byName } from './ui.js';
+import { esc, uid, alive, byName, info } from './ui.js';
 
 /** Standaard soorten werk (de beheerder kan ze aanpassen bij Beheer → Soorten werk) */
 export const DEFAULT_WORK_TYPES = [
@@ -93,7 +93,7 @@ export function newProjectDialog(ctx, { customerId = null, siteId = null, workTy
     const wrap = document.createElement('div');
     wrap.className = 'modal-backdrop';
     wrap.innerHTML = `<form class="modal" role="dialog" aria-modal="true" aria-labelledby="npTitle">
-      <h2 id="npTitle">Nieuw project</h2>
+      <h2 id="npTitle">Nieuw project${info('Bestaat het project al? Kies het dan liever uit de lijst. Een nieuw project wordt nog nagekeken door de beheerder.')}</h2>
       <div class="form-grid">
         <label><span>Naam van het project</span><input name="name" required placeholder="bv. Renovatie keuken" autocomplete="off"></label>
         <label><span>Klant</span><select name="customer"><option value="">— geen klant (bv. intern) —</option>
@@ -101,7 +101,6 @@ export function newProjectDialog(ctx, { customerId = null, siteId = null, workTy
         <label><span>Type werk</span><select name="workType">${workTypeOptions(m, workType)}</select></label>
         <label><span>Projectcode (mag leeg)</span><input name="code" autocomplete="off"></label>
       </div>
-      <p class="muted small">Bestaat het project al? Kies het dan liever uit de lijst. Een nieuw project wordt nog nagekeken door de beheerder.</p>
       <div class="row modal-actions"><button type="button" class="secondary" data-a="cancel">Annuleren</button><button class="primary">Project aanmaken</button></div>
     </form>`;
     const form = wrap.querySelector('form');

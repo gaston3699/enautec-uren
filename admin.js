@@ -9,8 +9,8 @@ import { readTable } from './xlsx.js';
 import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOptions, newProjectDialog } from './projects.js';
 import { renderTodo, todoToConfirm } from './todo.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
-import { planningHtml, visibleDays, needId, needOf, LEAVE } from './calendar.js';
-import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
+import { planningHtml, visibleDays, needId, needOf, LEAVE, enableChipDrag } from './calendar.js';
+import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256, personPickHtml, info } from './ui.js';
 
 /**
  * Wie badgede, volgens de tekst van Loxone:
@@ -32,7 +32,7 @@ const SITE_TYPES = { klant: 'Klant / werf', atelier: 'Atelier', leverancier: 'Le
 const ENTITIES = {
   employees: {
     title: 'Werknemers', newLabel: 'Nieuwe werknemer',
-    help: 'Iedereen opent dezelfde link (de app) en meldt zich aan met <b>gebruikersnaam</b> en <b>wachtwoord</b>. Geef bij een nieuwe werknemer een startwachtwoord (min. 8 tekens); de werknemer kan het zelf wijzigen bij Meer. "Nieuw wachtwoord" leeg laten = ongewijzigd; een nieuw wachtwoord meldt die werknemer overal af. "Loxone-gebruiker" = exact dezelfde naam als in Loxone Config. Een <b>beheerder</b> is ook gewoon werknemer, maar kan via de knop "Beheer" bovenaan ook het beheer openen.',
+    help: 'Iedereen opent dezelfde link (de app) en meldt zich aan met gebruikersnaam en wachtwoord. Geef bij een nieuwe werknemer een startwachtwoord (min. 8 tekens); de werknemer kan het zelf wijzigen bij Meer. "Nieuw wachtwoord" leeg laten = ongewijzigd; een nieuw wachtwoord meldt die werknemer overal af. "Loxone-gebruiker" = exact dezelfde naam als in Loxone Config. Een beheerder is ook gewoon werknemer, maar kan via de knop "Beheer" bovenaan ook het beheer openen.',
     fields: [
       { k: 'name', label: 'Naam', req: true },
       { k: 'username', label: 'Gebruikersnaam', req: true, help: 'kleine letters, bv. ruben' },
@@ -118,7 +118,7 @@ const fieldValue = (f, row, m) => {
 
 function fieldInput(f, row, m) {
   const v = row?.[f.k];
-  if (f.type === 'bool') return `<input type="checkbox" name="${f.k}" ${boolOf(v, f) ? 'checked' : ''}>`;
+  if (f.type === 'bool') return `<input type="checkbox" class="ios-switch" name="${f.k}" ${boolOf(v, f) ? 'checked' : ''}>`;
   if (f.type === 'select') {
     return `<select name="${f.k}" ${f.req ? 'required' : ''}><option value="">—</option>${f.options(m).map((o) => `<option value="${esc(o.id)}" ${o.id === v ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
   }
@@ -199,8 +199,7 @@ export class Admin {
     const rows = alive(m[name]).sort(byName);
     view.innerHTML = `
       <section class="card">
-        <h2>${edit ? 'Wijzigen' : ent.newLabel}</h2>
-        ${ent.help ? `<p class="muted">${ent.help}</p>` : ''}
+        <h2>${edit ? 'Wijzigen' : ent.newLabel}${ent.help ? info(ent.help) : ''}</h2>
         <form class="form-grid" id="entForm">
           ${ent.fields.filter((f) => !f.noForm).map((f) => `<label><span>${f.label}</span>${fieldInput(f, edit, m)}</label>`).join('')}
           <div class="row"><button class="primary">${edit ? 'Opslaan' : 'Toevoegen'}</button>${edit ? '<button type="button" class="secondary" data-act="cancel">Annuleren</button>' : ''}</div>
@@ -214,8 +213,7 @@ export class Admin {
         <tbody>${rows.map((r) => `<tr>${ent.fields.filter((f) => !f.noList).map((f) => `<td>${fieldValue(f, r, m)}</td>`).join('')}
           <td class="actions"><button class="link" data-edit="${esc(r.id)}">Wijzig</button><button class="link danger" data-del="${esc(r.id)}">Verwijder</button></td></tr>`).join('')}</tbody></table>
       </section>
-      ${name === 'customers' ? `<section class="card" id="importCard"><h2>Klanten importeren</h2>
-        <p class="muted">Kies een Excel- (.xlsx) of CSV-bestand met kolommen zoals <b>Naam, Adres, Postcode, Gemeente, Telefoonnummer, BTW-nummer</b> (bv. de export uit de boekhouding). Bestaande klanten (zelfde btw-nummer of naam) worden bijgewerkt, niet dubbel gemaakt. Per klant met adres maakt de app een locatie en zoekt ze de coördinaten op.</p>
+      ${name === 'customers' ? `<section class="card" id="importCard"><h2>Klanten importeren${info('Kies een Excel- (.xlsx) of CSV-bestand met kolommen zoals Naam, Adres, Postcode, Gemeente, Telefoonnummer, BTW-nummer (bv. de export uit de boekhouding). Bestaande klanten (zelfde btw-nummer of naam) worden bijgewerkt, niet dubbel gemaakt. Per klant met adres maakt de app een locatie en zoekt ze de coördinaten op.')}</h2>
         <input type="file" id="importFile" accept=".xlsx,.csv,text/csv">
         <div id="importOut"></div></section>` : ''}
       ${name === 'sites' ? '<div id="geoBox"></div>' : ''}`;
@@ -427,9 +425,8 @@ export class Admin {
           <optgroup label="Werknemers">${people.map((p) => `<option ${p === f0 ? 'selected' : ''}>${esc(p)}</option>`).join('')}</optgroup></select>
         <select data-f="type" aria-label="Soort"><option value="">Alle soorten</option>${['Badge', 'Code', 'Andere'].map((t) => `<option ${t === this.bFilter.type ? 'selected' : ''}>${t}</option>`).join('')}</select>
         <input data-f="q" placeholder="Zoeken in de meldingen" value="${esc(this.bFilter.q)}" aria-label="Zoeken">
-        <button class="secondary" data-act="csv">⬇ CSV</button></div>
-      <div id="bList"></div>
-      <p class="muted small">Alle meldingen die Loxone doorstuurt (badges, codes en onbekende). Ze worden ${esc(String(400))} dagen bewaard.</p>`;
+        <button class="secondary" data-act="csv">⬇ CSV</button>${info('Alle meldingen die Loxone doorstuurt (badges, codes en onbekende). Ze worden 400 dagen bewaard.')}</div>
+      <div id="bList"></div>`;
     body.querySelectorAll('[data-f]').forEach((el) => {
       el.addEventListener(el.tagName === 'INPUT' ? 'input' : 'change', () => { this.bFilter[el.dataset.f] = el.value; draw(); });
     });
@@ -483,8 +480,7 @@ export class Admin {
       const last = (id) => { const s = seen.get(id); return s ? `${s.n}× · laatst ${esc(fmtDate(localDateOf(s.last), { day: 'numeric', month: 'short' }))} ${esc(localTime(s.last))}` : '<span class="muted">niet in de laatste 2 maanden</span>'; };
       view.innerHTML = `
         <section class="card">
-          <h2>${LABEL[0]} toevoegen</h2>
-          <p class="muted">Vul de naam of code in zoals Loxone ze meldt (zie Badges). Alle meldingen met die naam staan dan bij ${LABEL[0].toLowerCase()} in plaats van bij onbekend.</p>
+          <h2>${LABEL[0]} toevoegen${info(`Vul de naam of code in zoals Loxone ze meldt (zie Badges). Alle meldingen met die naam staan dan bij ${LABEL[0].toLowerCase()} in plaats van bij onbekend.`)}</h2>
           <form class="row" id="grpForm"><input name="id" list="grpSeen" placeholder="Naam of code" required style="flex:1">
             <datalist id="grpSeen">${unknown.map(([id]) => `<option value="${esc(id)}">`).join('')}</datalist>
             <button class="primary">Toevoegen</button></form>
@@ -549,8 +545,7 @@ export class Admin {
       <div class="row" style="margin-top:8px"><button class="primary" data-act="confirm">✔ Bevestigen</button>
         ${kind === 'projects' ? mergeSelect(okProj, r.name, (x) => projectLabel(x, m)) : mergeSelect(okCust, r.name, (x) => x.name)}
         <button class="secondary" data-act="merge">Samenvoegen</button></div></div>`;
-    view.innerHTML = `<section class="card"><h2>Te bevestigen</h2>
-      <p class="muted">Klanten en projecten die werknemers zelf aanmaakten (in de app of via een melding). Pas de naam aan of vul aan en <b>bevestig</b>, of <b>voeg samen</b> met een bestaande klant of een bestaand project: dan worden alle uren, materiaal en planning mee omgezet.</p>
+    view.innerHTML = `<section class="card"><h2>Te bevestigen${info('Klanten en projecten die werknemers zelf aanmaakten (in de app of via een melding). Pas de naam aan of vul aan en bevestig, of voeg samen met een bestaande klant of een bestaand project: dan worden alle uren, materiaal en planning mee omgezet.')}</h2>
       ${pc.length + pp.length ? '' : '<p class="ok-text">✓ Niets te bevestigen.</p>'}</section>
       ${pc.length ? `<section class="card"><h2>Nieuwe klanten (${pc.length})</h2>${pc.map((c) => card('customers', c,
         `<label><span>Naam klant</span><input data-f="name" value="${esc(c.name)}"></label>
@@ -711,8 +706,8 @@ export class Admin {
     const todo = alive(this.ctx.master().sites).filter((s) => s.address && s.lat == null);
     if (!todo.length) { box.innerHTML = ''; return; }
     const notFound = todo.filter((s) => s.geo === 'niet gevonden').length;
-    box.innerHTML = `<section class="card"><h2>Coördinaten ontbreken (${todo.length})</h2>
-      <p class="muted">De app zoekt ze op bij het adres via OpenStreetMap (ongeveer 1 per seconde).${notFound ? ` ${notFound} adres(sen) werden eerder niet gevonden: controleer die adressen of vul de coördinaten zelf in.` : ''}</p>
+    box.innerHTML = `<section class="card"><h2>Coördinaten ontbreken (${todo.length})${info('De app zoekt ze op bij het adres via OpenStreetMap (ongeveer 1 per seconde).')}</h2>
+      ${notFound ? `<p class="muted">${notFound} adres(sen) werden eerder niet gevonden: controleer die adressen of vul de coördinaten zelf in.</p>` : ''}
       <div class="row"><button class="primary" data-act="geoall">Coördinaten opzoeken</button></div><div class="geo-progress"></div></section>`;
     box.querySelector('[data-act=geoall]').onclick = async (e) => {
       e.currentTarget.disabled = true;
@@ -807,8 +802,7 @@ export class Admin {
 
   // ---------- Toestellen: waar is iedereen aangemeld ----------
   async devices(view) {
-    view.innerHTML = `<section class="card"><h2>Aangemelde toestellen</h2>
-      <p class="muted">Alle toestellen waarop een werknemer aangemeld is. Een toestel afmelden: de werknemer moet zich daar opnieuw aanmelden. Gsm kwijt? Meld het toestel af én geef bij Werknemers een nieuw wachtwoord.</p>
+    view.innerHTML = `<section class="card"><h2>Aangemelde toestellen${info('Alle toestellen waarop een werknemer aangemeld is. Een toestel afmelden: de werknemer moet zich daar opnieuw aanmelden. Gsm kwijt? Meld het toestel af én geef bij Werknemers een nieuw wachtwoord.')}</h2>
       <div id="devList"><p class="muted">Laden…</p></div></section>`;
     const box = view.querySelector('#devList');
     if (!this.hasServer()) { box.innerHTML = '<p class="muted">Geen verbinding met de server ingesteld.</p>'; return; }
@@ -944,8 +938,7 @@ export class Admin {
       try {
         const unknown = await this.server('/api/admin/badges/unknown');
         if (unknown.length) {
-          view.querySelector('#ovBadges').innerHTML = `<section class="card"><h2>Onbekende badges</h2>
-            <p class="muted">Deze tekst kwam van Loxone, maar hoort bij geen enkele werknemer. Vul bij Werknemers het veld "Loxone-gebruiker" aan.</p>
+          view.querySelector('#ovBadges').innerHTML = `<section class="card"><h2>Onbekende badges${info('Deze tekst kwam van Loxone, maar hoort bij geen enkele werknemer. Vul bij Werknemers het veld "Loxone-gebruiker" aan.')}</h2>
             <table>${unknown.slice(0, 15).map((u) => `<tr><td>${new Date(u.ts).toLocaleString('nl-BE')}</td><td><code>${esc(u.raw)}</code></td></tr>`).join('')}</table></section>`;
         }
       } catch { /* niet erg */ }
@@ -967,13 +960,12 @@ export class Admin {
     const sel = this.planSel;
     this.planOnly ??= null; // null = iedereen
     view.innerHTML = `<div class="plan-admin">
-      <div><div class="cal-of-pick plan-who" id="plWho" role="group" aria-label="Agenda's tonen">
-        ${emps.map((e) => `<label class="pill-check"><input type="checkbox" value="${esc(e.username)}" ${!this.planOnly || this.planOnly.has(e.username) ? 'checked' : ''}><span>${esc(String(e.name).split(' ')[0])}</span></label>`).join('')}
-      </div>
+      <div>${personPickHtml({ id: 'plWho', label: "Agenda's", empty: 'Niemand',
+        people: emps.map((e) => ({ value: e.username, label: e.name })),
+        selected: emps.filter((e) => !this.planOnly || this.planOnly.has(e.username)).map((e) => e.username) })}
       <div id="plCal"></div></div>
       <section class="card plan-panel">
-        <h2>Inplannen</h2>
-        <p class="muted small">Tik de dagen aan in de kalender, kies het project en de werknemers en tik op <b>Inplannen</b>. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in.</p>
+        <h2>Inplannen${info('Tik de dagen aan in de kalender, kies het project en de werknemers en tik op Inplannen. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in.')}</h2>
         <div class="plan-sel"><b id="plSelText"></b>
           <div class="row"><button type="button" class="secondary small" data-act="workdays">Werkdagen in beeld</button>
           <button type="button" class="secondary small" data-act="clear">Selectie wissen</button>
@@ -984,13 +976,11 @@ export class Admin {
             ${projects.map((p) => `<option value="${esc(p.id)}">${esc(projectLabel(p, m))}</option>`).join('')}
             <option value="__new">+ Nieuw project…</option></select></label>
           <label class="q-field"><span>Uur (mag leeg)</span><input name="time" type="time" step="900" style="max-width:9em"></label>
-          <fieldset class="plan-people"><legend>Werknemers</legend>
-            ${emps.map((e) => `<label class="pill-check"><input type="checkbox" name="who" value="${esc(e.username)}"><span>${esc(e.name)}</span></label>`).join('')}</fieldset>
+          ${personPickHtml({ name: 'who', label: 'Werknemers', empty: 'Kies werknemers', people: emps.map((e) => ({ value: e.username, label: e.name })) })}
           <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" placeholder="bv. sleutel bij buren"></label>
-          <fieldset class="plan-need"><legend>Materiaal nodig (mag leeg)</legend>
+          <fieldset class="plan-need"><legend>Materiaal nodig (mag leeg)${info("Staat 's ochtends in het widget en in de planning van wie op dit project staat. Geldt voor alle geselecteerde dagen.")}</legend>
             <div class="need-lines" id="plNeed"></div>
-            <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button>
-            <p class="muted small">Staat 's ochtends in het widget en in de planning van wie op dit project staat. Geldt voor alle geselecteerde dagen.</p></fieldset>
+            <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button></fieldset>
           <div class="row"><button class="primary">Inplannen</button><button type="button" class="secondary danger-text" data-act="unplan">Uitplannen</button></div>
         </form>
       </section></div>
@@ -1028,7 +1018,7 @@ export class Admin {
         <p class="muted small">${esc(projectLabel(m.projects.find((p) => p.id === projectId), m))} · ${esc(fmtDate(date))}</p>
         <div class="need-lines">${(cur?.lines ?? []).map(needRow).join('') || needRow()}</div>
         <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button>
-        <label class="check" style="margin-top:10px;display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="all" style="margin-top:3px">Ook voor de andere geplande dagen van dit project in deze ${this.planView === 'maand' ? 'maand' : 'week'}</label>
+        <label class="check-row" style="margin-top:10px"><span>Ook voor de andere geplande dagen van dit project in deze ${this.planView === 'maand' ? 'maand' : 'week'}</span><input type="checkbox" class="ios-switch" name="all"></label>
         <div class="row modal-actions"><button type="button" class="secondary" data-act="cancel">Annuleren</button><button class="primary">Bewaren</button></div>
       </form>`;
       // artikels voorstellen ook in de popup (de lijst staat in het beheerscherm)
@@ -1067,6 +1057,26 @@ export class Admin {
     };
     drawCal();
     const save = (fn) => { this.ctx.store.change(PATHS.planning, { items: [] }, fn); drawCal(); };
+    // blokje naar een andere dag slepen: het hele blokje (alle mensen, uur, opmerking en materiaal) verhuist
+    const dragged = enableChipDrag(view.querySelector('#plCal'), ({ from, projectId, ids, to }) => {
+      let n = 0;
+      save((pl) => {
+        for (const it of pl.items) {
+          if (it.deleted || !ids.includes(it.id)) continue;
+          const dup = pl.items.find((x) => !x.deleted && x !== it && x.date === to && x.username === it.username && x.projectId === it.projectId);
+          if (dup) Object.assign(it, { deleted: true, updated: Date.now() });
+          else Object.assign(it, { date: to, updated: Date.now() });
+          n++;
+        }
+        const need = needOf(pl, from, projectId);
+        if (need?.lines?.length && !needOf(pl, to, projectId)?.lines?.length) {
+          setNeed(pl, to, projectId, need.lines.map((l) => ({ ...l })));
+          setNeed(pl, from, projectId, []);
+        }
+      });
+      const nm = projectId === LEAVE ? 'Verlof' : projectLabel(m.projects.find((p) => p.id === projectId), m);
+      toast(`${nm} verplaatst naar ${fmtDate(to, { weekday: 'long', day: 'numeric', month: 'short' })} (${n} ${n === 1 ? 'persoon' : 'personen'})`, 'ok');
+    });
 
     // agenda's per persoon aan- of uitvinken
     view.querySelector('#plWho').onchange = () => {
@@ -1086,6 +1096,7 @@ export class Admin {
       toast(`Project "${p.name}" aangemaakt`, 'ok');
     };
     view.onclick = (e) => {
+      if (dragged() && e.target.closest('#plCal')) { e.preventDefault(); return; }
       const nb = e.target.closest('[data-need]');
       if (nb) {
         e.preventDefault();
@@ -1200,15 +1211,14 @@ export class Admin {
       } catch { accB = null; }
     }
     view.innerHTML = `<section class="card">
-      <h2>Export naar de facturatie</h2>
-      <p class="muted">Enkel bevestigde dagen. Het Excel-bestand bevat: per project (uren, km, materiaal), materiaal, uren in detail, per werknemer per dag (voor het loon) en de dagen die nog niet bevestigd zijn.</p>
+      <h2>Export naar de facturatie${info('Enkel bevestigde dagen. Het Excel-bestand bevat: per project (uren, km, materiaal), materiaal, uren in detail, per werknemer per dag (voor het loon) en de dagen die nog niet bevestigd zijn.')}</h2>
       <div class="form-grid">
         <label><span>Van</span><input type="date" id="exFrom" value="${first}"></label>
         <label><span>Tot</span><input type="date" id="exTo" value="${today()}"></label>
       </div>
       <h3>${esc(billName[0].toUpperCase() + billName.slice(1))}</h3>
       ${accB ? `<p>Verbonden met <b>${esc(accB.name || accB.username)}</b> · map <code>${esc(folder)}</code></p>`
-        : `<p class="muted">Nog niet verbonden. ${google ? 'Koppel het Google-account van de facturatie. Werknemers krijgen daar nooit toegang toe.' : 'Meld je aan met het account van de facturatie. Dat gebeurt enkel op dit toestel.'}</p>`}
+        : `<p class="muted">Nog niet verbonden.${info(google ? 'Koppel het Google-account van de facturatie. Werknemers krijgen daar nooit toegang toe.' : 'Meld je aan met het account van de facturatie. Dat gebeurt enkel op dit toestel.')}</p>`}
       <div class="row">
         ${accB ? `<button class="primary" data-act="export">Exporteren naar ${esc(billName)}</button><button class="link" data-act="logoutB">${google ? 'Ontkoppelen' : 'Afmelden facturatie'}</button>`
           : `<button class="primary" data-act="loginB">Verbinden met ${esc(billName)}</button>`}
@@ -1291,8 +1301,7 @@ export class Admin {
     const since = (c) => (c?.connectedAt ? ` · sinds ${new Date(c.connectedAt).toLocaleDateString('nl-BE')}` : '');
     view.innerHTML = `
     ${google ? `<section class="card">
-      <h2>Google Drive (gegevens)</h2>
-      <p class="muted">Hier staan de uren, planning, het materiaal en de stamgegevens, in de map <code>Enautec Uren</code>. De verzamelserver bewaart de koppeling; werknemers melden zich nooit aan bij Google.</p>
+      <h2>Google Drive (gegevens)${info('Hier staan de uren, planning, het materiaal en de stamgegevens, in de map Enautec Uren. De verzamelserver bewaart de koppeling; werknemers melden zich nooit aan bij Google.')}</h2>
       ${gsErr ? `<div class="error">${esc(gsErr)}</div>` : ''}
       ${gs && !gs.configured ? '<div class="notice">Google is nog niet ingesteld op de server (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).</div>' : ''}
       ${gs?.A ? `<p>✔ Gekoppeld met <b>${esc(gs.A.email ?? 'Google-account')}</b>${since(gs.A)}</p>` : gs ? '<p class="warn-text">Nog niet gekoppeld.</p>' : ''}
@@ -1300,8 +1309,7 @@ export class Admin {
         ${gs?.A ? '<button class="link danger" data-act="gdisconnect">Ontkoppelen</button>' : ''}</div>
     </section>` : ''}
     <section class="card">
-      <h2>Verzamelserver (Cloudflare)</h2>
-      <p class="muted">De server ontvangt de gsm-locaties (OwnTracks) en de badges (Loxone)${google ? ' en bewaart de koppeling met Google Drive' : ''}. Het adres en de beheersleutel worden enkel op dit toestel bewaard; werknemers krijgen het adres via hun koppellink.</p>
+      <h2>Verzamelserver (Cloudflare)${info(`De server ontvangt de gsm-locaties (OwnTracks) en de badges (Loxone)${google ? ' en bewaart de koppeling met Google Drive' : ''}. Het adres en de beheersleutel worden enkel op dit toestel bewaard; werknemers krijgen het adres via hun koppellink.`)}</h2>
       <form class="form-grid" id="srvForm">
         <label><span>Adres van de server</span><input name="serverUrl" placeholder="https://enautec-uren.…workers.dev" value="${esc(this.ctx.serverUrl())}"></label>
         <label><span>Beheersleutel (ADMIN_KEY)</span><input name="adminKey" type="password" autocomplete="off" value="${esc(this.ctx.adminKey())}"></label>
@@ -1313,22 +1321,21 @@ export class Admin {
       <form class="form-grid" id="ruleForm">
         <label><span>Minimale tijd op een locatie (min)</span><input type="number" name="minStayMin" value="${rules.minStayMin ?? 10}" min="3" max="60"></label>
         <label><span>Stilstand op onbekende plek telt vanaf (min)</span><input type="number" name="unknownMinStayMin" value="${rules.unknownMinStayMin ?? 20}" min="5" max="120"></label>
-        <label class="check"><input type="checkbox" name="homeTravelIsWork" ${rules.homeTravelIsWork ? 'checked' : ''}> Woon-werkverkeer telt als arbeidstijd</label>
+        <label class="check-row"><span>Woon-werkverkeer telt als arbeidstijd</span><input type="checkbox" class="ios-switch" name="homeTravelIsWork" ${rules.homeTravelIsWork ? 'checked' : ''}></label>
         <label><span>Map voor de export (facturatie)</span><input name="billingFolder" value="${esc(s.billingFolder ?? 'Facturatie/Uren Enautec')}"></label>
         <div><button class="primary">Opslaan</button></div>
       </form>
     </section>
     <section class="card">
-      <h2>Beheer-pincode</h2>
-      <p class="muted">Beschermt het beheer in de app op een toestel waar de beheersleutel staat.${google ? '' : ' Let op: iedereen met het gedeelde Microsoft-account kan de bestanden in OneDrive wel openen.'}</p>
+      <h2>Beheer-pincode${info('Beschermt het beheer in de app op een toestel waar de beheersleutel staat.')}</h2>
+      ${google ? '' : '<p class="muted">Let op: iedereen met het gedeelde Microsoft-account kan de bestanden in OneDrive wel openen.</p>'}
       <form class="row" id="pinForm"><input name="pin" type="password" inputmode="numeric" placeholder="Nieuwe pincode (min. 4 cijfers)" autocomplete="new-password"><button class="secondary">Wijzigen</button></form>
     </section>
     <section class="card">
-      <h2>Loxone</h2>
+      <h2>Loxone${info('Zie HANDLEIDING.md voor de volledige uitleg.')}</h2>
       <p>Virtuele uitgang in Loxone Config:</p>
       <ul><li>Adres: <code>${esc(this.ctx.serverUrl() || 'https://enautec-uren.…workers.dev')}</code></li>
       <li>Opdracht bij AAN: <code>/api/loxone/badge?key=&lt;LOXONE_KEY&gt;&amp;user=&lt;v&gt;</code></li></ul>
-      <p class="muted">Zie HANDLEIDING.md voor de volledige uitleg.</p>
     </section>`;
     const out = view.querySelector('#srvOut');
     view.querySelector('#srvForm').onsubmit = (e) => {

@@ -2,9 +2,10 @@
 // - Iedereen kan puntjes aanmaken (geen bevestiging nodig), met uitleg en foto's.
 // - In de lijst staat altijd een korte samenvatting; tikken toont de uitleg en de foto's.
 // - Werknemers vinken af; de beheerder bevestigt het afvinken (of zet het terug open).
-// - Projecten zonder open puntjes verdwijnen uit de lijst van de werknemer.
+// - Zoals een lijst in Apple Notities: afgevinkt schuift naar onder (tot de beheerder bevestigt).
+// - Projecten staan dichtgeklapt; tik = dat project open, de rest dicht.
 import { PATHS } from './store.js';
-import { esc, uid, alive, projectLabel, toast, resolveId } from './ui.js';
+import { esc, uid, alive, projectLabel, toast, resolveId, initials, info } from './ui.js';
 import { fmtDate, localDate } from './time.js';
 import { newProjectDialog } from './projects.js';
 
@@ -12,11 +13,20 @@ const EMPTY = () => ({ items: [] });
 const when = (ts) => (ts ? fmtDate(localDate(ts), { day: 'numeric', month: 'short' }) : '');
 const MAX_TITLE = 60;
 let todoQuery = '';
-let todoKind = ''; // filter: '' = alles, 'prijs', 'tekort', 'eigen'
-/** Soorten puntjes: gewone taak, prijs (offerte/opmeting) of tekort (te bestellen, stock) */
-export const TODO_KINDS = { taak: 'Taak', prijs: '💶 Prijs / opmeting', tekort: '🛒 Tekort / bestellen' };
+let todoKind = ''; // filter: '' = alles, 'prijs' (offerte), 'tekort', 'eigen'
+let todoOpen = null; // project dat openstaat (accordeon: altijd hoogstens één)
+/** Soorten puntjes: gewone taak, offerte (opmeting/prijs, nog zonder project) of tekort (te bestellen, stock) */
+export const TODO_KINDS = { taak: 'Taak', prijs: '📄 Offerte', tekort: '🛒 Tekort / bestellen' };
 /** "Project" voor tekorten zonder project (stock in het atelier) */
 export const STOCK = '__stock';
+/** "Project" voor offertes waar nog geen project voor is (wordt later toegewezen) */
+export const OFFER = '__offerte';
+/**
+ * Volgorde zoals een lijst in Apple Notities: eerst de open puntjes (oudste bovenaan),
+ * daaronder de afgevinkte, het laatst afgevinkte bovenaan.
+ */
+export const notesOrder = (list) => [...list].sort((a, b) => Number(!!a.done) - Number(!!b.done)
+  || (a.done ? (b.done_at ?? 0) - (a.done_at ?? 0) : (a.at ?? 0) - (b.at ?? 0)));
 
 function change(ctx, fn) {
   ctx.store.change(PATHS.todos, EMPTY(), (doc) => { doc.items ??= []; fn(doc); });
@@ -133,7 +143,7 @@ function showPhoto(urls, start = 0) {
 }
 
 /** Detailvenster van een puntje: uitleg, foto's, foto's toevoegen, uitleg aanpassen */
-function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
+function openDetail(ctx, id, { me, name, label, asAdmin, onSaved, projectOptions }) {
   const t = todoItems(ctx).find((x) => x.id === id);
   if (!t) return;
   const wrap = document.createElement('div');
@@ -143,6 +153,7 @@ function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
     <p class="muted small">${esc(label(t.projectId))}${t.kind && t.kind !== 'taak' ? ` · ${esc(TODO_KINDS[t.kind] ?? t.kind)}` : ''}${t.private ? ' · 🔒 enkel voor jou' : ''}</p>
     <h2 id="tdTitle">${esc(titleOf(t))}</h2>
     <p class="muted small">Aangemaakt door ${esc(name(t.by))}${t.at ? ` · ${esc(when(t.at))}` : ''}${t.done ? ` · afgevinkt door ${esc(name(t.done_by))}${t.confirmed ? ' (bevestigd)' : ' (wacht op bevestiging)'}` : ''}</p>
+    ${canEdit && projectOptions ? `<label class="q-field"><span>${t.projectId === OFFER ? 'Project toewijzen' : 'Project'}</span><select id="tdProject">${projectOptions(t.projectId)}</select></label>` : ''}
     ${canEdit ? `<label class="q-field"><span>Korte samenvatting</span><input id="tdShort" maxlength="80" value="${esc(titleOf(t))}"></label>
       <label class="q-field"><span>Uitleg</span><textarea id="tdDetails" rows="4" placeholder="Meer uitleg (mag leeg)">${esc(detailsOf(t))}</textarea></label>`
       : `${detailsOf(t) ? `<p class="todo-text">${esc(detailsOf(t)).replace(/\n/g, '<br>')}</p>` : '<p class="muted">Geen extra uitleg.</p>'}`}
@@ -172,10 +183,12 @@ function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
     if (a === 'save') {
       const short = wrap.querySelector('#tdShort').value.trim();
       const details = wrap.querySelector('#tdDetails').value.trim();
+      const pid = wrap.querySelector('#tdProject')?.value;
       change(ctx, (doc) => {
         const x = doc.items.find((i) => i.id === id);
-        if (x) Object.assign(x, { title: summarize(short || details) || titleOf(x), details, text: undefined, updated: Date.now() });
+        if (x) Object.assign(x, { title: summarize(short || details) || titleOf(x), details, text: undefined, updated: Date.now(), ...(pid ? { projectId: pid } : {}) });
       });
+      if (pid && pid !== t.projectId) todoOpen = pid;
       toast('Bewaard', 'ok');
       close();
     }
@@ -190,7 +203,7 @@ function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
       const n = await addPhotos(ctx, id, files, me);
       toast(`${n} foto${n === 1 ? '' : "'s"} toegevoegd`, 'ok');
       wrap.remove();
-      openDetail(ctx, id, { me, name, label, asAdmin, onSaved });
+      openDetail(ctx, id, { me, name, label, asAdmin, onSaved, projectOptions });
     } catch (err) {
       toast(err.message, 'err');
       lbl.classList.remove('busy');
@@ -209,7 +222,11 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
   // eigen puntjes (nog niet in uitvoering) ziet enkel wie ze maakte
   const items = todoItems(ctx).filter((t) => !t.private || t.by === me);
   const projects = alive(m.projects).filter((p) => p.active !== false);
-  const label = (id) => (id === STOCK ? '🛒 Stock / atelier (geen project)' : projectLabel(m.projects.find((p) => p.id === id), m) || 'Onbekend project');
+  const label = (id) => (id === STOCK ? '🛒 Stock / atelier (geen project)' : id === OFFER ? '📄 Offertes (nog geen project)'
+    : projectLabel(m.projects.find((p) => p.id === id), m) || 'Onbekend project');
+  const projectOptions = (sel) => `${sel === OFFER ? `<option value="${OFFER}" selected>📄 Nog geen project</option>` : ''}
+    <option value="${STOCK}" ${sel === STOCK ? 'selected' : ''}>🛒 Stock / atelier (geen project)</option>
+    ${[...projects].sort((a, b) => label(a.id).localeCompare(label(b.id), 'nl')).map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>${esc(label(p.id))}</option>`).join('')}`;
   const kindOk = (t) => !todoKind || (todoKind === 'eigen' ? !!t.private : (t.kind ?? 'taak') === todoKind);
   // per project, enkel projecten met minstens één open (niet afgevinkt) puntje
   const groups = new Map();
@@ -218,42 +235,52 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     if (!groups.has(t.projectId)) groups.set(t.projectId, []);
     groups.get(t.projectId).push(t);
   }
-  const open = [...groups.entries()].filter(([, list]) => list.some((t) => !t.done))
+  // afgevinkte puntjes blijven onderaan in hun project staan tot de beheerder ze bevestigt
+  const open = [...groups.entries()].filter(([, list]) => list.length)
     .sort((a, b) => label(a[0]).localeCompare(label(b[0]), 'nl'));
   const waiting = items.filter((t) => t.done && !t.confirmed);
   const badges = (t) => `${t.private ? ' <span class="todo-badge">🔒 eigen</span>' : ''}${t.kind && t.kind !== 'taak' ? ` <span class="todo-badge">${esc(TODO_KINDS[t.kind] ?? t.kind)}</span>` : ''}${(t.photos ?? []).length ? ` <span class="todo-badge">📷 ${(t.photos ?? []).length}</span>` : ''}${detailsOf(t) ? ' <span class="todo-badge">📝</span>' : ''}`;
 
+  // zoals Apple Notities: rond vinkje, tekst, achteraan klein de initialen en datum
   const itemHtml = (t) => `<li class="todo-item ${t.done ? 'done' : ''}" data-id="${esc(t.id)}">
-      <span class="todo-main"><input type="checkbox" data-act="toggle" ${t.done ? 'checked' : ''} aria-label="Afvinken">
-        <button type="button" class="todo-title" data-act="open">${esc(titleOf(t))}${badges(t)}</button></span>
-      <small class="muted">${t.done ? `afgevinkt door ${esc(name(t.done_by))} · wacht op bevestiging` : `${esc(name(t.by))}${t.at ? ` · ${esc(when(t.at))}` : ''}`}</small>
-      ${!t.done && (asAdmin || t.by === me) ? '<button class="link danger" data-act="del" aria-label="Verwijderen">✕</button>' : ''}
+      <input type="checkbox" class="round-check" data-act="toggle" ${t.done ? 'checked' : ''} aria-label="Afvinken">
+      <button type="button" class="todo-title" data-act="open">${esc(titleOf(t))}${badges(t)}
+        <small class="todo-meta" title="${esc(t.done ? `afgevinkt door ${name(t.done_by)}, wacht op bevestiging` : name(t.by))}">${t.done
+          ? `✓ ${esc(initials(name(t.done_by)))} · ${esc(when(t.done_at))} · te bevestigen`
+          : `${esc(initials(name(t.by)))}${t.at ? ` · ${esc(when(t.at))}` : ''}`}</small></button>
+      ${!t.done && (asAdmin || t.by === me) ? '<button class="link danger todo-del" data-act="del" aria-label="Verwijderen">✕</button>' : ''}
     </li>`;
+  // accordeon: gezocht met één resultaat → dat project open
+  if (!open.some(([pid]) => pid === todoOpen)) todoOpen = null;
 
   const searchHtml = `<input type="search" id="todoSearch" class="todo-search" placeholder="🔍 Zoek een project…" value="${esc(todoQuery)}" autocomplete="off" aria-label="Zoek een project">`;
   el.innerHTML = `
-    <div class="todo-head">${asAdmin ? (open.length ? searchHtml : '<span></span>') : '<h1 class="page-title">ToDo</h1>'}
+    <div class="todo-head">${asAdmin ? (open.length ? searchHtml : '<span></span>') : `<h1 class="page-title">ToDo${info('Tik op een project om zijn puntjes te tonen. Tik op een puntje voor meer uitleg en foto\'s. Afgevinkte puntjes schuiven naar onder tot de beheerder ze bevestigt.')}</h1>`}
       <button type="button" class="fab-add" id="todoNewBtn" aria-label="Nieuw puntje" title="Nieuw puntje">+</button></div>
     ${!asAdmin && open.length ? searchHtml : ''}
-    <nav class="subtabs todo-kinds" aria-label="Soort">${[['', 'Alles'], ['prijs', '💶 Prijs'], ['tekort', '🛒 Tekort'], ['eigen', '🔒 Eigen']].map(([k, l]) => `<a href="#" data-kind="${k}" class="${k === todoKind ? 'active' : ''}">${l}</a>`).join('')}</nav>
+    <nav class="subtabs todo-kinds" aria-label="Soort">${[['', 'Alles'], ['prijs', '📄 Offerte'], ['tekort', '🛒 Tekort'], ['eigen', '🔒 Eigen']].map(([k, l]) => `<a href="#" data-kind="${k}" class="${k === todoKind ? 'active' : ''}">${l}</a>`).join('')}</nav>
     ${asAdmin ? `<section class="card"><h2>Afgevinkt, te bevestigen ${waiting.length ? `<span class="tab-badge">${waiting.length}</span>` : ''}</h2>
       ${waiting.length ? `<ul class="todo-list">${waiting.sort((a, b) => (b.done_at ?? 0) - (a.done_at ?? 0)).map((t) => `<li class="todo-item done" data-id="${esc(t.id)}">
         <span><b>${esc(label(t.projectId))}</b><br><button type="button" class="todo-title" data-act="open">${esc(titleOf(t))}${badges(t)}</button></span>
         <small class="muted">afgevinkt door ${esc(name(t.done_by))} · ${esc(when(t.done_at))}</small>
         <span class="row"><button class="primary" data-act="confirm">✔ Bevestigen</button><button class="secondary" data-act="reopen">Terug open</button></span></li>`).join('')}</ul>`
         : '<p class="muted">Niets te bevestigen.</p>'}</section>` : ''}
-    ${open.length ? open.map(([pid, list]) => `<section class="card todo-project" data-project="${esc(pid)}" data-label="${esc(label(pid).toLowerCase())}">
-        <h2>${esc(label(pid))}</h2>
-        <ul class="todo-list">${list.sort((a, b) => Number(a.done) - Number(b.done) || (a.at ?? 0) - (b.at ?? 0)).map(itemHtml).join('')}</ul>
-        <form class="todo-add" data-project="${esc(pid)}" data-kind="${esc(todoKind === 'eigen' ? '' : todoKind)}"><input name="text" maxlength="2000" placeholder="+ Puntje toevoegen" autocomplete="off" aria-label="Puntje toevoegen"><button class="secondary">+</button></form>
-      </section>`).join('')
+    ${open.length ? `<div class="todo-groups">${open.map(([pid, list]) => {
+      const isOpen = pid === todoOpen;
+      const n = list.filter((t) => !t.done).length;
+      return `<section class="todo-project ${isOpen ? 'open' : ''}" data-project="${esc(pid)}" data-label="${esc(label(pid).toLowerCase())}">
+        <button type="button" class="todo-head-btn" data-act="fold" aria-expanded="${isOpen}">
+          <span class="todo-pname">${esc(label(pid))}</span><span class="todo-count">${n}</span><span class="chev" aria-hidden="true">›</span></button>
+        ${isOpen ? `<ul class="todo-list">${notesOrder(list).map(itemHtml).join('')}</ul>
+        <form class="todo-add" data-project="${esc(pid)}" data-kind="${esc(todoKind === 'eigen' ? '' : pid === OFFER ? 'prijs' : todoKind)}"><span class="round-check ghost" aria-hidden="true"></span><input name="text" maxlength="2000" placeholder="Nieuw puntje" autocomplete="off" aria-label="Puntje toevoegen"></form>` : ''}
+      </section>`;
+    }).join('')}</div>`
       : `<section class="card"><p class="muted">Er staan geen open puntjes.${!asAdmin && waiting.length ? ` ${waiting.length} afgevinkt puntje(s) wacht(en) op bevestiging van de beheerder.` : ''}</p></section>`}
     ${!asAdmin && open.length && waiting.length ? `<p class="muted small center">${waiting.length} afgevinkt puntje(s) wacht(en) op bevestiging van de beheerder.</p>` : ''}
-    <p class="muted small center" id="todoNoMatch" hidden>Geen project gevonden.</p>
-    <p class="muted small center">Tik op een puntje voor meer uitleg en foto's.</p>`;
+    <p class="muted small center" id="todoNoMatch" hidden>Geen project gevonden.</p>`;
 
   const redraw = () => (onChange ? onChange() : renderTodo(el, { ctx, asAdmin }));
-  const detailOpts = { me, name, label, asAdmin, onSaved: redraw };
+  const detailOpts = { me, name, label, asAdmin, onSaved: redraw, projectOptions };
   /** Nieuw puntje: korte samenvatting + (bij lange tekst) de volledige uitleg */
   const add = (projectId, text, { kind = 'taak', priv = false } = {}) => {
     text = String(text ?? '').trim();
@@ -273,8 +300,22 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     let shown = 0;
     el.querySelectorAll('.todo-project').forEach((s) => { const hit = !q || s.dataset.label.includes(q); s.hidden = !hit; shown += hit; });
     el.querySelector('#todoNoMatch').hidden = shown > 0 || !q;
+    return shown;
   };
-  if (search) { search.oninput = () => { todoQuery = search.value; filter(); }; filter(); }
+  if (search) {
+    search.oninput = () => {
+      todoQuery = search.value;
+      // nog maar één project over: meteen openklappen
+      const one = todoQuery.trim() && filter() === 1 ? el.querySelector('.todo-project:not([hidden])') : null;
+      if (one && one.dataset.project !== todoOpen) {
+        todoOpen = one.dataset.project;
+        redraw();
+        const s = el.querySelector('#todoSearch');
+        s?.focus(); s?.setSelectionRange(s.value.length, s.value.length);
+      }
+    };
+    filter();
+  }
 
   // nieuw puntje: in een venster via de + rechtsboven
   el.querySelector('#todoNewBtn').onclick = () => {
@@ -285,13 +326,14 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
       <h2 id="tnTitle">Nieuw puntje</h2>
       <select name="kind" aria-label="Soort" data-native>${Object.entries(TODO_KINDS).map(([k, l]) => `<option value="${k}" ${k === todoKind ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <select name="project" required aria-label="Project"><option value="">— kies een project —</option>
+        <option value="${OFFER}" ${todoKind === 'prijs' ? 'selected' : ''}>📄 Nog geen project (offerte)</option>
         <option value="${STOCK}">🛒 Stock / atelier (geen project)</option>
         ${sorted.map((p) => `<option value="${esc(p.id)}">${esc(label(p.id))}</option>`).join('')}
         <option value="__new">+ Nieuw project…</option></select>
       <textarea name="text" required maxlength="2000" rows="3" placeholder="Wat moet er nog gebeuren? (de eerste zin wordt de samenvatting)"></textarea>
       <div class="row"><label class="btn secondary photo-add">📷 Foto's<input type="file" name="photos" accept="image/*" multiple hidden></label>
         <span class="muted small" data-count></span></div>
-      <label class="check-row"><input type="checkbox" name="priv" ${todoKind === 'eigen' ? 'checked' : ''}><span>🔒 Enkel voor mij (pas zichtbaar als ik het in uitvoering zet)</span></label>
+      <label class="check-row"><span>🔒 Enkel voor mij ${info('Pas zichtbaar voor de anderen als je het puntje in uitvoering zet.')}</span><input type="checkbox" class="ios-switch" name="priv" ${todoKind === 'eigen' ? 'checked' : ''}></label>
       <div class="row modal-actions"><button type="button" class="secondary" data-a="close">Annuleren</button><button class="primary">Toevoegen</button></div>
     </form>`;
     document.body.append(wrap);
@@ -301,6 +343,12 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     if (todoQuery.trim() && visible.length === 1) nf.elements.project.value = visible[0].dataset.project;
     const close = () => wrap.remove();
     wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target.closest('[data-a="close"]')) close(); });
+    // offerte: nog geen project nodig (later toewijzen in het puntje)
+    nf.elements.kind.onchange = () => {
+      const pv = nf.elements.project.value;
+      if (nf.elements.kind.value === 'prijs' && !pv) nf.elements.project.value = OFFER;
+      if (nf.elements.kind.value !== 'prijs' && pv === OFFER) nf.elements.project.value = '';
+    };
     nf.elements.project.onchange = async () => {
       if (nf.elements.project.value !== '__new') return;
       nf.elements.project.value = '';
@@ -323,6 +371,7 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
       }
       close();
       toast('Puntje toegevoegd', 'ok');
+      todoOpen = nf.elements.project.value;
       redraw();
     };
     setTimeout(() => (nf.elements.project.value ? nf.elements.text : nf.elements.project).focus(), 50);
@@ -336,6 +385,14 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     const kb = e.target.closest('[data-kind]');
     if (kb && kb.tagName === 'A') { e.preventDefault(); todoKind = kb.dataset.kind; return redraw(); }
     const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'fold') {
+      // accordeon: dit project open, de rest dicht (nog eens tikken = dicht)
+      const pid = e.target.closest('.todo-project').dataset.project;
+      todoOpen = todoOpen === pid ? null : pid;
+      redraw();
+      el.querySelector(`.todo-project[data-project="${CSS.escape(pid)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      return;
+    }
     const id = e.target.closest('[data-id]')?.dataset.id;
     if (!act || !id || act === 'toggle') return;
     if (act === 'open') return openDetail(ctx, id, detailOpts);

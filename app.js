@@ -8,7 +8,7 @@ import { renderDay, emptyReg, rulesFrom } from './day.js';
 import { Admin } from './admin.js';
 import { summarize } from './engine.js';
 import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
-import { esc, alive, byName, projectLabel, toast, sha256, copyText } from './ui.js';
+import { esc, alive, byName, projectLabel, toast, sha256, copyText, info } from './ui.js';
 import { seedDemo } from './demo.js';
 import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths, openDays, openDaysButton } from './report.js';
@@ -455,7 +455,7 @@ function viewWelcome(message = '') {
     <h1>Urenregistratie</h1>
     <p>Meld je aan met het <b>gedeelde Microsoft-account van Enautec</b>. Je uren, planning en materiaal worden in OneDrive bewaard.</p>
     ${message ? `<div class="error">${esc(message)}</div>` : ''}
-    ${MS_CLIENT_ID ? '<button class="primary big" data-act="login">Aanmelden met Microsoft</button><p class="muted small">Vink bij Microsoft <b>"Aangemeld blijven"</b> aan, dan hoef je dit niet opnieuw te doen.</p>'
+    ${MS_CLIENT_ID ? `<button class="primary big" data-act="login">Aanmelden met Microsoft</button>${info('Vink bij Microsoft "Aangemeld blijven" aan, dan hoef je dit niet opnieuw te doen.')}`
       : '<div class="notice">De app is nog niet gekoppeld aan Microsoft. Beheerder: vul MS_CLIENT_ID in (zie HANDLEIDING.md).</div>'}
     ${LOCAL ? '<p><a href="?test=1">Testmodus starten (zonder Microsoft)</a></p>' : ''}
   </section>`;
@@ -565,8 +565,8 @@ async function ensureDevice({ force = false } = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.innerHTML = `<form class="modal device-pick" role="dialog" aria-modal="true" aria-labelledby="dpTitle">
-      <h2 id="dpTitle">Welk toestel is dit?</h2>
-      <p class="muted small">Je bent aangemeld in <b>${esc(cur.device ?? 'een nieuwe browser')}</b>. Ben je op dit toestel al aangemeld in een andere browser of in de app? Kies het dan, zodat het maar één keer in de lijst staat.</p>
+      <h2 id="dpTitle">Welk toestel is dit?${info('Ben je op dit toestel al aangemeld in een andere browser of in de app? Kies het dan, zodat het maar één keer in de lijst staat.')}</h2>
+      <p class="muted small">Je bent aangemeld in <b>${esc(cur.device ?? 'een nieuwe browser')}</b>.</p>
       ${options.map((o, i) => `<label class="device-opt"><input type="radio" name="dev" value="${i}">
         <span><b>${o.type === 'mobiel' ? '📱' : '💻'} ${esc(o.name)}</b><small class="muted">${esc([...o.browsers].filter(Boolean).join(', '))}</small></span></label>`).join('')}
       <label class="device-opt"><input type="radio" name="dev" value="new" ${options.length ? '' : 'checked'}>
@@ -673,8 +673,8 @@ async function viewLogin(message = '') {
         <button class="primary big">Aanmelden</button>
       </form><div id="loginErr"></div>
       ${users.length && !serverUsers.length ? '<p class="small"><button type="button" class="link" data-act="forgetuser">Deze gebruiker uit de lijst verwijderen</button></p>' : ''}
-      <p class="muted small">Je blijft aangemeld op dit toestel tot je zelf afmeldt (Meer → Afmelden). Gebruik je het toestel van een collega? Meld je daarna af.</p>
-      <p class="muted small">Wachtwoord vergeten? Vraag een beheerder om een nieuw wachtwoord. Daarna kan je het zelf wijzigen via Meer → Wachtwoord wijzigen.</p>
+      <p class="muted small">Aangemeld blijven${info('Je blijft aangemeld op dit toestel tot je zelf afmeldt (Meer → Afmelden). Gebruik je het toestel van een collega? Meld je daarna af.')}
+        · Wachtwoord vergeten?${info('Vraag een beheerder om een nieuw wachtwoord. Daarna kan je het zelf wijzigen via Meer → Wachtwoord wijzigen.')}</p>
       ${TEST ? '<p class="muted small">Testmodus: gebruiker <b>tomas</b>, <b>ruben</b> of <b>philippe</b>, wachtwoord <b>demo1234</b>.</p>' : ''}
       ${isKeyAdmin ? `<section class="key-admin">
         <h2>Beheer met beheersleutel</h2>
@@ -765,8 +765,7 @@ function viewWho() {
   setNav('');
   const emps = alive(ctx.master().employees).filter((e) => e.active !== false).sort(byName);
   $main.innerHTML = `<section class="card">
-    <h1>Wie ben jij?</h1>
-    <p class="muted">Kies je naam. De app onthoudt dit op dit toestel. Heb je een koppellink gekregen? Open die dan, zo wordt ook de automatische registratie gekoppeld.</p>
+    <h1>Wie ben jij?${info('Kies je naam. De app onthoudt dit op dit toestel. Heb je een koppellink gekregen? Open die dan, zo wordt ook de automatische registratie gekoppeld.')}</h1>
     <div class="who">${emps.map((e) => `<button class="secondary" data-u="${esc(e.username)}">${esc(e.name)}</button>`).join('') || '<p class="muted" style="grid-column:1/-1">Nog geen werknemers. De beheerder voegt ze toe via <a href="#beheer/employees">Beheer</a>.</p>'}</div>
   </section>`;
   $main.querySelectorAll('[data-u]').forEach((b) => b.onclick = () => {
@@ -852,12 +851,15 @@ function viewPlanning([view = 'week', date, of] = []) {
   $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: me, of, view, date });
   // agenda van een collega bekijken
   // agenda's van collega's aanvinken (meerdere tegelijk); niets aangevinkt = de eigen
+  // keuzelijst met schakelaars: toepassen als ze dichtgaat (zo kan je er meerdere na elkaar aanzetten)
   const pick = $main.querySelector('#calOf');
-  if (pick) pick.onchange = () => {
+  if (pick) pick.addEventListener('toggle', () => {
+    if (pick.open) return;
     const list = [...pick.querySelectorAll('input:checked')].map((x) => x.value);
     const v = list.length ? list.join(',') : me;
+    if (v === of) return;
     location.hash = `#planning/${view}/${isDate(date) ? date : today()}${v !== me ? `/${encodeURIComponent(v)}` : ''}`;
-  };
+  });
 }
 
 /** Overzicht per week, maand of jaar: #overzicht/week/<datum>, #overzicht/maand/<jjjj-mm>, #overzicht/jaar/<jjjj> */
@@ -957,8 +959,7 @@ async function pushCard(box) {
     if (sub) {
       try { on = (await (await fetch(`${server}/api/push/status?endpoint=${encodeURIComponent(sub.endpoint)}`, { headers: { Authorization: `Bearer ${dev.session}` } })).json()).subscribed; } catch { on = true; }
     }
-    box.innerHTML = `<h2>Meldingen</h2>
-      <p class="muted small">Je krijgt een melding als je ergens toekomt: <b>"Aan het werk?"</b> ('s ochtends), <b>"Bij wie ben je?"</b> (na een verplaatsing) en <b>"Dag bevestigen?"</b> als je thuiskomt. Zo kies je meteen het juiste project.</p>
+    box.innerHTML = `<h2>Meldingen${info('Je krijgt een melding als je ergens toekomt: "Aan het werk?" (\'s ochtends), "Bij wie ben je?" (na een verplaatsing) en "Dag bevestigen?" als je thuiskomt. Zo kies je meteen het juiste project.')}</h2>
       ${Notification.permission === 'denied' ? '<p class="error">Meldingen zijn geblokkeerd voor deze app. Zet ze aan in de instellingen van je toestel of browser.</p>' : ''}
       <p>${on ? '<span class="pill ok">Aan op dit toestel</span>' : '<span class="pill warn">Uit op dit toestel</span>'}</p>
       <div class="row">${on ? '<button class="secondary" data-act="ptest">Testmelding sturen</button><button class="link danger" data-act="poff">Uitzetten</button>'
@@ -1010,34 +1011,31 @@ async function viewMore() {
           <input name="current" type="password" autocomplete="current-password" placeholder="Huidig wachtwoord" required aria-label="Huidig wachtwoord">
           <input name="pw1" type="password" autocomplete="new-password" placeholder="Nieuw wachtwoord (min. 8 tekens)" required minlength="8" aria-label="Nieuw wachtwoord">
           <input name="pw2" type="password" autocomplete="new-password" placeholder="Herhaal nieuw wachtwoord" required minlength="8" aria-label="Herhaal nieuw wachtwoord">
-          <div class="row"><button class="primary">Wachtwoord wijzigen</button></div>
-          <p class="muted small">Na het wijzigen word je op je andere toestellen afgemeld.</p>
+          <div class="row"><button class="primary">Wachtwoord wijzigen</button>${info('Na het wijzigen word je op je andere toestellen afgemeld.')}</div>
         </form><div id="pwMsg"></div>
       </details>
     </section>
     <section class="card prefs"><h2>Weergave</h2>
       <label class="q-field"><span>Achtergrond</span><select data-pref="theme" data-native>
         ${[['', 'Automatisch (zoals je toestel)'], ['light', 'Wit'], ['dark', 'Zwart']].map(([v, l]) => `<option value="${v}" ${(prefs().theme ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label class="check-row"><input type="checkbox" data-pref="counters" ${prefs().counters ? 'checked' : ''}> <span>Tellers (werk, pauze, netto) tonen op het dagscherm</span></label>
+      <label class="check-row"><span>Tellers (werk, pauze, netto) tonen op het dagscherm</span><input type="checkbox" class="ios-switch" data-pref="counters" ${prefs().counters ? 'checked' : ''}></label>
     </section>
     <section class="card" id="pushCard"><h2>Meldingen</h2><p class="muted">Laden…</p></section>
-    <section class="card"><h2>Mijn toestellen</h2>
-      <p class="muted small">Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.</p>
+    <section class="card"><h2>Mijn toestellen${info('Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.')}</h2>
       <div id="mySessions"><p class="muted">Laden…</p></div>
     </section>
     ${mobile && !isStandalone() ? `<section class="card"><h2>App op je beginscherm</h2>
       ${isIOS() ? '<p>Tik in Safari onderaan op <b>Deel</b> (vierkantje met pijl) → <b>Zet op beginscherm</b>. Open de app daarna via het icoon en meld je daar één keer aan.</p>'
         : '<p>Menu (⋮) → <b>Toevoegen aan startscherm</b> of <b>App installeren</b>. Open de app daarna via het icoon.</p>'}
     </section>` : ''}
-    ${mobile && ot && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)</h2>
-      <p class="muted">OwnTracks stuurt je locatie door zodat de app je uren voorstelt. Je locatie wordt enkel daarvoor gebruikt en na enkele weken gewist.</p>
+    ${mobile && ot && server ? `<section class="card"><h2>Automatische registratie (OwnTracks)${info('OwnTracks stuurt je locatie door zodat de app je uren voorstelt. Je locatie wordt enkel daarvoor gebruikt en na enkele weken gewist.')}</h2>
       <details><summary><b>Stap voor stap instellen (met tekeningen)</b></summary>
         ${owntracksGuideHtml({ ios: isIOS(), link: owntracksLink(ot), ot, server })}
       </details>
     </section>` : ''}
-    ${mobile && isStandalone() ? `<section class="card"><h2>Widget en snelkoppelingen</h2>
-      ${isIOS() ? '<p class="muted">Zet je uren van vandaag als widget op je beginscherm (met de gratis app Scriptable).</p><div class="row"><button class="secondary" data-act="widget">🧩 Widget instellen</button></div>'
-        : '<p class="muted">Hou het icoon van Enautec Uren ingedrukt voor snelkoppelingen naar Vandaag, Materiaal, Planning en ToDo.</p>'}
+    ${mobile && isStandalone() ? `<section class="card"><h2>Widget en snelkoppelingen${info(isIOS() ? 'Zet je uren van vandaag als widget op je beginscherm (met de gratis app Scriptable).'
+        : 'Hou het icoon van Enautec Uren ingedrukt voor snelkoppelingen naar Vandaag, Materiaal, Planning en ToDo.')}</h2>
+      ${isIOS() ? '<div class="row"><button class="secondary" data-act="widget">🧩 Widget instellen</button></div>' : ''}
       ${isIOS() ? '<div class="row"><button class="secondary" data-act="autoot">⏰ OwnTracks automatisch openen</button></div>' : ''}
       <p><button class="link" data-act="setup">Instelstappen opnieuw doorlopen</button></p>
     </section>` : ''}
@@ -1165,11 +1163,11 @@ async function viewAdmin(tab) {
   if (!adminUnlocked()) {
     const first = !m.settings?.adminPinHash;
     $main.innerHTML = `<section class="card narrow"><h1>Beheer</h1>
-      <p class="muted">${first ? 'Stel een pincode in voor het beheer (4 tot 8 cijfers). Enkel de beheerder kent deze code.' : 'Geef de pincode van het beheer.'}</p>
+      <p class="muted">${first ? `Stel een pincode in voor het beheer (4 tot 8 cijfers).${info('Enkel de beheerder kent deze code.')}` : 'Geef de pincode van het beheer.'}</p>
       <form id="pinForm" class="row"><input name="pin" type="password" inputmode="numeric" autocomplete="${first ? 'new-password' : 'current-password'}" required placeholder="Pincode" aria-label="Pincode"><button class="primary">${first ? 'Instellen' : 'Openen'}</button></form>
       ${TEST ? '<p class="muted small">Testmodus: probeer pincode 1234 na het laden van de demo.</p>' : ''}
       <div id="pinErr"></div></section>
-      ${TEST && !alive(m.employees).length ? '<section class="card narrow"><h2>Testmodus</h2><p class="muted">Laad fictieve klanten, projecten en werknemers om de app uit te proberen.</p><button class="secondary" data-act="demo">Demogegevens laden</button></section>' : ''}`;
+      ${TEST && !alive(m.employees).length ? `<section class="card narrow"><h2>Testmodus${info('Laad fictieve klanten, projecten en werknemers om de app uit te proberen.')}</h2><button class="secondary" data-act="demo">Demogegevens laden</button></section>` : ''}`;
     $main.querySelector('[data-act=demo]')?.addEventListener('click', async () => { await seedDemo(ctx); toast('Demogegevens geladen. Pincode: 1234', 'ok'); route(); });
     $main.querySelector('#pinForm').onsubmit = async (e) => {
       e.preventDefault();

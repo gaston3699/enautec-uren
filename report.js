@@ -5,7 +5,7 @@ import { summarize } from './engine.js';
 import { localTime, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
 import { emptyReg, rulesFrom } from './day.js';
-import { esc } from './ui.js';
+import { esc, info } from './ui.js';
 import { isoDay, weekStart, weekNumber, monthDays, shiftMonth, holidayName, expectedMinutes } from './periods.js';
 
 const MIN = 60000;
@@ -193,14 +193,13 @@ export function weekHtml(ctx, username, anyDate) {
   const covered = t.work;
   return `<section class="card week">
     <div class="period-head"><a class="icon" href="#overzicht/week/${shiftDate(mon, -7)}" aria-label="Vorige week">‹</a>
-      <div><h2>Week ${weekNumber(mon)}</h2><div class="muted small">${esc(fmtDate(mon, { day: 'numeric', month: 'long' }))} – ${esc(fmtDate(shiftDate(mon, 6), { day: 'numeric', month: 'long', year: 'numeric' }))}</div></div>
+      <div><h2>Week ${weekNumber(mon)}${info('Tik op een dag om ze te openen. Gestreepte rand = nog niet bevestigd.')}</h2><div class="muted small">${esc(fmtDate(mon, { day: 'numeric', month: 'long' }))} – ${esc(fmtDate(shiftDate(mon, 6), { day: 'numeric', month: 'long', year: 'numeric' }))}</div></div>
       <a class="icon" href="#overzicht/week/${shiftDate(mon, 7)}" aria-label="Volgende week">›</a></div>
     ${mon !== weekStart(today()) ? `<p class="center"><a href="#overzicht/week/${today()}">Naar deze week</a></p>` : ''}
     <div class="wrow head"><div></div><div class="wtrack">${trackHtml([], mon, range, { gaps: false, compact: true, step: range[1] - range[0] > 8 ? 2 : 1 }).replace('class="track compact ', 'class="track compact axis ')}</div><div class="wtot muted small">Totaal</div></div>
     ${rows}
     ${totalHtml('Gewerkt deze week', covered)}
     ${legendHtml()}
-    <p class="muted small">Tik op een dag om ze te openen. Gestreepte rand = nog niet bevestigd.</p>
   </section>`;
 }
 
@@ -267,13 +266,12 @@ export function monthHtml(ctx, username, month) {
   const title = new Date(`${month}-15T12:00:00Z`).toLocaleDateString('nl-BE', { month: 'long', year: 'numeric' });
   return `<section class="card">
     <div class="period-head"><a class="icon" href="#overzicht/maand/${shiftMonth(month, -1)}" aria-label="Vorige maand">‹</a>
-      <div><h2 class="cap">${esc(title)}</h2></div>
+      <div><h2 class="cap">${esc(title)}${info('Rood bolletje = werkdag zonder bevestigde uren. Tik op een dag om ze te openen.')}</h2></div>
       <a class="icon" href="#overzicht/maand/${shiftMonth(month, 1)}" aria-label="Volgende maand">›</a></div>
     ${month !== today().slice(0, 7) ? `<p class="center"><a href="#overzicht/maand/${today().slice(0, 7)}">Naar deze maand</a></p>` : ''}
     <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Uren per dag">${SVG_DEFS}${grid.join('')}${cols}</svg>
     ${totalHtml('Gewerkt deze maand', work)}
     ${legendHtml(['werf', 'atelier', 'verpl'])}
-    <p class="muted small">Rood bolletje = werkdag zonder bevestigde uren. Tik op een dag om ze te openen.</p>
   </section>
   <section class="card table-wrap"><table class="num"><thead><tr><th>Week</th><th>Periode</th><th>Gewerkt</th></tr></thead><tbody>
     ${weeks.map((w) => `<tr class="click" data-href="#overzicht/week/${w.start}"><td>${w.wk}</td><td>${Number(w.start.slice(8))}–${Number(w.end.slice(8))}</td>

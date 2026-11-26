@@ -2,7 +2,7 @@
 //  - Werknemer: eigen planning. Route: #planning/<dag|week|maand>/<datum>
 //  - Beheer (admin: true): iedereen, per project met de namen; dagen aantikken om te selecteren
 //    (de navigatie loopt dan via data-v / data-d in plaats van de adresbalk).
-import { esc, alive, projectLabel } from './ui.js';
+import { esc, alive, projectLabel, personPickHtml, initials } from './ui.js';
 import { today, shiftDate, fmtDate, isDate } from './time.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
 
@@ -41,6 +41,67 @@ export function visibleDays(view, date) {
   return monthDays(date.slice(0, 7));
 }
 
+/**
+ * Blokjes in de kalender verslepen naar een andere dag (muis: meteen slepen; gsm: even ingedrukt houden).
+ * onDrop({ from, projectId, ids, to }) wordt opgeroepen bij loslaten op een andere dag ([data-day]).
+ * Geeft een functie terug die meldt of er net gesleept werd (dan de klik erna negeren).
+ */
+export function enableChipDrag(root, onDrop) {
+  let st = null; // { chip, x0, y0, timer, active, ghost, target }
+  let justDragged = 0;
+  const dayAt = (x, y) => document.elementFromPoint(x, y)?.closest?.('[data-day]');
+  const start = () => {
+    st.active = true;
+    const r = st.chip.getBoundingClientRect();
+    st.ghost = st.chip.cloneNode(true);
+    st.ghost.classList.add('cal-ghost');
+    Object.assign(st.ghost.style, { width: `${r.width}px`, left: `${r.left}px`, top: `${r.top}px` });
+    st.dx = st.x0 - r.left; st.dy = st.y0 - r.top;
+    document.body.append(st.ghost);
+    st.chip.classList.add('dragging');
+    navigator.vibrate?.(15);
+  };
+  const move = (x, y) => {
+    st.ghost.style.left = `${x - st.dx}px`; st.ghost.style.top = `${y - st.dy}px`;
+    const d = dayAt(x, y);
+    if (d !== st.target) { st.target?.classList.remove('drop-on'); st.target = d; d?.classList.add('drop-on'); }
+  };
+  const end = (drop) => {
+    if (!st) return;
+    clearTimeout(st.timer);
+    if (st.active) {
+      st.ghost.remove(); st.chip.classList.remove('dragging'); st.target?.classList.remove('drop-on');
+      justDragged = Date.now();
+      const [from, projectId] = st.chip.dataset.move.split('|');
+      const to = st.target?.dataset.day;
+      if (drop && to && to !== from) onDrop({ from, projectId, ids: st.chip.dataset.ids.split(',').filter(Boolean), to });
+    }
+    st = null;
+  };
+  root.addEventListener('pointerdown', (e) => {
+    const chip = e.target.closest('[data-move]');
+    if (!chip || e.target.closest('button') || e.button > 0) return;
+    st = { chip, x0: e.clientX, y0: e.clientY, active: false, touch: e.pointerType !== 'mouse' };
+    if (st.touch) st.timer = setTimeout(() => st && start(), 350);
+  });
+  root.addEventListener('pointermove', (e) => {
+    if (!st) return;
+    const far = Math.hypot(e.clientX - st.x0, e.clientY - st.y0) > 8;
+    if (!st.active) {
+      if (!far) return;
+      if (st.touch) return end(false); // bewogen voor het ingedrukt houden: gewoon scrollen
+      start();
+    }
+    move(e.clientX, e.clientY);
+  });
+  // tijdens het slepen op een gsm niet scrollen
+  root.addEventListener('touchmove', (e) => { if (st?.active) e.preventDefault(); }, { passive: false });
+  root.addEventListener('pointerup', () => end(true));
+  root.addEventListener('pointercancel', () => end(false));
+  root.addEventListener('contextmenu', (e) => { if (st?.active || e.target.closest('[data-move]')) e.preventDefault(); });
+  return () => Date.now() - justDragged < 400;
+}
+
 export function planningHtml({ master: m, planning, username, of = null, view = 'week', date, admin = false, selected = new Set(), only = null }) {
   of = of || username; // wiens agenda: de eigen, die van een collega of van meerdere (komma's)
   const ofSet = new Set(String(of).split(',').filter(Boolean));
@@ -72,7 +133,8 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     const w = mates(d, e.projectId);
     return w.length ? `<span class="cal-who">met ${esc(w.map(first).join(', '))}</span>` : '';
   };
-  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}">${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}${admin && !cls && e.projectId !== LEAVE ? `<button type="button" class="cal-add" data-need="${esc(`${d}|${e.projectId}`)}" title="Materiaal nodig" aria-label="Materiaal toevoegen">+</button>` : ''}</span>`;
+  // beheer: een blokje (project op een dag, met al zijn mensen) kan je naar een andere dag slepen
+  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}"${admin ? ` data-move="${esc(`${d}|${e.projectId}`)}" data-ids="${esc(e.items.map((i) => i.id).join(','))}" title="Sleep naar een andere dag om te verplaatsen"` : ''}>${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}${admin && !cls && e.projectId !== LEAVE ? `<button type="button" class="cal-add" data-need="${esc(`${d}|${e.projectId}`)}" title="Materiaal nodig" aria-label="Materiaal toevoegen">+</button>` : ''}</span>`;
   const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}${of !== username ? `/${encodeURIComponent(of)}` : ''}`);
   const nav = (v, d) => `href="${link(v, d)}" data-v="${v}" data-d="${d}"`;
   const sel = (d) => (selected.has(d) ? 'sel' : '');
@@ -152,9 +214,10 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
   // agenda's aanvinken: de eigen en/of die van collega's (samen in één kalender)
   const picker = admin ? '' : `<div class="cal-of">
       <h1 class="page-title">${of === username ? 'Mijn planning' : ofSet.size === 1 ? `Planning van ${esc(person(of))}` : 'Planning'}</h1>
-      ${colleagues.length ? `<div class="cal-of-pick" id="calOf" role="group" aria-label="Agenda's tonen">
-        ${[{ username, name: 'Mezelf' }, ...colleagues].map((e) => `<label class="pill-check"><input type="checkbox" value="${esc(e.username)}" ${ofSet.has(e.username) ? 'checked' : ''}><span>${esc(e.username === username ? 'Mezelf' : String(e.name).split(' ')[0])}</span></label>`).join('')}
-      </div>` : ''}
+      ${colleagues.length ? personPickHtml({
+        id: 'calOf', label: "Agenda's", empty: 'Mezelf', selected: [...ofSet],
+        people: [{ value: username, label: 'Mezelf', short: initials(person(username)) || 'Ik' }, ...colleagues.map((e) => ({ value: e.username, label: e.name }))],
+      }) : ''}
     </div>`;
   return `${picker}
     <nav class="subtabs" aria-label="Weergave">${VIEWS.map(([k, l]) => `<a ${nav(k, date)} class="${k === view ? 'active' : ''}">${l}</a>`).join('')}</nav>
