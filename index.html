@@ -583,6 +583,46 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 
 /* Navigatie onderaan */
 #nav[hidden] { display: none; }
+/* typen op een gsm: het toetsenbord duwt de onderste balk anders midden op het scherm */
+@media (pointer: coarse) { body.typing #nav { display: none; } }
+.check-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.check-row input { width: 22px; height: 22px; flex: none; }
+/* gsm: duur achter de uren, op dezelfde regel */
+@media (max-width: 520px) {
+  .blk-time:not(:has(.km)) { flex-wrap: nowrap; }
+  .blk-time { gap: 4px; }
+  .blk-time input.t { width: 4.4em; font-size: 16px; padding: 6px 2px; }
+  .blk-time .dur { min-width: 0; padding: 6px 6px; }
+  .blk-pause { flex-wrap: nowrap !important; gap: 4px !important; }
+  .blk-pause input.t { width: 3.9em; padding: 4px 2px; }
+  .blk-pause .dur { min-width: 0; padding: 4px 5px; }
+}
+.day-total { margin: 4px 0 8px; font-size: 17px; }
+/* mee te nemen: geen lijntjes, wel zelf toevoegen */
+.need-check { border-bottom: 0 !important; padding: 4px 0; }
+.need-check input { min-height: 0 !important; height: 22px; margin: 0; }
+.need-add { display: flex; gap: 6px; margin-top: 8px; }
+.need-add input { flex: 1; min-width: 0; }
+.need-add button { flex: none; min-width: 44px; font-size: 20px; padding: 4px 12px; }
+.day-need.leave { border-left-color: var(--muted); }
+/* foto's: bladeren */
+.photo-view .pv-prev, .photo-view .pv-next { position: fixed; top: 50%; transform: translateY(-50%); font-size: 28px; padding: 8px 16px; opacity: .9; }
+.photo-view .pv-prev { left: 10px; } .photo-view .pv-next { right: 10px; }
+.photo-view .pv-count { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); color: #fff; font-weight: 700; background: rgba(0,0,0,.5); padding: 4px 10px; border-radius: 10px; }
+/* planning: materiaal toevoegen op een project, verlof, agenda's aanvinken */
+.cal-chip { position: relative; }
+.cal-chip:has(.cal-add) { padding-right: 34px; }
+.cal-chip .cal-add { position: absolute; top: 3px; right: 4px; border: 0; background: rgba(255,255,255,.6); color: inherit; border-radius: 6px; font-weight: 800; padding: 0 7px; line-height: 1.5; cursor: pointer; }
+.cal-chip.leave { background: var(--surface2); color: var(--muted); }
+.cal-chip small { font-weight: 600; opacity: .85; }
+.cal-of-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.todo-kinds { margin: 0 0 12px; }
+/* zelf gekozen zwarte achtergrond: logo's zoals bij de automatische donkere modus */
+:root[data-theme="dark"] .brand img { filter: invert(1) hue-rotate(180deg); }
+:root[data-theme="dark"] body.update-ready .brand img { filter: none; }
+:root[data-theme="dark"] .welcome-logo { background: #fff; border-radius: 12px; padding: 10px; }
+/* computer: breder scherm */
+@media (min-width: 1200px) { main { max-width: 1100px; } }
 #nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: center; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
 #nav a { flex: 1; max-width: 140px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px 9px; text-decoration: none; color: var(--muted); font-size: 12px; font-weight: 700; border-top: 3px solid transparent; }
 #nav a span { font-size: 19px; line-height: 1.1; filter: grayscale(1); }

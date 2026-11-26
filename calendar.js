@@ -7,6 +7,8 @@ import { today, shiftDate, fmtDate, isDate } from './time.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
 
 export const VIEWS = [['dag', 'Dag'], ['week', 'Week'], ['maand', 'Maand']];
+/** Verlof in de planning: een planningsregel met dit "project" (niet beschikbaar) */
+export const LEAVE = '__verlof';
 const WD = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'];
 
 /** Kleur per project (vast, zodat hetzelfde project overal dezelfde kleur heeft) */
@@ -39,17 +41,23 @@ export function visibleDays(view, date) {
   return monthDays(date.slice(0, 7));
 }
 
-export function planningHtml({ master: m, planning, username, of = null, view = 'week', date, admin = false, selected = new Set() }) {
-  of = of || username; // wiens agenda: de eigen of die van een collega
+export function planningHtml({ master: m, planning, username, of = null, view = 'week', date, admin = false, selected = new Set(), only = null }) {
+  of = of || username; // wiens agenda: de eigen, die van een collega of van meerdere (komma's)
+  const ofSet = new Set(String(of).split(',').filter(Boolean));
+  const multi = !admin && ofSet.size > 1;
   if (!VIEWS.some(([k]) => k === view)) view = 'week';
   const t = today();
   if (!isDate(date)) date = t;
   const everyone = alive(planning.items);
-  const all = everyone.filter((p) => admin || p.username === of);
+  // beheer: enkel de aangevinkte personen (only); werknemer: de gekozen agenda's
+  const all = everyone.filter((p) => (admin ? !only || only.has(p.username) : ofSet.has(p.username)));
   const emps = alive(m.employees);
   const person = (u) => emps.find((e) => e.username === u)?.name ?? u;
   const proj = (id) => m.projects.find((x) => x.id === id);
-  const name = (id) => projectLabel(proj(id), m) || 'Onbekend project';
+  const name = (id) => (id === LEAVE ? '🏖 Verlof' : projectLabel(proj(id), m) || 'Onbekend project');
+  const hueOf = (id) => (id === LEAVE ? 0 : hue(id));
+  /** vroegste uur van een groepje (mag leeg) */
+  const timeOf = (items) => items.map((i) => i.time).filter(Boolean).sort()[0] ?? '';
   /** per dag: groepjes per project, met de mensen */
   const on = (d) => {
     const g = new Map();
@@ -58,13 +66,13 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
   };
   const first = (u) => (u === username && !admin ? 'jij' : person(u).split(' ')[0]);
   /** collega's die die dag ook op dat project staan */
-  const mates = (d, projectId) => [...new Set(everyone.filter((p) => p.date === d && p.projectId === projectId && p.username !== of).map((p) => p.username))];
+  const mates = (d, projectId) => (projectId === LEAVE ? [] : [...new Set(everyone.filter((p) => p.date === d && p.projectId === projectId && !ofSet.has(p.username)).map((p) => p.username))]);
   const who = (e, d) => {
-    if (admin) return `<span class="cal-who">${esc(e.items.map((i) => first(i.username)).join(', '))}</span>`;
+    if (admin || multi) return `<span class="cal-who">${esc(e.items.map((i) => first(i.username)).join(', '))}</span>`;
     const w = mates(d, e.projectId);
     return w.length ? `<span class="cal-who">met ${esc(w.map(first).join(', '))}</span>` : '';
   };
-  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls}" style="--h:${hue(e.projectId)}">${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}</span>`;
+  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}">${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}${admin && !cls && e.projectId !== LEAVE ? `<button type="button" class="cal-add" data-need="${esc(`${d}|${e.projectId}`)}" title="Materiaal nodig" aria-label="Materiaal toevoegen">+</button>` : ''}</span>`;
   const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}${of !== username ? `/${encodeURIComponent(of)}` : ''}`);
   const nav = (v, d) => `href="${link(v, d)}" data-v="${v}" data-d="${d}"`;
   const sel = (d) => (selected.has(d) ? 'sel' : '');
@@ -81,12 +89,13 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
       const p = proj(e.projectId);
       const site = m.sites.find((s) => s.id === p?.site_id);
       const notes = [...new Set(e.items.map((i) => i.note).filter(Boolean))];
-      return `<section class="card cal-day-item" style="--h:${hue(e.projectId)}">
-        <div><b>${esc(name(e.projectId))}</b>
+      return `<section class="card cal-day-item" style="--h:${hueOf(e.projectId)}">
+        <div><b>${timeOf(e.items) ? `${esc(timeOf(e.items))} · ` : ''}${esc(name(e.projectId))}</b>${multi ? ` <span class="cal-who">${esc(e.items.map((i) => first(i.username)).join(', '))}</span>` : ''}
         ${site ? `<div class="muted">📍 ${esc(site.name)}${site.address ? ` · ${esc(site.address)}` : ''}</div>` : ''}
         ${notes.map((n) => `<div>${esc(n)}</div>`).join('')}
         ${needHtml(needOf(planning, date, e.projectId))}
-        ${admin ? `<div><button type="button" class="link" data-need="${esc(`${date}|${e.projectId}`)}">🧰 ${needOf(planning, date, e.projectId)?.lines?.length ? 'Materiaal wijzigen' : 'Materiaal nodig toevoegen'}</button></div>` : ''}
+        ${admin && e.projectId !== LEAVE ? `<div><button type="button" class="link" data-need="${esc(`${date}|${e.projectId}`)}">🧰 ${needOf(planning, date, e.projectId)?.lines?.length ? 'Materiaal wijzigen' : 'Materiaal nodig toevoegen'}</button></div>` : ''}
+        ${!admin && !multi && date >= t && of === username && e.projectId !== LEAVE ? `<div><a href="#dag/${date}">🧰 Mee te nemen bekijken of aanvullen</a></div>` : ''}
         ${!admin && mates(date, e.projectId).length ? `<div class="cal-mates">👷 Samen met ${esc(mates(date, e.projectId).map(first).join(', '))}</div>` : ''}
         ${admin ? `<div class="cal-people">${e.items.map((i) => `<span class="pill">${esc(person(i.username))}<button type="button" class="link danger" data-del="${esc(i.id)}" aria-label="${esc(person(i.username))} uitplannen">✕</button></span>`).join('')}</div>` : ''}</div>
         ${!admin && site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}">Route</a>` : ''}
@@ -121,7 +130,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
       return `<a class="cal-cell ${d === t ? 'today' : ''} ${isoDay(d) > 5 ? 'weekend' : ''} ${hol ? 'holiday' : ''} ${sel(d)}" ${cellAttr(d)} title="${esc(tip)}">
         <b>${Number(d.slice(8))}</b>
         ${list.slice(0, 2).map((e) => chip(e, d, 'mini')).join('')}${list.length > 2 ? `<small class="muted">+${list.length - 2}</small>` : ''}
-        <span class="cal-dots">${list.map((e) => `<i style="--h:${hue(e.projectId)}"></i>`).join('')}</span>
+        <span class="cal-dots">${list.map((e) => `<i style="--h:${hueOf(e.projectId)}"></i>`).join('')}</span>
         ${admin ? `<span class="cal-count">${list.reduce((n, e) => n + e.items.length, 0) || ''}</span>` : ''}
       </a>`;
     }).join('')}</div>`;
@@ -130,7 +139,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     for (const it of all.filter((p) => p.date.startsWith(mo))) count.set(it.projectId, [...(count.get(it.projectId) ?? []), it]);
     const daysOf = (list) => new Set(list.map((i) => i.date)).size;
     body += count.size ? `<section class="card cal-legend"><h3>Deze maand</h3>${[...count.values()].map((list) => `<div class="cal-leg-row">
-        <i style="--h:${hue(list[0].projectId)}"></i><span>${esc(name(list[0].projectId))}${(() => {
+        <i style="--h:${hueOf(list[0].projectId)}"></i><span>${esc(name(list[0].projectId))}${(() => {
           const people = admin ? [...new Set(list.map((i) => i.username))] : [...new Set(list.flatMap((i) => mates(i.date, i.projectId)))];
           return people.length ? `<small class="muted"> · ${admin ? '' : 'met '}${esc(people.map(first).join(', '))}</small>` : '';
         })()}</span>
@@ -140,11 +149,12 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
 
   const isNow = view === 'dag' ? date === t : view === 'week' ? weekStart(date) === weekStart(t) : date.slice(0, 7) === t.slice(0, 7);
   const colleagues = emps.filter((e) => e.active !== false && e.username !== username).sort((a, b) => String(a.name).localeCompare(String(b.name), 'nl'));
+  // agenda's aanvinken: de eigen en/of die van collega's (samen in één kalender)
   const picker = admin ? '' : `<div class="cal-of">
-      <h1 class="page-title">${of === username ? 'Mijn planning' : `Planning van ${esc(person(of))}`}</h1>
-      ${colleagues.length ? `<label class="cal-of-pick"><span class="muted small">Agenda van</span>
-        <select id="calOf" aria-label="Agenda van"><option value="${esc(username)}">Mezelf</option>
-          ${colleagues.map((e) => `<option value="${esc(e.username)}" ${e.username === of ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></label>` : ''}
+      <h1 class="page-title">${of === username ? 'Mijn planning' : ofSet.size === 1 ? `Planning van ${esc(person(of))}` : 'Planning'}</h1>
+      ${colleagues.length ? `<div class="cal-of-pick" id="calOf" role="group" aria-label="Agenda's tonen">
+        ${[{ username, name: 'Mezelf' }, ...colleagues].map((e) => `<label class="pill-check"><input type="checkbox" value="${esc(e.username)}" ${ofSet.has(e.username) ? 'checked' : ''}><span>${esc(e.username === username ? 'Mezelf' : String(e.name).split(' ')[0])}</span></label>`).join('')}
+      </div>` : ''}
     </div>`;
   return `${picker}
     <nav class="subtabs" aria-label="Weergave">${VIEWS.map(([k, l]) => `<a ${nav(k, date)} class="${k === view ? 'active' : ''}">${l}</a>`).join('')}</nav>

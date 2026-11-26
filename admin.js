@@ -6,10 +6,10 @@ import { today, shiftDate, fmtDate, fmtHours, localTime, isDate, localDate as lo
 import { parseLatLon, distance } from './geo.js';
 import { geocode, addressLine, splitAddress } from './geocode.js';
 import { readTable } from './xlsx.js';
-import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOptions } from './projects.js';
+import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOptions, newProjectDialog } from './projects.js';
 import { renderTodo, todoToConfirm } from './todo.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
-import { planningHtml, visibleDays, needId, needOf } from './calendar.js';
+import { planningHtml, visibleDays, needId, needOf, LEAVE } from './calendar.js';
 import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256 } from './ui.js';
 
 /**
@@ -85,8 +85,8 @@ const ENTITIES = {
   },
   workTypes: {
     title: 'Soorten werk', newLabel: 'Nieuw soort werk',
-    help: 'Werknemers kiezen bij elk tijdsblok welk soort werk ze deden (bv. elektrische werken, elektrisch tekenen, software). Dat komt mee in de export.',
-    fields: [{ k: 'name', label: 'Naam', req: true }, { k: 'active', label: 'Actief', type: 'bool' }],
+    help: 'Werknemers kiezen bij elk tijdsblok welk soort werk ze deden (bv. elektrische werken, elektrisch tekenen, software). Dat komt mee in de export. "Zonder project": bv. onderhoud atelier, offertes, boekhouding of depannage; dan hoeft de werknemer geen project te kiezen.',
+    fields: [{ k: 'name', label: 'Naam', req: true }, { k: 'no_project', label: 'Zonder project', type: 'bool', def: false }, { k: 'active', label: 'Actief', type: 'bool' }],
   },
   articles: {
     title: 'Artikels', newLabel: 'Nieuw artikel',
@@ -965,16 +965,25 @@ export class Admin {
     this.planView ??= 'week';
     this.planSel ??= new Set();
     const sel = this.planSel;
+    this.planOnly ??= null; // null = iedereen
     view.innerHTML = `<div class="plan-admin">
-      <div id="plCal"></div>
+      <div><div class="cal-of-pick plan-who" id="plWho" role="group" aria-label="Agenda's tonen">
+        ${emps.map((e) => `<label class="pill-check"><input type="checkbox" value="${esc(e.username)}" ${!this.planOnly || this.planOnly.has(e.username) ? 'checked' : ''}><span>${esc(String(e.name).split(' ')[0])}</span></label>`).join('')}
+      </div>
+      <div id="plCal"></div></div>
       <section class="card plan-panel">
         <h2>Inplannen</h2>
         <p class="muted small">Tik de dagen aan in de kalender, kies het project en de werknemers en tik op <b>Inplannen</b>. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in.</p>
         <div class="plan-sel"><b id="plSelText"></b>
           <div class="row"><button type="button" class="secondary small" data-act="workdays">Werkdagen in beeld</button>
-          <button type="button" class="secondary small" data-act="clear">Selectie wissen</button></div></div>
+          <button type="button" class="secondary small" data-act="clear">Selectie wissen</button>
+          <button type="button" class="secondary small" data-act="copyweek" title="De planning van de week in beeld (van de aangevinkte personen) ook in de week erna zetten">📋 Week kopiëren → volgende week</button></div></div>
         <form id="plForm" class="plan-form">
-          <label class="q-field"><span>Project</span><select name="projectId" required><option value="">— kies een project —</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(projectLabel(p, m))}</option>`).join('')}</select></label>
+          <label class="q-field"><span>Project</span><select name="projectId" required><option value="">— kies een project —</option>
+            <option value="${LEAVE}">🏖 Verlof / niet beschikbaar</option>
+            ${projects.map((p) => `<option value="${esc(p.id)}">${esc(projectLabel(p, m))}</option>`).join('')}
+            <option value="__new">+ Nieuw project…</option></select></label>
+          <label class="q-field"><span>Uur (mag leeg)</span><input name="time" type="time" step="900" style="max-width:9em"></label>
           <fieldset class="plan-people"><legend>Werknemers</legend>
             ${emps.map((e) => `<label class="pill-check"><input type="checkbox" name="who" value="${esc(e.username)}"><span>${esc(e.name)}</span></label>`).join('')}</fieldset>
           <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" placeholder="bv. sleutel bij buren"></label>
@@ -1051,7 +1060,7 @@ export class Admin {
       };
     };
     const drawCal = () => {
-      view.querySelector('#plCal').innerHTML = planningHtml({ master: m, planning: this.ctx.planning(), view: this.planView, date: this.planDate, admin: true, selected: sel });
+      view.querySelector('#plCal').innerHTML = planningHtml({ master: m, planning: this.ctx.planning(), view: this.planView, date: this.planDate, admin: true, selected: sel, only: this.planOnly });
       const d = days();
       view.querySelector('#plSelText').textContent = !d.length ? 'Nog geen dagen geselecteerd.'
         : `${d.length} dag${d.length === 1 ? '' : 'en'}: ${d.map((x) => fmtDate(x, { weekday: 'short', day: 'numeric', month: 'short' })).join(', ')}`;
@@ -1059,9 +1068,28 @@ export class Admin {
     drawCal();
     const save = (fn) => { this.ctx.store.change(PATHS.planning, { items: [] }, fn); drawCal(); };
 
+    // agenda's per persoon aan- of uitvinken
+    view.querySelector('#plWho').onchange = () => {
+      const on = [...view.querySelectorAll('#plWho input:checked')].map((x) => x.value);
+      this.planOnly = on.length === emps.length ? null : new Set(on);
+      drawCal();
+    };
+    // nieuw project vanuit de planning
+    view.querySelector('#plForm').elements.projectId.onchange = async (e) => {
+      if (e.target.value !== '__new') return;
+      e.target.value = '';
+      const p = await newProjectDialog(this.ctx, {});
+      if (!p) return;
+      e.target.insertAdjacentHTML('beforeend', `<option value="${esc(p.id)}">${esc(projectLabel(p, this.ctx.master()))}</option>`);
+      e.target.value = p.id;
+      e.target.dispatchEvent(new Event('change', { bubbles: true }));
+      toast(`Project "${p.name}" aangemaakt`, 'ok');
+    };
     view.onclick = (e) => {
       const nb = e.target.closest('[data-need]');
       if (nb) {
+        e.preventDefault();
+        e.stopPropagation();
         const [date, projectId] = nb.dataset.need.split('|');
         return editNeed(date, projectId);
       }
@@ -1085,6 +1113,29 @@ export class Admin {
       if (act === 'need-add') view.querySelector('#plNeed').insertAdjacentHTML('beforeend', needRow());
       if (act === 'need-del') e.target.closest('.need-row').remove();
       if (act === 'clear') { sel.clear(); drawCal(); }
+      if (act === 'copyweek') {
+        const ws = weekStart(this.planDate ?? today());
+        const src = Array.from({ length: 7 }, (_, i) => shiftDate(ws, i));
+        const who = (u) => !this.planOnly || this.planOnly.has(u);
+        const items = alive(this.ctx.planning().items).filter((it) => src.includes(it.date) && who(it.username));
+        if (!items.length) return toast('Niets om te kopiëren in deze week.', 'err');
+        if (!confirm(`${items.length} keer ingepland in week ${fmtDate(ws, { day: 'numeric', month: 'short' })} kopiëren naar de week erna?`)) return;
+        let n = 0;
+        save((pl) => {
+          pl.needs ??= [];
+          for (const it of items) {
+            const date = shiftDate(it.date, 7);
+            if (pl.items.some((x) => !x.deleted && x.date === date && x.username === it.username && x.projectId === it.projectId)) continue;
+            pl.items.push({ id: uid(), date, username: it.username, projectId: it.projectId, note: it.note ?? '', ...(it.time ? { time: it.time } : {}), updated: Date.now() });
+            n++;
+            const need = needOf(pl, it.date, it.projectId);
+            if (need?.lines?.length && !needOf(pl, date, it.projectId)) setNeed(pl, date, it.projectId, need.lines.map((l) => ({ ...l })));
+          }
+        });
+        this.planDate = shiftDate(ws, 7);
+        drawCal();
+        toast(`${n} gekopieerd naar de week erna`, 'ok');
+      }
       if (act === 'workdays') {
         for (const d of visibleDays(this.planView, this.planDate ?? today())) if (isoDay(d) <= 5 && !holidayName(d)) sel.add(d);
         drawCal();
@@ -1119,8 +1170,11 @@ export class Admin {
           if (lines.length) setNeed(pl, date, f.projectId.value, lines);
           for (const username of who) {
             const same = pl.items.find((x) => !x.deleted && x.date === date && x.username === username && x.projectId === f.projectId.value);
-            if (same) { if (f.note.value.trim()) Object.assign(same, { note: f.note.value.trim(), updated: Date.now() }); continue; }
-            pl.items.push({ id: uid(), date, username, projectId: f.projectId.value, note: f.note.value.trim(), updated: Date.now() });
+            if (same) {
+              if (f.note.value.trim() || f.time.value) Object.assign(same, { ...(f.note.value.trim() ? { note: f.note.value.trim() } : {}), ...(f.time.value ? { time: f.time.value } : {}), updated: Date.now() });
+              continue;
+            }
+            pl.items.push({ id: uid(), date, username, projectId: f.projectId.value, note: f.note.value.trim(), ...(f.time.value ? { time: f.time.value } : {}), updated: Date.now() });
             n++;
           }
         }

@@ -40,6 +40,26 @@ const $nav = document.getElementById('nav');
 const lsGet = (k, d = null) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* geblokkeerd */ } };
 
+// ---------- Voorkeuren van dit toestel (achtergrond, tellers op het dagscherm) ----------
+const PREFS = 'enautec.prefs';
+const prefs = () => lsGet(PREFS, {}) ?? {};
+const applyTheme = () => {
+  const t = prefs().theme;
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+};
+function setPref(k, v) { lsSet(PREFS, { ...prefs(), [k]: v }); if (k === 'theme') applyTheme(); }
+applyTheme();
+
+// typen op een gsm: de onderste balk verbergen (het toetsenbord duwt hem anders midden op het scherm)
+document.addEventListener('focusin', (e) => {
+  if (e.target.matches?.('input:not([type=checkbox]):not([type=radio]), textarea, select')) document.body.classList.add('typing');
+});
+document.addEventListener('focusout', () => setTimeout(() => {
+  const a = document.activeElement;
+  if (!a?.matches?.('input:not([type=checkbox]):not([type=radio]), textarea, select')) document.body.classList.remove('typing');
+}, 50));
+
 // ---------- Opslag ----------
 const device = () => lsGet(DEVICE);
 const serverUrl = () => (localStorage.getItem(SERVER) || (TEST ? location.origin : SERVER_URL) || '').replace(/\/+$/, '');
@@ -128,6 +148,7 @@ const ctx = {
   adminHeaders,
   serverAdmin,
   me: () => lsGet(ME),
+  prefs,
   /** Standaardpauze (minuten) van de aangemelde werknemer: lokaal meteen, op de server voor de meldingen */
   setPauseMin: (min) => {
     lsSet(ME, { ...(lsGet(ME) ?? {}), pauseMin: min });
@@ -146,6 +167,15 @@ const ctx = {
     const s = device()?.session;
     if (!s) return Promise.reject(new Error('Niet aangemeld.'));
     return postJson('/api/checks', body, s);
+  },
+  /** Badgen met de gsm (vergeten te badgen in het atelier); daarna de dag opnieuw ophalen */
+  badge: async () => {
+    const s = device()?.session;
+    if (!s) throw new Error('Niet aangemeld.');
+    const r = await postJson('/api/me/badge', {}, s);
+    rawCache.clear();
+    route();
+    return r;
   },
   notWorked: (date, on) => {
     const s = device()?.session;
@@ -734,16 +764,17 @@ async function viewDay(date, focus = null) {
   $main.innerHTML = `<section class="card day-head"><div class="datebar">
       <a class="icon" href="#dag/${shiftDate(date, -1)}" aria-label="Vorige dag">‹</a>
       <div><div class="date-title"><b>${esc(fmtDate(date))}</b>${date === today() ? ' <span class="pill red">vandaag</span>' : ''}
-        <input type="date" id="dayPick" value="${date}" max="${today()}" aria-label="Kies een datum"></div>
-        <div class="day-head-info muted"><span id="rawInfo"></span> · <button class="link" data-act="refresh">↻ Vernieuwen</button></div></div>
-      ${date < today() ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true" style="visibility:hidden"></span>'}
+        <input type="date" id="dayPick" value="${date}" max="${shiftDate(today(), 60)}" aria-label="Kies een datum"></div>
+        ${date > today() ? '<div class="day-head-info muted">Planning: wat mee moet</div>' : '<div class="day-head-info muted"><span id="rawInfo"></span> · <button class="link" data-act="refresh">↻ Vernieuwen</button></div>'}</div>
+      ${date < shiftDate(today(), 60) ? `<a class="icon" href="#dag/${shiftDate(date, 1)}" aria-label="Volgende dag">›</a>` : '<span class="icon" aria-hidden="true" style="visibility:hidden"></span>'}
     </div>${emp ? '' : '<p class="muted">Je naam staat niet (meer) in de lijst met werknemers.</p>'}</section>
     <div id="openQuestions"></div>
     ${isMobile() && pushSupport().ok && Notification.permission === 'default' && date === today() ? '<a class="q-banner soft" href="#meer">🔔 <span>Zet de <b>meldingen</b> aan: dan vraagt de app zelf bij wie je bent.</span></a>' : ''}
     <div id="dayBody"><p class="muted center">Laden…</p></div>`;
   showOpenQuestions(date);
   $main.querySelector('#dayPick').onchange = (e) => { if (isDate(e.target.value)) location.hash = `#dag/${e.target.value}`; };
-  $main.querySelector('[data-act=refresh]').onclick = () => { rawCache.delete(date); viewDay(date); };
+  $main.querySelector('[data-act=refresh]')?.addEventListener('click', () => { rawCache.delete(date); viewDay(date); });
+  if (date > today()) { renderDay($main.querySelector('#dayBody'), { ctx, username: dev.username, date, raw: null }); return; }
   if (!store.has(PATHS.reg(date.slice(0, 7), dev.username))) await store.sync([PATHS.reg(date.slice(0, 7), dev.username)]);
   const { raw, error } = await fetchRaw(date);
   const body = $main.querySelector('#dayBody');
@@ -800,8 +831,13 @@ function viewPlanning([view = 'week', date, of] = []) {
   of = of ? decodeURIComponent(of) : me;
   $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: me, of, view, date });
   // agenda van een collega bekijken
+  // agenda's van collega's aanvinken (meerdere tegelijk); niets aangevinkt = de eigen
   const pick = $main.querySelector('#calOf');
-  if (pick) pick.onchange = () => { location.hash = `#planning/${view}/${isDate(date) ? date : today()}${pick.value !== me ? `/${encodeURIComponent(pick.value)}` : ''}`; };
+  if (pick) pick.onchange = () => {
+    const list = [...pick.querySelectorAll('input:checked')].map((x) => x.value);
+    const v = list.length ? list.join(',') : me;
+    location.hash = `#planning/${view}/${isDate(date) ? date : today()}${v !== me ? `/${encodeURIComponent(v)}` : ''}`;
+  };
 }
 
 /** Overzicht per week, maand of jaar: #overzicht/week/<datum>, #overzicht/maand/<jjjj-mm>, #overzicht/jaar/<jjjj> */
@@ -846,7 +882,7 @@ async function viewQuestion(id) {
     $main.innerHTML = `<section class="card"><div class="error">${esc(e.message || 'Server niet bereikbaar.')}</div><a class="btn secondary" href="#dag">Naar mijn dag</a></section>`;
     return;
   }
-  const planned = alive(ctx.planning().items).filter((p) => p.username === dev.username && p.date === q.date).map((p) => p.projectId);
+  const planned = alive(ctx.planning().items).filter((p) => p.username === dev.username && p.date === q.date && p.projectId !== '__verlof').map((p) => p.projectId);
   renderQuestion($main, {
     q, ctx, planned,
     answer: async (body) => {
@@ -954,6 +990,11 @@ async function viewMore() {
         </form><div id="pwMsg"></div>
       </details>
     </section>
+    <section class="card prefs"><h2>Weergave</h2>
+      <label class="q-field"><span>Achtergrond</span><select data-pref="theme" data-native>
+        ${[['', 'Automatisch (zoals je toestel)'], ['light', 'Wit'], ['dark', 'Zwart']].map(([v, l]) => `<option value="${v}" ${(prefs().theme ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="check-row"><input type="checkbox" data-pref="counters" ${prefs().counters ? 'checked' : ''}> <span>Tellers (werk, pauze, netto) tonen op het dagscherm</span></label>
+    </section>
     <section class="card" id="pushCard"><h2>Meldingen</h2><p class="muted">Laden…</p></section>
     <section class="card"><h2>Mijn toestellen</h2>
       <p class="muted small">Hier ben je aangemeld. Herken je een toestel niet? Meld het af en wijzig je wachtwoord.</p>
@@ -997,6 +1038,10 @@ async function viewMore() {
     const old = b.textContent;
     b.textContent = '✔ Gekopieerd';
     setTimeout(() => { b.textContent = old; }, 1500);
+  });
+  $main.querySelectorAll('[data-pref]').forEach((inp) => inp.onchange = () => {
+    setPref(inp.dataset.pref, inp.type === 'checkbox' ? inp.checked : inp.value || null);
+    toast('Bewaard', 'ok');
   });
   $main.querySelector('[data-act=widget]')?.addEventListener('click', () => startSetup('widget', true));
   $main.querySelector('[data-act=autoot]')?.addEventListener('click', () => startSetup('auto', true));

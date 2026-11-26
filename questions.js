@@ -91,7 +91,7 @@ export async function syncPlanning(planning, server, headers) {
   const inRange = (x) => x.date >= from && x.date <= to;
   const stamp = Math.max(0, ...[...(planning.items ?? []), ...(planning.needs ?? [])].map((x) => x.updated ?? 0));
   const data = {
-    items: alive(planning.items).filter(inRange).map(({ date, username, projectId, note, updated }) => ({ date, username, projectId, note, updated })),
+    items: alive(planning.items).filter(inRange).map(({ date, username, projectId, note, time, updated }) => ({ date, username, projectId, note, time, updated })),
     needs: alive(planning.needs).filter(inRange).map(({ date, projectId, lines, updated }) => ({ date, projectId, lines, updated })),
     // laatste wijziging (ook verwijderingen), zodat een oudere kopie de nieuwere niet overschrijft
     stamp,

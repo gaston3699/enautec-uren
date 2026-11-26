@@ -21,6 +21,13 @@ const allWorkTypes = (master) => {
 };
 export const workTypesOf = (master) => alive(allWorkTypes(master)).filter((w) => w.active !== false);
 export const workTypeName = (master, id) => allWorkTypes(master).find((w) => w.id === id)?.name ?? '';
+/** Soort werk zonder project (bv. offertes, boekhouding, onderhoud atelier, depannage) */
+export const workTypeNoProject = (master, id) => {
+  const w = allWorkTypes(master).find((x) => x.id === id);
+  return !!w && w.no_project !== false && w.no_project != null && w.no_project !== 0;
+};
+/** Moet dit blok een project hebben? (werk bij de klant, tenzij het soort werk zonder project is) */
+export const needsProject = (s, master) => s.kind === 'werk' && !s.projectId && !(master && workTypeNoProject(master, s.workType));
 
 /** Standaard type werk: "Elektrische werken" (of het eerste actieve type) */
 export const defaultWorkType = (master) => {

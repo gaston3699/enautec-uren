@@ -6,11 +6,17 @@
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, toast, resolveId } from './ui.js';
 import { fmtDate, localDate } from './time.js';
+import { newProjectDialog } from './projects.js';
 
 const EMPTY = () => ({ items: [] });
 const when = (ts) => (ts ? fmtDate(localDate(ts), { day: 'numeric', month: 'short' }) : '');
 const MAX_TITLE = 60;
 let todoQuery = '';
+let todoKind = ''; // filter: '' = alles, 'prijs', 'tekort', 'eigen'
+/** Soorten puntjes: gewone taak, prijs (offerte/opmeting) of tekort (te bestellen, stock) */
+export const TODO_KINDS = { taak: 'Taak', prijs: '💶 Prijs / opmeting', tekort: '🛒 Tekort / bestellen' };
+/** "Project" voor tekorten zonder project (stock in het atelier) */
+export const STOCK = '__stock';
 
 function change(ctx, fn) {
   ctx.store.change(PATHS.todos, EMPTY(), (doc) => { doc.items ??= []; fn(doc); });
@@ -91,12 +97,39 @@ function loadPhotos(ctx, box) {
   });
 }
 
-function showPhoto(url) {
+/** Foto groot tonen; met meerdere foto's: vegen of pijltjes om door te bladeren */
+function showPhoto(urls, start = 0) {
+  if (typeof urls === 'string') urls = [urls];
+  let i = Math.max(0, Math.min(urls.length - 1, start));
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop photo-view';
-  wrap.innerHTML = `<img src="${url}" alt="Foto"><button class="secondary" aria-label="Sluiten">✕</button>`;
-  wrap.onclick = () => wrap.remove();
+  const many = urls.length > 1;
+  wrap.innerHTML = `<img src="${urls[i]}" alt="Foto">
+    <button class="secondary pv-close" data-pv="close" aria-label="Sluiten">✕</button>
+    ${many ? `<button class="secondary pv-prev" data-pv="prev" aria-label="Vorige foto">‹</button><button class="secondary pv-next" data-pv="next" aria-label="Volgende foto">›</button><span class="pv-count"></span>` : ''}`;
+  const img = wrap.querySelector('img');
+  const show = () => { img.src = urls[i]; const n = wrap.querySelector('.pv-count'); if (n) n.textContent = `${i + 1} / ${urls.length}`; };
+  const go = (d) => { i = (i + d + urls.length) % urls.length; show(); };
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', key); };
+  const key = (e) => { if (e.key === 'Escape') close(); if (many && e.key === 'ArrowRight') go(1); if (many && e.key === 'ArrowLeft') go(-1); };
+  wrap.onclick = (e) => {
+    const a = e.target.closest('[data-pv]')?.dataset.pv;
+    if (a === 'prev') return go(-1);
+    if (a === 'next') return go(1);
+    if (a === 'close' || e.target === wrap || !many) close();
+  };
+  // vegen op een gsm
+  let x0 = null;
+  wrap.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+  wrap.addEventListener('touchend', (e) => {
+    if (x0 == null || !many) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    x0 = null;
+    if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+  });
+  document.addEventListener('keydown', key);
   document.body.append(wrap);
+  show();
 }
 
 /** Detailvenster van een puntje: uitleg, foto's, foto's toevoegen, uitleg aanpassen */
@@ -107,7 +140,7 @@ function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
   wrap.className = 'modal-backdrop';
   const canEdit = !t.done || asAdmin;
   wrap.innerHTML = `<div class="modal todo-detail" role="dialog" aria-modal="true" aria-labelledby="tdTitle">
-    <p class="muted small">${esc(label(t.projectId))}</p>
+    <p class="muted small">${esc(label(t.projectId))}${t.kind && t.kind !== 'taak' ? ` · ${esc(TODO_KINDS[t.kind] ?? t.kind)}` : ''}${t.private ? ' · 🔒 enkel voor jou' : ''}</p>
     <h2 id="tdTitle">${esc(titleOf(t))}</h2>
     <p class="muted small">Aangemaakt door ${esc(name(t.by))}${t.at ? ` · ${esc(when(t.at))}` : ''}${t.done ? ` · afgevinkt door ${esc(name(t.done_by))}${t.confirmed ? ' (bevestigd)' : ' (wacht op bevestiging)'}` : ''}</p>
     ${canEdit ? `<label class="q-field"><span>Korte samenvatting</span><input id="tdShort" maxlength="80" value="${esc(titleOf(t))}"></label>
@@ -116,6 +149,7 @@ function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
     <h3 style="margin-top:14px">Foto's (${(t.photos ?? []).length})</h3>
     <div class="photo-grid">${(t.photos ?? []).map((p) => `<button type="button" class="photo" data-photo="${esc(p.name)}" aria-label="Foto bekijken"></button>`).join('') || '<p class="muted small">Nog geen foto\'s.</p>'}</div>
     <label class="btn secondary photo-add">📷 Foto's toevoegen<input type="file" accept="image/*" multiple hidden></label>
+    ${t.private && t.by === me ? '<p><button class="secondary" data-a="publish">▶ In uitvoering zetten (zichtbaar voor iedereen)</button></p>' : ''}
     <div class="row modal-actions"><button class="secondary" data-a="close">Sluiten</button>${canEdit ? '<button class="primary" data-a="save">Opslaan</button>' : ''}</div>
   </div>`;
   document.body.append(wrap);
@@ -124,9 +158,17 @@ function openDetail(ctx, id, { me, name, label, asAdmin, onSaved }) {
   wrap.addEventListener('click', (e) => {
     if (e.target === wrap) return close();
     const ph = e.target.closest('[data-photo]');
-    if (ph?.dataset.url) return showPhoto(ph.dataset.url);
+    if (ph?.dataset.url) {
+      const all = [...wrap.querySelectorAll('[data-photo]')].filter((x) => x.dataset.url);
+      return showPhoto(all.map((x) => x.dataset.url), all.indexOf(ph));
+    }
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'close') close();
+    if (a === 'publish') {
+      change(ctx, (doc) => { const x = doc.items.find((i) => i.id === id); if (x) Object.assign(x, { private: false, updated: Date.now() }); });
+      toast('In uitvoering: iedereen ziet het puntje nu', 'ok');
+      close();
+    }
     if (a === 'save') {
       const short = wrap.querySelector('#tdShort').value.trim();
       const details = wrap.querySelector('#tdDetails').value.trim();
@@ -164,20 +206,22 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
   const m = ctx.master();
   const me = ctx.me?.()?.username ?? (asAdmin ? 'beheerder' : null);
   const name = (u) => alive(m.employees).find((e) => e.username === u)?.name ?? u ?? '';
-  const items = todoItems(ctx);
+  // eigen puntjes (nog niet in uitvoering) ziet enkel wie ze maakte
+  const items = todoItems(ctx).filter((t) => !t.private || t.by === me);
   const projects = alive(m.projects).filter((p) => p.active !== false);
-  const label = (id) => projectLabel(m.projects.find((p) => p.id === id), m) || 'Onbekend project';
+  const label = (id) => (id === STOCK ? '🛒 Stock / atelier (geen project)' : projectLabel(m.projects.find((p) => p.id === id), m) || 'Onbekend project');
+  const kindOk = (t) => !todoKind || (todoKind === 'eigen' ? !!t.private : (t.kind ?? 'taak') === todoKind);
   // per project, enkel projecten met minstens één open (niet afgevinkt) puntje
   const groups = new Map();
   for (const t of items) {
-    if (t.confirmed) continue;
+    if (t.confirmed || !kindOk(t)) continue;
     if (!groups.has(t.projectId)) groups.set(t.projectId, []);
     groups.get(t.projectId).push(t);
   }
   const open = [...groups.entries()].filter(([, list]) => list.some((t) => !t.done))
     .sort((a, b) => label(a[0]).localeCompare(label(b[0]), 'nl'));
   const waiting = items.filter((t) => t.done && !t.confirmed);
-  const badges = (t) => `${(t.photos ?? []).length ? ` <span class="todo-badge">📷 ${(t.photos ?? []).length}</span>` : ''}${detailsOf(t) ? ' <span class="todo-badge">📝</span>' : ''}`;
+  const badges = (t) => `${t.private ? ' <span class="todo-badge">🔒 eigen</span>' : ''}${t.kind && t.kind !== 'taak' ? ` <span class="todo-badge">${esc(TODO_KINDS[t.kind] ?? t.kind)}</span>` : ''}${(t.photos ?? []).length ? ` <span class="todo-badge">📷 ${(t.photos ?? []).length}</span>` : ''}${detailsOf(t) ? ' <span class="todo-badge">📝</span>' : ''}`;
 
   const itemHtml = (t) => `<li class="todo-item ${t.done ? 'done' : ''}" data-id="${esc(t.id)}">
       <span class="todo-main"><input type="checkbox" data-act="toggle" ${t.done ? 'checked' : ''} aria-label="Afvinken">
@@ -191,6 +235,7 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     <div class="todo-head">${asAdmin ? (open.length ? searchHtml : '<span></span>') : '<h1 class="page-title">ToDo</h1>'}
       <button type="button" class="fab-add" id="todoNewBtn" aria-label="Nieuw puntje" title="Nieuw puntje">+</button></div>
     ${!asAdmin && open.length ? searchHtml : ''}
+    <nav class="subtabs todo-kinds" aria-label="Soort">${[['', 'Alles'], ['prijs', '💶 Prijs'], ['tekort', '🛒 Tekort'], ['eigen', '🔒 Eigen']].map(([k, l]) => `<a href="#" data-kind="${k}" class="${k === todoKind ? 'active' : ''}">${l}</a>`).join('')}</nav>
     ${asAdmin ? `<section class="card"><h2>Afgevinkt, te bevestigen ${waiting.length ? `<span class="tab-badge">${waiting.length}</span>` : ''}</h2>
       ${waiting.length ? `<ul class="todo-list">${waiting.sort((a, b) => (b.done_at ?? 0) - (a.done_at ?? 0)).map((t) => `<li class="todo-item done" data-id="${esc(t.id)}">
         <span><b>${esc(label(t.projectId))}</b><br><button type="button" class="todo-title" data-act="open">${esc(titleOf(t))}${badges(t)}</button></span>
@@ -200,7 +245,7 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     ${open.length ? open.map(([pid, list]) => `<section class="card todo-project" data-project="${esc(pid)}" data-label="${esc(label(pid).toLowerCase())}">
         <h2>${esc(label(pid))}</h2>
         <ul class="todo-list">${list.sort((a, b) => Number(a.done) - Number(b.done) || (a.at ?? 0) - (b.at ?? 0)).map(itemHtml).join('')}</ul>
-        <form class="todo-add" data-project="${esc(pid)}"><input name="text" maxlength="2000" placeholder="+ Puntje toevoegen" autocomplete="off" aria-label="Puntje toevoegen"><button class="secondary">+</button></form>
+        <form class="todo-add" data-project="${esc(pid)}" data-kind="${esc(todoKind === 'eigen' ? '' : todoKind)}"><input name="text" maxlength="2000" placeholder="+ Puntje toevoegen" autocomplete="off" aria-label="Puntje toevoegen"><button class="secondary">+</button></form>
       </section>`).join('')
       : `<section class="card"><p class="muted">Er staan geen open puntjes.${!asAdmin && waiting.length ? ` ${waiting.length} afgevinkt puntje(s) wacht(en) op bevestiging van de beheerder.` : ''}</p></section>`}
     ${!asAdmin && open.length && waiting.length ? `<p class="muted small center">${waiting.length} afgevinkt puntje(s) wacht(en) op bevestiging van de beheerder.</p>` : ''}
@@ -210,13 +255,14 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
   const redraw = () => (onChange ? onChange() : renderTodo(el, { ctx, asAdmin }));
   const detailOpts = { me, name, label, asAdmin, onSaved: redraw };
   /** Nieuw puntje: korte samenvatting + (bij lange tekst) de volledige uitleg */
-  const add = (projectId, text) => {
+  const add = (projectId, text, { kind = 'taak', priv = false } = {}) => {
     text = String(text ?? '').trim();
     if (!projectId || !text) return null;
     const title = summarize(text);
     const id = uid();
     change(ctx, (doc) => doc.items.push({
       id, projectId, title, details: title === text ? '' : text, photos: [], by: me, at: Date.now(), done: false, confirmed: false, updated: Date.now(),
+      ...(kind && kind !== 'taak' ? { kind } : {}), ...(priv ? { private: true } : {}),
     }));
     return id;
   };
@@ -237,11 +283,15 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     wrap.className = 'modal-backdrop';
     wrap.innerHTML = `<form class="modal todo-new" role="dialog" aria-modal="true" aria-labelledby="tnTitle">
       <h2 id="tnTitle">Nieuw puntje</h2>
+      <select name="kind" aria-label="Soort" data-native>${Object.entries(TODO_KINDS).map(([k, l]) => `<option value="${k}" ${k === todoKind ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <select name="project" required aria-label="Project"><option value="">— kies een project —</option>
-        ${sorted.map((p) => `<option value="${esc(p.id)}">${esc(label(p.id))}</option>`).join('')}</select>
+        <option value="${STOCK}">🛒 Stock / atelier (geen project)</option>
+        ${sorted.map((p) => `<option value="${esc(p.id)}">${esc(label(p.id))}</option>`).join('')}
+        <option value="__new">+ Nieuw project…</option></select>
       <textarea name="text" required maxlength="2000" rows="3" placeholder="Wat moet er nog gebeuren? (de eerste zin wordt de samenvatting)"></textarea>
       <div class="row"><label class="btn secondary photo-add">📷 Foto's<input type="file" name="photos" accept="image/*" multiple hidden></label>
         <span class="muted small" data-count></span></div>
+      <label class="check-row"><input type="checkbox" name="priv" ${todoKind === 'eigen' ? 'checked' : ''}><span>🔒 Enkel voor mij (pas zichtbaar als ik het in uitvoering zet)</span></label>
       <div class="row modal-actions"><button type="button" class="secondary" data-a="close">Annuleren</button><button class="primary">Toevoegen</button></div>
     </form>`;
     document.body.append(wrap);
@@ -251,11 +301,20 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
     if (todoQuery.trim() && visible.length === 1) nf.elements.project.value = visible[0].dataset.project;
     const close = () => wrap.remove();
     wrap.addEventListener('click', (e) => { if (e.target === wrap || e.target.closest('[data-a="close"]')) close(); });
+    nf.elements.project.onchange = async () => {
+      if (nf.elements.project.value !== '__new') return;
+      nf.elements.project.value = '';
+      const p = await newProjectDialog(ctx, {});
+      if (!p) return;
+      nf.elements.project.insertAdjacentHTML('beforeend', `<option value="${esc(p.id)}">${esc(p.name)}</option>`);
+      nf.elements.project.value = p.id;
+      nf.elements.project.dispatchEvent(new Event('change', { bubbles: true }));
+    };
     nf.elements.photos.onchange = () => { wrap.querySelector('[data-count]').textContent = nf.elements.photos.files.length ? `${nf.elements.photos.files.length} foto('s) gekozen` : ''; };
     nf.onsubmit = async (e) => {
       e.preventDefault();
       const files = [...nf.elements.photos.files];
-      const id = add(nf.elements.project.value, nf.elements.text.value);
+      const id = add(nf.elements.project.value, nf.elements.text.value, { kind: nf.elements.kind.value, priv: nf.elements.priv.checked });
       if (!id) return;
       if (files.length) {
         nf.querySelector('button.primary').disabled = true;
@@ -270,10 +329,12 @@ export function renderTodo(el, { ctx, asAdmin = false, onChange = null }) {
   };
   el.querySelectorAll('.todo-add').forEach((f) => f.onsubmit = (e) => {
     e.preventDefault();
-    if (add(f.dataset.project, f.elements.text.value)) redraw();
+    if (add(f.dataset.project, f.elements.text.value, { kind: f.dataset.kind || 'taak', priv: todoKind === 'eigen' })) redraw();
     el.querySelector(`.todo-add[data-project="${CSS.escape(f.dataset.project)}"] input`)?.focus();
   });
   el.onclick = (e) => {
+    const kb = e.target.closest('[data-kind]');
+    if (kb && kb.tagName === 'A') { e.preventDefault(); todoKind = kb.dataset.kind; return redraw(); }
     const act = e.target.closest('[data-act]')?.dataset.act;
     const id = e.target.closest('[data-id]')?.dataset.id;
     if (!act || !id || act === 'toggle') return;

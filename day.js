@@ -4,14 +4,16 @@ import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, da
 import { PATHS } from './store.js';
 import { esc, uid, alive, projectLabel, byName, toast, resolveId } from './ui.js';
 import { confirmDialog } from './update.js';
-import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN } from './projects.js';
+import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN, needsProject, workTypeNoProject } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
 import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
-import { needOf, needHtml, hue } from './calendar.js';
+import { needOf, needHtml, hue, LEAVE } from './calendar.js';
 
 const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
 const WORKLIKE = new Set(['werk', 'atelier', 'leverancier']);
 const MIN = 60000;
+/** Afronden op het dichtstbijzijnde kwartier (België: tijdzone in hele uren) */
+const quarter = (ts) => Math.round(ts / (15 * MIN)) * 15 * MIN;
 
 export { DEFAULT_RULES };
 export const rulesFrom = (master) => ({ ...DEFAULT_RULES, ...(master.settings?.rules ?? {}) });
@@ -30,7 +32,7 @@ export function proposal(master, planning, username, date, raw) {
     badges: raw?.badges ?? [],
     sites: sitesFor(master, username),
     projects: alive(master.projects).map((p) => ({ ...p, active: p.active !== false })),
-    planning: alive(planning.items).filter((p) => p.username === username && p.date === date).map((p) => ({ project_id: p.projectId })),
+    planning: alive(planning.items).filter((p) => p.username === username && p.date === date && p.projectId !== '__verlof').map((p) => ({ project_id: p.projectId })),
     rules: rulesFrom(master),
     openEnd: date === today() ? Math.min(Date.now(), end) : end,
     live: date === today(),
@@ -103,7 +105,7 @@ export function fitPauses(segs) {
   return changed;
 }
 
-export function validate(segments, date) {
+export function validate(segments, date, master = null) {
   const [from, to] = dayRange(date);
   const s = [...segments].sort((a, b) => a.start - b.start);
   for (let i = 0; i < s.length; i++) {
@@ -111,14 +113,14 @@ export function validate(segments, date) {
     if (!(s[i].end > s[i].start)) return `${n}: de eindtijd moet na de begintijd liggen.`;
     if (s[i].start < from || s[i].end > to) return `${n}: valt buiten deze dag.`;
     if (s[i].kind === 'onbekend') return `${n}: kies wat er gebeurde op de onbekende locatie.`;
-    if (s[i].kind === 'werk' && !s[i].projectId) return `${n}: kies een project.`;
+    if (needsProject(s[i], master)) return `${n}: kies een project.`;
     if (i > 0 && s[i].start < s[i - 1].end) return `${n} overlapt met de vorige regel.`;
   }
   return null;
 }
 
 /** Controle van de dag (zoals Atree): fouten, aandachtspunten of een groen vinkje */
-export function dayChecks(segs, rules) {
+export function dayChecks(segs, rules, master = null) {
   const out = [];
   const s = [...segs].sort((a, b) => a.start - b.start);
   s.forEach((x, i) => {
@@ -126,8 +128,9 @@ export function dayChecks(segs, rules) {
     if (!(x.end > x.start)) out.push(['fout', `${t}: einde ligt voor het begin.`]);
     if (i > 0 && x.start < s[i - 1].end) out.push(['fout', `${t} overlapt met ${localTime(s[i - 1].start)}–${localTime(s[i - 1].end)}.`]);
     if (x.kind === 'onbekend') out.push(['fout', `${t}: onbekende plek, kies pauze, werk of verplaatsing.`]);
-    if (x.kind === 'werk' && !x.projectId) out.push(['fout', `${t}: kies een project.`]);
-    if (x.openBadge) out.push(['let', `${t}: ingebadged in het atelier maar (nog) niet uitgebadged.`]);
+    if (needsProject(x, master)) out.push(['fout', `${t}: kies een project.`]);
+    // enkel het laatste stuk: een pauze knipt het open blok in twee, het eerste deel is wel afgesloten
+    if (x.openBadge && x === s.filter((y) => y.openBadge).at(-1)) out.push(['let', `${t}: ingebadged in het atelier maar (nog) niet uitgebadged.`]);
   });
   for (const g of gapsOf(segs)) out.push(['let', `Niets ingegeven van ${localTime(g.start)} tot ${localTime(g.end)}.`]);
   const sum = summarize(segs, rules);
@@ -258,11 +261,116 @@ const SUB = {
   verplaatsing: 'Rit naar of tussen klanten', 'woon-werk': 'Van of naar huis', pauze: 'Middagpauze', onbekend: 'Wat gebeurde hier?',
 };
 
+
+/**
+ * "Mee te nemen" per ingepland project: afvinken en zelf iets toevoegen.
+ * Ook zonder materiaal staat er een kaart, zodat de werknemer zelf iets kan toevoegen.
+ */
+export function needCardsHtml(ctx, master, username, date) {
+  const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date);
+  const leave = planned.find((p) => p.projectId === LEAVE);
+  const ids = [...new Set(planned.map((p) => p.projectId))].filter((id) => id !== LEAVE);
+  return (leave ? `<section class="card day-need leave"><h2>🏖 Verlof</h2><p class="muted">${esc(leave.note || 'Ingepland als niet beschikbaar.')}</p></section>` : '')
+    + ids.map((id) => {
+      const need = needOf(ctx.planning(), date, id);
+      const items = planned.filter((p) => p.projectId === id);
+      const time = items.find((p) => p.time)?.time;
+      const notes = [...new Set(items.map((p) => p.note).filter(Boolean))];
+      const has = need?.lines?.some((l) => l.description);
+      return `<section class="card day-need" style="--h:${hue(id)}"><h2>${time ? `<span class="muted">${esc(time)}</span> ` : ''}${esc(projectLabel(master.projects.find((p) => p.id === id), master) || 'Project')}</h2>
+        ${notes.map((n) => `<p class="muted small">${esc(n)}</p>`).join('')}
+        ${has ? needHtml(need, { checkable: !!ctx.checks }) : '<b class="small">🧰 Mee te nemen</b>'}
+        <form class="need-add" data-p="${esc(id)}"><input name="t" placeholder="Toevoegen, bv. 2 st kabelgoot" aria-label="Mee te nemen toevoegen" autocomplete="off"><button class="secondary" aria-label="Toevoegen">+</button></form>
+      </section>`;
+    }).join('');
+}
+
+/** "2 st kabelgoot" → { qty: 2, unit: 'st', description: 'kabelgoot' } (aantal en eenheid mogen ontbreken) */
+export function parseNeedLine(text) {
+  const t = String(text ?? '').trim().replace(/\s+/g, ' ');
+  const m = /^(\d+(?:[.,]\d+)?)\s*(st|stuks?|m|meter|rol|rollen|doos|dozen|pak|kg|l)?\s+(.+)$/i.exec(t);
+  if (!m) return { description: t, qty: null, unit: null };
+  return { description: m[3], qty: Number(m[1].replace(',', '.')), unit: m[2] ? m[2].toLowerCase() : null };
+}
+
+/** Regel toevoegen aan "mee te nemen" van een project op een dag (gedeeld met de collega's op dat project) */
+export function addNeedLine(ctx, date, projectId, text) {
+  const line = parseNeedLine(text);
+  if (!line.description) return false;
+  ctx.store.change(PATHS.planning, { items: [] }, (pl) => {
+    pl.needs ??= [];
+    const id = `${date}|${projectId}`;
+    const cur = pl.needs.find((n) => n.id === id);
+    if (cur) Object.assign(cur, { lines: [...(cur.deleted ? [] : cur.lines ?? []), line], deleted: false, updated: Date.now() });
+    else pl.needs.push({ id, date, projectId, lines: [line], updated: Date.now() });
+  });
+  return true;
+}
+
+/** Afgevinkt materiaal (gedeeld met wie op hetzelfde project staat) laden, tonen en bewaren */
+function needChecks(el, ctx, username, date) {
+  let checks = null;
+  const show = () => {
+    for (const c of el.querySelectorAll('[data-ck]')) {
+      const hit = checks?.find((x) => x.projectId === c.dataset.ck && x.key === c.dataset.key);
+      c.checked = !!hit;
+      c.closest('.need-check').classList.toggle('done', !!hit);
+      c.closest('.need-check').querySelector('small').textContent = hit ? `✔ ${hit.by ?? ''}` : '';
+    }
+  };
+  const load = async () => {
+    if (!ctx.checks || !el.querySelector('[data-ck]')) return;
+    show();
+    try { checks = (await ctx.checks(date)) ?? checks; } catch { /* offline */ }
+    show();
+  };
+  const change = (t) => {
+    const body = { date, projectId: t.dataset.ck, key: t.dataset.key, done: t.checked };
+    const me = ctx.me?.() ?? {};
+    checks = (checks ?? []).filter((x) => !(x.projectId === body.projectId && x.key === body.key));
+    if (t.checked) checks.push({ projectId: body.projectId, key: body.key, by: me.name ?? username, at: Date.now() });
+    show();
+    ctx.setCheck(body).catch((err) => { toast(`Niet bewaard: ${err.message}`, 'err'); load(); });
+  };
+  return { show, load, change };
+}
+
+/** Toevoegen aan "mee te nemen" (formulier onder de lijst) */
+function onNeedSubmit(el, ctx, date, redraw) {
+  el.onsubmit = (e) => {
+    const f = e.target.closest('form.need-add');
+    if (!f) return;
+    e.preventDefault();
+    const v = f.elements.t.value;
+    if (!addNeedLine(ctx, date, f.dataset.p, v)) return;
+    redraw();
+    el.querySelector(`form.need-add[data-p="${CSS.escape(f.dataset.p)}"] input`)?.focus();
+  };
+}
+
+/** Dag in de toekomst: planning en wat mee moet, nog geen uren */
+function renderFuture(el, { ctx, username, date }) {
+  const master = ctx.master();
+  const ck = needChecks(el, ctx, username, date);
+  const draw = () => {
+    const cards = needCardsHtml(ctx, master, username, date);
+    el.innerHTML = cards || `<section class="card"><p class="muted">Nog niets ingepland op deze dag.</p><a class="btn secondary" href="#planning/week/${date}">Naar de planning</a></section>`;
+    ck.show();
+  };
+  el.onchange = (e) => { if (e.target.dataset.ck) ck.change(e.target); };
+  el.onclick = null;
+  onNeedSubmit(el, ctx, date, draw);
+  draw();
+  ck.load();
+}
+
 /**
  * Teken de dag in `el`.
  * opts: { ctx, username, date, raw, asAdmin }
  */
 export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawError = '', editing = false }) {
+  // een dag in de toekomst: enkel de planning en wat mee moet (bv. de avond ervoor laden)
+  if (date > today() && !asAdmin) return renderFuture(el, { ctx, username, date });
   const st = dayState(ctx, username, date, raw);
   let master = st.master;
   const rules = rulesFrom(master);
@@ -308,7 +416,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     projects = alive(master.projects).filter((p) => p.active !== false);
   };
   const articles = alive(master.articles).filter((a) => a.active !== false).sort(byName);
-  const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date);
+  const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date && p.projectId !== LEAVE);
 
   const clean = (list) => list.map(({ auto, ...s }) => s);
   const persistSegments = () => { if (!editingConfirmed) saveDay(ctx, username, date, { segments: clean(segs), segmentsEdited: true, status: 'concept' }); };
@@ -355,7 +463,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         <span class="dur ${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</span>
         ${TRAVEL.has(s.kind) ? `<label class="muted small km">km <input type="number" inputmode="decimal" step="0.1" min="0" data-f="km" value="${s.km ?? ''}" style="width:5em" ${dis}></label>` : ''}</div>
       ${pauseRows}
-      ${readonly || s.kind === 'pauze' ? '' : `<div class="blk-more"><select class="${WORKLIKE.has(s.kind) ? '' : 'full'} ${s.kind === 'werk' && !s.projectId ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select>
+      ${readonly || s.kind === 'pauze' ? '' : `<div class="blk-more">${WORKLIKE.has(s.kind) && !s.projectId && workTypeNoProject(master, s.workType) ? '<span class="muted small no-proj">zonder project</span>'
+        : `<select class="${WORKLIKE.has(s.kind) ? '' : 'full'} ${needsProject(s, master) ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select>`}
         ${WORKLIKE.has(s.kind) ? `<select data-f="workType" aria-label="Type werk">${workTypeOptions(master, s.workType)}</select>` : ''}</div>`}
       ${readonly && s.workType ? `<div class="blk-msg muted">${esc(workTypeName(master, s.workType))}</div>` : ''}
       ${matHosts.get(s.projectId) === i ? blockMaterial(s.projectId) : ''}
@@ -395,30 +504,11 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   }
 
   /** Ingepland vandaag met materiaal dat mee moet (uit de planning) */
-  function neededHtml() {
-    const ids = [...new Set(planned.map((p) => p.projectId))];
-    return ids.map((id) => {
-      const need = needOf(ctx.planning(), date, id);
-      if (!need?.lines?.some((l) => l.description)) return '';
-      return `<section class="card day-need" style="--h:${hue(id)}"><h2>${esc(projectLabel(master.projects.find((p) => p.id === id), master) || 'Project')}</h2>${needHtml(need, { checkable: !!ctx.checks })}</section>`;
-    }).join('');
-  }
+  const neededHtml = () => needCardsHtml(ctx, master, username, date);
   /** Afgevinkt materiaal (gedeeld met wie op hetzelfde project staat) in de vakjes zetten */
-  let checks = null;
-  function showChecks() {
-    for (const c of el.querySelectorAll('[data-ck]')) {
-      const hit = checks?.find((x) => x.projectId === c.dataset.ck && x.key === c.dataset.key);
-      c.checked = !!hit;
-      c.closest('.need-check').classList.toggle('done', !!hit);
-      c.closest('.need-check').querySelector('small').textContent = hit ? `✔ ${hit.by ?? ''}` : '';
-    }
-  }
-  async function loadChecks() {
-    if (!ctx.checks || !el.querySelector('[data-ck]')) return;
-    showChecks();
-    try { checks = (await ctx.checks(date)) ?? checks; } catch { /* offline */ }
-    showChecks();
-  }
+  const ck = needChecks(el, ctx, username, date);
+  const showChecks = ck.show;
+  const loadChecks = ck.load;
 
   /**
    * Materiaal dat (nog) bij geen blok hoort: zonder project, of op een project dat niet meer
@@ -457,8 +547,10 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     for (const { g, s } of shown) if (WORKLIKE.has(s.kind) && s.projectId && !matHosts.has(s.projectId)) matHosts.set(s.projectId, g.main);
     // onderaan: de echte opsplitsing (ritten, werk en pauze apart)
     const tot = dayTotals(segs, rules);
+    // de zwarte tellers: standaard enkel bij de beheerder; de werknemer kiest zelf (Meer → Instellingen)
+    const showCounters = asAdmin || !!ctx.prefs?.().counters;
     const km = tot.km;
-    const dayCheck = dayChecks(segs, rules);
+    const dayCheck = dayChecks(segs, rules, master);
     const hol = holidayName(date);
     const pill = cur.status === 'bevestigd' ? '<span class="pill ok">Bevestigd</span>'
       : cur.edited ? '<span class="pill warn">Aangepast, nog niet bevestigd</span>' : '<span class="pill warn">Voorstel van de app</span>';
@@ -470,6 +562,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       ${!asAdmin && !readonly ? neededHtml() : ''}
       <section class="card mat-card">
         <div class="row spread"><h2>Tijdsblokken</h2>${pill}${hol ? `<span class="pill red">${esc(hol)}</span>` : ''}</div>
+        ${!showCounters && segs.length ? `<p class="day-total">Totaal <b>${fmtHours(tot.work)}</b>${tot.pauze ? ` <span class="muted small">· pauze ${fmtHours(tot.pauze)}</span>` : ''}</p>` : ''}
         ${!readonly && cur.edited ? '<p style="text-align:right;margin:0"><button class="link" data-act="reset">↺ Automatisch voorstel</button></p>' : ''}
         ${!raw && !rawError && !readonly ? '<p class="muted small">Geen automatische gegevens (geen koppeling met de server). Voeg je blokken zelf toe.</p>' : ''}
         ${shown.length ? shown.map(({ g, s }) => segHtml(s, g.main, g.members, g.pauses)).join('') : '<p class="muted">Nog geen blokken voor deze dag.</p>'}
@@ -478,7 +571,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           <button class="secondary" data-act="add" data-kind="werk">⛑️ + Werk</button>
           <button class="secondary" data-act="add" data-kind="atelier">🏭 + Atelier</button>
           <button class="secondary" data-act="add" data-kind="pauze">☕ + Pauze</button>
-          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button>'}</div>`}
+          ${merged ? '' : '<button class="secondary" data-act="add" data-kind="terug">🚗 + Terugrit</button>'}</div>
+          ${!asAdmin && date === today() && ctx.badge ? '<p class="small" style="margin:8px 0 0"><button class="link" data-act="badge">🏷 Vergeten te badgen in het atelier? Badge nu met je gsm</button></p>' : ''}`}
         <datalist id="artikels">${articles.map((a) => `<option value="${esc(a.name)}">${esc([a.code, a.unit].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
         ${materialHtml(order.map((x) => x.s))}
       </section>
@@ -492,17 +586,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           ${editingConfirmed ? '<button class="secondary" style="margin-top:8px" data-act="cancel-edit">Annuleren</button>'
             : asAdmin ? '' : '<p class="center"><button class="link" data-act="notworked">Niet gewerkt op deze dag</button></p>'}`}
       </section>
-      <div class="counters dark day-totals">
+      ${showCounters ? `<div class="counters dark day-totals">
         ${counterHtml('Werk', tot.werf + tot.atelier)}
-        ${counterHtml('Verplaatsing', tot.verpl)}
+        ${merged ? '' : counterHtml('Verplaatsing', tot.verpl)}
         ${counterHtml('Pauze', tot.pauze ?? 0)}
         ${counterHtml('Netto dag', tot.work, null, { cls: 'red' })}
-      </div>
+      </div>` : ''}
       <section class="card day-visual">
         <div class="row spread"><h3>De dag in beeld</h3><span class="muted small">${tot.start ? `${localTime(tot.start)} – ${localTime(tot.end)}` : ''}${km ? ` · ${km} km` : ''}</span></div>
         <div style="margin-top:10px">${trackHtml(segs, date, hourRange([{ segs, date }], date))}</div>
         ${legendHtml()}
-        ${order.length ? `<details class="day-split" ${merged ? 'open' : ''}><summary><b>Opsplitsing</b></summary><ul class="split-list">${order.map(({ s }) => {
+        ${order.length ? `<details class="day-split"><summary><b>Opsplitsing</b></summary><ul class="split-list">${order.filter(({ s }) => !merged || !TRAVEL.has(s.kind)).map(({ s }) => {
           const c = CAT[s.kind] ?? 'onbekend';
           const p = s.projectId ? projectLabel(master.projects.find((x) => x.id === s.projectId), master) : '';
           return `<li><span class="split-dot c-${c}" aria-hidden="true"></span><span class="split-time">${localTime(s.start)}–${localTime(s.end)}</span>
@@ -539,9 +633,13 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       toast('Pauze om 12:00 toegevoegd. Pas het uur aan als je op een ander moment pauze nam.', 'ok');
       return;
     }
-    let start = last ? last.end : localToTs(date, kindKey === 'verplaatsing' ? '07:30' : '08:00');
+    // vandaag: het nieuwe blok begint nu (het einde vul je in als je klaar bent: tik op het vakje)
+    const nowQ = date === today() ? quarter(Date.now()) : null;
+    let start = last ? last.end : nowQ ?? localToTs(date, kindKey === 'verplaatsing' ? '07:30' : '08:00');
+    const later = nowQ != null && last && nowQ > last.end;
+    if (later) start = nowQ;
     const workLike = (k) => k === 'werk' || k === 'atelier';
-    if (last && workLike(kind) && workLike(last.kind)) {
+    if (last && !later && workLike(kind) && workLike(last.kind)) {
       // tweede periode: eerst de standaardpauze
       segs.push({ start, end: start + pz * MIN, kind: 'pauze', projectId: null, candidates: [], siteId: null, auto: { start: true, end: true } });
       start += pz * MIN;
@@ -576,15 +674,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
 
   el.onchange = (e) => {
     const t = e.target;
-    if (t.dataset.ck) {
-      const body = { date, projectId: t.dataset.ck, key: t.dataset.key, done: t.checked };
-      const me = ctx.me?.() ?? {};
-      checks = (checks ?? []).filter((x) => !(x.projectId === body.projectId && x.key === body.key));
-      if (t.checked) checks.push({ projectId: body.projectId, key: body.key, by: me.name ?? username, at: Date.now() });
-      showChecks();
-      ctx.setCheck(body).catch((err) => { toast(`Niet bewaard: ${err.message}`, 'err'); loadChecks(); });
-      return;
-    }
+    if (t.dataset.ck) { ck.change(t); return; }
+    if (t.closest('form.need-add')) return;
     if (t.dataset.f === 'daynote') { if (!editingConfirmed) saveDay(ctx, username, date, { note: t.value, ...(st.edited ? {} : { segments: clean(segs) }) }); return; }
     const box = t.closest('.mat') ? null : t.closest('.blk'); // materiaal staat ook in een blok
     if (box) {
@@ -599,7 +690,9 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       if (f === 'start' || f === 'end') {
         const hhmm = parseTime(t.value);
         if (!hhmm) { t.classList.add('bad'); toast('Tijd niet herkend. Typ bv. 8, 730, 7u30 of 16.45', 'err'); return; }
-        const ts = hhmm === '24:00' || (f === 'end' && hhmm === '00:00') ? dayRange(date)[1] - MIN : localToTs(date, hhmm);
+        const endOfDay = hhmm === '24:00' || (f === 'end' && hhmm === '00:00');
+        // uren per kwartier (zoals bij het bevestigen)
+        const ts = endOfDay ? dayRange(date)[1] - MIN : quarter(localToTs(date, hhmm));
         if (mem.length > 1) {
           // ritten die buiten de nieuwe tijd vallen, vervallen
           const list = f === 'start' ? mem : [...mem].reverse();
@@ -646,7 +739,14 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         // een pauze midden in een werkblok knipt het in twee
         fitPauses(segs);
       } else if (f === 'km') s.km = t.value === '' ? null : Number(t.value);
-      else if (f === 'workType') { for (const x of mem) if (x === s || WORKLIKE.has(x.kind)) x.workType = t.value || null; }
+      else if (f === 'workType') {
+        // soort zonder project (bv. offertes): het project valt weg
+        const noProj = workTypeNoProject(master, t.value);
+        for (const x of mem) {
+          if (x === s || WORKLIKE.has(x.kind)) x.workType = t.value || null;
+          if (noProj && x.kind !== 'pauze') x.projectId = null;
+        }
+      }
       else if (f === 'projectId' && t.value === '__new') {
         const site = sitesById.get(s.siteId);
         newProjectDialog(ctx, { customerId: site?.customer_id ?? null, siteId: site?.id ?? null, workType: s.workType }).then((p) => {
@@ -697,6 +797,25 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     }
   };
 
+  // Tijdveld aantikken: alles selecteren (meteen overtypen). Vandaag, einde nog in de toekomst:
+  // het huidige uur invullen (je tikt op het einde als je stopt).
+  el.onfocusin = (e) => {
+    const t = e.target;
+    if (!t.classList?.contains('t') || t.disabled) return;
+    const box = t.closest('.blk');
+    const i = t.dataset.pi ?? box?.dataset.i;
+    const mem = t.dataset.pi != null ? [i] : (box?.dataset.g || String(i ?? '')).split(',').filter(Boolean);
+    const s = mem.length ? segs[Number(mem.at(-1))] : null;
+    if (t.dataset.f === 'end' && date === today() && s && s.end > Date.now() && quarter(Date.now()) > segs[Number(mem[0])].start) {
+      t.value = localTime(quarter(Date.now()));
+      t.dispatchEvent(new Event('change', { bubbles: true }));
+      const sel = t.dataset.pi != null ? `input.t[data-pi="${i}"][data-f=end]` : `.blk[data-i="${i}"] input.t[data-f=end]`;
+      requestAnimationFrame(() => { const n = el.querySelector(sel); n?.focus(); n?.select(); });
+      return;
+    }
+    setTimeout(() => t.select(), 0);
+  };
+
   // Enter in een tijdveld = naar het volgende tijdveld
   el.onkeydown = (e) => {
     if (e.key !== 'Enter' || !e.target.classList.contains('t')) return;
@@ -716,6 +835,10 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const act = btn?.dataset.act;
     if (!act) return;
     if (act === 'add') addBlock(btn.dataset.kind);
+    else if (act === 'badge') {
+      confirmDialog({ title: 'Badgen met je gsm', text: `Dit telt als een badge in het atelier om ${localTime(Date.now())}, net zoals aan de deur. De eerste badge van de dag is je begin, de laatste je einde.`, ok: '🏷 Badge nu', cancel: 'Annuleren' })
+        .then((ok) => ok && ctx.badge().then(() => toast('Badge geregistreerd', 'ok')).catch((err) => toast(err.message, 'err')));
+    }
     else if (act === 'edit') again({ editing: true });
     else if (act === 'cancel-edit') again();
     else if (act === 'pause-' || act === 'pause+') {
@@ -759,7 +882,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     } else if (act === 'confirm') {
       // bij bevestigen altijd per kwartier afronden (ook manueel aangepaste tijden)
       segs = roundSegments(clean(segs).map(({ openBadge, ...s }) => s), rules);
-      const err = validate(segs, date) || (material.some((m) => m.description && !m.projectId) ? 'Kies bij elk materiaal een project.' : null);
+      const err = validate(segs, date, master) || (material.some((m) => m.description && !m.projectId) ? 'Kies bij elk materiaal een project.' : null);
       const slot = el.querySelector('.err-slot');
       if (err) { slot.innerHTML = `<div class="error">${esc(err)}</div>`; return; }
       if (!segs.length && !confirm('Er staan geen blokken op deze dag. Toch bevestigen?')) return;
@@ -785,6 +908,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     }
   };
 
+  onNeedSubmit(el, ctx, date, () => { draw(); loadChecks(); });
   draw();
   loadChecks();
 }
