@@ -623,9 +623,13 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 /* mee te nemen: geen lijntjes, wel zelf toevoegen */
 .need-check { border-bottom: 0 !important; padding: 4px 0; }
 .need-check input { min-height: 0 !important; height: 22px; margin: 0; }
-.need-add { display: flex; gap: 6px; margin-top: 8px; }
-.need-add input { flex: 1; min-width: 0; }
-.need-add button { flex: none; min-width: 44px; font-size: 20px; padding: 4px 12px; }
+/* toevoegen zoals een lijst in Apple Notities: bolletje met + en "Toevoegen" in lichtgrijs */
+.need-add { margin-top: 2px; }
+.need-add label { display: flex; align-items: center; gap: 10px; padding: 4px 0; cursor: text; margin: 0; font-weight: inherit; }
+.need-plus { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--muted); color: var(--muted); display: grid; place-items: center; font-size: 18px; line-height: 1; font-weight: 400; opacity: .7; }
+.need-add input, .need-add input:focus { flex: 1; min-width: 0; min-height: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; outline: none; padding: 2px 0 !important; font-size: inherit; color: var(--fg); }
+.need-add input::placeholder { color: var(--muted); opacity: .65; }
+.need-add:focus-within .need-plus { opacity: 1; border-color: var(--accent); color: var(--fg); }
 .day-need.leave { border-left-color: var(--muted); }
 /* foto's: bladeren */
 .photo-view { background: rgba(0,0,0,.92); }
@@ -974,6 +978,14 @@ div.ios-row { cursor: default; }
 .rc-field input.t, .rc-field select { width: 100%; min-width: 0; text-align: center; font-size: 17px; font-weight: 600; padding: 8px 4px; background-color: var(--surface) !important; }
 .rc-field select { padding: 8px 18px 8px 6px; background-position: right 6px center; text-align-last: center; width: 100%; }
 .rc-field .auto { color: var(--info, #007aff); font-style: italic; }
+.rc-field input.t.open::placeholder { color: var(--muted); font-style: italic; font-weight: 500; font-size: 15px; }
+.stop-dialog .stop-time { display: block; width: 100%; box-sizing: border-box; text-align: center; font-size: 28px; font-weight: 700; padding: 10px; margin: 6px 0 4px; }
+.stop-dialog .stop-time.bad { box-shadow: inset 0 0 0 1.5px var(--red); }
+.rc-field .rc-sel { position: relative; display: block; box-sizing: border-box; width: 100%; min-height: 42px; padding: 8px 4px; border: 1.5px solid transparent; border-radius: 10px; background: var(--surface); text-align: center; font-size: 17px; font-weight: 600; line-height: 26px; white-space: nowrap; overflow: hidden; color: var(--fg); }
+.rc-field .rc-sel.auto { color: var(--info, #007aff); }
+.rc-field .rc-sel select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; min-height: 0; padding: 0; margin: 0; border: 0; font-size: 16px; }
+.rc-field span.rc-sel { font-size: 17px; color: var(--fg); }
+.rc-field span.rc-sel.auto { color: var(--info, #007aff); }
 .rc-total { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; padding: 8px 2px 0; border-top: .5px solid var(--line); margin-top: 2px; }
 .rc-total span { font-size: 15px; }
 .rc-total b { font-size: 22px; font-weight: 700; white-space: nowrap; }

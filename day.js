@@ -40,10 +40,70 @@ export function proposal(master, planning, username, date, raw) {
   });
   // antwoorden op "Aan het werk?" en "Bij wie ben je?" verwerken; samengevoegde projecten doorverwijzen
   const loadOk = workTypesOf(master).some((w) => w.id === LOAD_WORK_TYPE.id);
-  return fillBadgeGaps(applyAnswers(segs, raw?.answers ?? [], { now: date === today() ? Date.now() : null }).segs)
+  const out = fillBadgeGaps(applyAnswers(segs, raw?.answers ?? [], { now: date === today() ? Date.now() : null }).segs)
     .map((s) => (s.projectId ? { ...s, projectId: resolveId(master.projects, s.projectId) } : s))
     // korter dan een uur in het atelier (en al afgesloten): voorstellen als laden/lossen
     .map((s) => (loadOk && s.kind === 'atelier' && !s.workType && !s.openBadge && s.end - s.start < SHORT_ATELIER_MIN * MIN ? { ...s, workType: LOAD_WORK_TYPE.id } : s));
+  return date === today() ? markRunning(out, Date.now()) : out;
+}
+
+/**
+ * Voorgesteld stopuur voor een regel die nog open staat (begonnen om rowStart), uit het automatisch voorstel:
+ *  - na de eerste rit (verplaatsing of naar huis) na de start: het moment dat je terug bent (einde van de rit);
+ *  - kom je daarna minder dan een uur in het atelier: het einde van die tijd in het atelier
+ *    (laatste badge of vertrek naar huis);
+ *  - nog geen rit: nu (vandaag) of het einde van het laatste blok. Afgerond op het kwartier.
+ * Geeft null als er niets voor te stellen valt.
+ */
+export function suggestStop(auto, rowStart, now = null) {
+  const s = [...(auto ?? [])].sort((a, b) => a.start - b.start);
+  const q = (ts) => quarter(ts);
+  const trip = s.find((x) => TRAVEL.has(x.kind) && x.start >= rowStart + MIN);
+  if (trip) {
+    const next = s.find((x) => x.start >= trip.end - MIN && !TRAVEL.has(x.kind) && x.kind !== 'pauze');
+    const stillOpen = next && now != null && next.end >= now - 20 * MIN;
+    if (next && next.kind === 'atelier' && !stillOpen && next.end - next.start < 60 * MIN) return q(next.end);
+    return q(trip.end);
+  }
+  if (now != null) return Math.max(rowStart + 15 * MIN, q(now));
+  const last = s.filter((x) => x.kind !== 'pauze').at(-1);
+  return last && last.end > rowStart ? q(last.end) : null;
+}
+
+/**
+ * Pop-up "Stopuur": het voorgestelde uur staat ingevuld en is meteen aan te passen.
+ * Geeft het gekozen uur ("HH:MM") of null (nog bezig / gesloten).
+ */
+export function stopDialog({ title = 'Stopuur', text = '', value = '', busy = true } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `<div class="modal stop-dialog" role="dialog" aria-modal="true" aria-labelledby="sdTitle">
+      <h2 id="sdTitle">${esc(title)}</h2>${text ? `<p class="muted">${esc(text)}</p>` : ''}
+      <input class="t stop-time" value="${esc(value)}" inputmode="decimal" autocomplete="off" aria-label="Stopuur">
+      <div class="row modal-actions">${busy ? '<button class="secondary" data-a="busy">Nog bezig</button>' : '<button class="secondary" data-a="busy">Annuleren</button>'}
+        <button class="primary" data-a="ok">Bewaar</button></div></div>`;
+    const inp = wrap.querySelector('input');
+    const done = (v) => { wrap.remove(); resolve(v); };
+    const ok = () => { const v = parseTime(inp.value); if (!v) { inp.classList.add('bad'); inp.focus(); return; } done(v); };
+    wrap.addEventListener('click', (e) => {
+      if (e.target === wrap) done(null);
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      if (a === 'busy') done(null); else if (a === 'ok') ok();
+    });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ok(); } if (e.key === 'Escape') done(null); });
+    document.body.append(wrap);
+    inp.focus();
+    setTimeout(() => { try { inp.setSelectionRange(0, inp.value.length); } catch { inp.select(); } }, 30);
+  });
+}
+
+/** Vandaag: het laatste blok loopt nog (geen rit erna, en de gsm zag je recent nog daar) */
+export function markRunning(segs, now) {
+  const s = [...segs].sort((a, b) => a.start - b.start);
+  const last = s.filter((x) => x.kind !== 'pauze').at(-1);
+  if (last && !TRAVEL.has(last.kind) && now - last.end < 20 * MIN) last.running = true;
+  return segs;
 }
 
 /**
@@ -370,7 +430,7 @@ export function needCardsHtml(ctx, master, username, date) {
       return `<section class="card day-need" style="--h:${hue(id)}"><h2>${time ? `<span class="muted">${esc(time)}</span> ` : ''}${esc(projectLabel(master.projects.find((p) => p.id === id), master) || 'Project')}</h2>
         ${notes.map((n) => `<p class="muted small">${esc(n)}</p>`).join('')}
         ${has ? needHtml(need, { checkable: !!ctx.checks }) : '<b class="small">🧰 Mee te nemen</b>'}
-        <form class="need-add" data-p="${esc(id)}"><input name="t" placeholder="Toevoegen, bv. 2 st kabelgoot" aria-label="Mee te nemen toevoegen" autocomplete="off"><button class="secondary" aria-label="Toevoegen">+</button></form>
+        <form class="need-add" data-p="${esc(id)}"><label><span class="need-plus" aria-hidden="true">+</span><input name="t" placeholder="Toevoegen" aria-label="Mee te nemen toevoegen, bv. 2 st kabelgoot" autocomplete="off" enterkeyhint="next"></label></form>
       </section>`;
     }).join('');
 }
@@ -495,7 +555,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   const editingConfirmed = st.status === 'bevestigd' && editing;
   const readonly = st.status === 'bevestigd' && !editing;
   // de werknemer ziet ritten niet apart: die horen bij het project van het aansluitende werk
-  const merged = !asAdmin;
+  // Meer → Weergave → "Uren in detail": de werknemer ziet ook de ritten apart (zoals de beheerder)
+  const merged = !asAdmin && !ctx.prefs?.().detail;
   const pauseMin = ctx.me?.()?.pauseMin ?? 30;
   // voorstel van de app: tijden in blauw/schuin tot je ze aanpast
   const allAuto = !st.edited && st.status !== 'bevestigd';
@@ -589,13 +650,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         ${readonly ? '' : '<button class="link danger" data-act="del-seg" aria-label="Pauze verwijderen">✕</button>'}</div>`;
     }
     const pauseMin = Math.round(pauses.reduce((t, k) => t + (segs[k].end - segs[k].start), 0) / MIN);
-    const dur = Math.round((s.end - s.start) / MIN) - pauseMin;
-    const bad = !(s.end > s.start);
+    // vandaag: zolang je nog bezig bent blijft de stop leeg (tik erop = voorstel); het totaal loopt tot nu
+    const lastM = segs[members.at(-1)] ?? s;
+    const open = !readonly && date === today() && !!(lastM.openEnd || lastM.running);
+    const shownEnd = open ? Math.max(s.end, Date.now()) : s.end;
+    const dur = Math.round((shownEnd - s.start) / MIN) - pauseMin;
+    const bad = !(shownEnd > s.start);
     const dis = readonly ? 'disabled' : '';
     const pauseAuto = pauses.some((k) => segs[k].auto);
     const work = WORKLIKE.has(s.kind);
-    const time = (f, label) => `<label class="rc-field"><span>${label}</span><input class="t ${s.auto?.[f] || (f === 'end' && s.openEnd) ? 'auto' : ''}" data-f="${f}"
-      value="${localTime(s[f])}" inputmode="decimal" autocomplete="off" aria-label="${label}" ${dis}></label>`;
+    const time =(f, label) => `<label class="rc-field"><span>${label}</span><input class="t ${s.auto?.[f] || (f === 'end' && s.openEnd) ? 'auto' : ''} ${f === 'end' && open ? 'open' : ''}" data-f="${f}"
+      value="${f === 'end' && open ? '' : localTime(s[f])}" ${f === 'end' && open ? 'placeholder="bezig…" readonly' : ''} inputmode="decimal" autocomplete="off" aria-label="${label}" ${dis}></label>`;
     const opts = [...new Set([0, 15, 30, 45, 60, 75, 90, 120, pauseMin])].sort((a, b) => a - b);
     const noProj = work && !s.projectId && workTypeNoProject(master, s.workType);
     return `<div class="row-card blk ${bad ? 'err' : ''}" data-kind="${s.kind}" data-i="${i}" data-g="${members.join(',')}">
@@ -610,9 +675,10 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       <div class="rc-times">
         ${time('start', 'Start')}${time('end', 'Stop')}
         <label class="rc-field"><span>Pauze</span>${readonly ? `<input class="rc-val" value="${pauseMin ? fmtHours(pauseMin) : 'geen'}" disabled aria-label="Pauze">`
-          : `<select data-f="pause" class="${pauseAuto ? 'auto' : ''}" aria-label="Pauze">
-          ${opts.map((m) => `<option value="${m}" ${m === pauseMin ? 'selected' : ''}>${m ? fmtHours(m) : 'geen'}</option>`).join('')}</select>`}</label>
-        <div class="rc-total"><span>Totaal</span><b class="${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</b></div>
+          // zelfde vakje als start/stop; de (onzichtbare) keuzelijst ligt erover
+          : `<span class="rc-sel ${pauseAuto ? 'auto' : ''}">${pauseMin ? fmtHours(pauseMin) : 'geen'}<select data-f="pause" data-native aria-label="Pauze">
+          ${opts.map((m) => `<option value="${m}" ${m === pauseMin ? 'selected' : ''}>${m ? fmtHours(m) : 'geen'}</option>`).join('')}</select></span>`}</label>
+        <div class="rc-total"><span>${open ? 'Totaal tot nu' : 'Totaal'}</span><b class="${bad ? 'bad' : ''}">${bad ? '??' : fmtHours(dur)}</b></div>
       </div>
       ${s.kind === 'onbekend' && !readonly ? `<div class="blk-more"><select data-f="kind" aria-label="Wat gebeurde er">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}
       ${readonly && s.workType ? `<div class="blk-msg muted">${esc(workTypeName(master, s.workType))}</div>` : ''}
@@ -797,6 +863,28 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   }
 
   /**
+   * Stopuur kiezen voor een regel die nog bezig is: pop-up met het voorstel (na de rit terug, of
+   * het einde van een kort bezoek aan het atelier). Geeft true als er een stop gekozen werd.
+   */
+  async function askStop(i, firstIdx, why = '') {
+    const first = segs[firstIdx] ?? segs[i];
+    if (!first) return false;
+    const sug = suggestStop(dayState(ctx, username, date, raw).auto, first.start, date === today() ? Date.now() : null);
+    const label = projectLabel(master.projects.find((p) => p.id === segs[i]?.projectId), master) || KINDS[segs[i]?.kind] || 'Regel';
+    const v = await stopDialog({
+      title: `Stopuur · ${label}`,
+      text: why || `Start ${localTime(first.start)}. Het voorstel van de app staat ingevuld: pas het gerust aan.`,
+      value: sug ? localTime(sug) : '',
+    });
+    if (!v) return false;
+    const inp = el.querySelector(`.blk[data-i="${i}"] input.t[data-f=end]`);
+    if (!inp) return false;
+    inp.value = v;
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  /**
    * Nieuwe regel (werknemer): staat altijd apart. Vandaag begint ze nu en vul je de stop in als je
    * klaar bent (tik op Stop = het huidige uur); een andere dag sluit ze aan op de vorige regel.
    */
@@ -902,7 +990,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         persistSegments(); draw();
         return;
       }
-      if (f === 'end') delete s.openEnd;
+      if (f === 'end') for (const x of mem) { delete x.openEnd; delete x.running; }
       if (f === 'start' || f === 'end') {
         const hhmm = parseTime(t.value);
         if (!hhmm) { t.classList.add('bad'); toast('Tijd niet herkend. Typ bv. 8, 730, 7u30 of 16.45', 'err'); return; }
@@ -1012,18 +1100,19 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
 
   // Tijdveld aantikken: alles selecteren (meteen overtypen). Vandaag, einde nog in de toekomst:
   // het huidige uur invullen (je tikt op het einde als je stopt).
-  el.onfocusin = (e) => {
+  // (addEventListener: "onfocusin" als eigenschap werkt niet in elke browser; de vorige luisteraar eerst weg)
+  if (el._focusIn) el.removeEventListener('focusin', el._focusIn);
+  el._focusIn = (e) => {
     const t = e.target;
     if (!t.classList?.contains('t') || t.disabled) return;
     const box = t.closest('.blk');
     const i = t.dataset.pi ?? box?.dataset.i;
     const mem = t.dataset.pi != null ? [i] : (box?.dataset.g || String(i ?? '')).split(',').filter(Boolean);
     const s = mem.length ? segs[Number(mem.at(-1))] : null;
-    if (t.dataset.f === 'end' && date === today() && s && (s.end > Date.now() || s.openEnd) && quarter(Date.now()) > segs[Number(mem[0])].start) {
-      t.value = localTime(quarter(Date.now()));
-      t.dispatchEvent(new Event('change', { bubbles: true }));
-      const sel = t.dataset.pi != null ? `input.t[data-pi="${i}"][data-f=end]` : `.blk[data-i="${i}"] input.t[data-f=end]`;
-      requestAnimationFrame(() => { const n = el.querySelector(sel); n?.focus(); n?.select(); });
+    // vandaag, regel nog bezig: tik op Stop = pop-up met het voorgestelde stopuur
+    if (t.dataset.f === 'end' && t.dataset.pi == null && date === today() && s && (t.classList.contains('open') || s.end > Date.now() || s.openEnd || s.running)) {
+      t.blur();
+      askStop(Number(i), Number(mem[0]));
       return;
     }
     // iPhone zet de cursor na de tik opnieuw: daarom ook na de tik nog eens alles selecteren
@@ -1032,6 +1121,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     setTimeout(selAll, 80);
     t.addEventListener('mouseup', (ev) => ev.preventDefault(), { once: true });
   };
+  el.addEventListener('focusin', el._focusIn);
 
   // Enter in een tijdveld = naar het volgende tijdveld
   el.onkeydown = (e) => {
@@ -1127,6 +1217,20 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       material.splice(Number(e.target.closest('.mat').dataset.m), 1);
       persistMaterial(); draw();
     } else if (act === 'confirm') {
+      // vandaag nog een regel bezig: eerst het stopuur kiezen (pop-up met voorstel), daarna opnieuw bevestigen
+      if (date === today() && segs.some((x) => x.openEnd || x.running)) {
+        (async () => {
+          for (let n = 0; n < 6; n++) {
+            const g = (merged ? employeeBlocks(segs, rules).groups : segs.map((_, k) => ({ main: k, members: [k] })))
+              .find((x) => x.members.some((k) => segs[k].openEnd || segs[k].running));
+            if (!g) break;
+            const ok = await askStop(g.main, g.members[0], 'Je bevestigt de dag. Wanneer ben je gestopt? Het voorstel van de app staat ingevuld.');
+            if (!ok) { toast('Nog niet bevestigd: kies eerst je stopuur.', 'err'); return; }
+          }
+          el.querySelector('[data-act=confirm]')?.click();
+        })();
+        return;
+      }
       // bij bevestigen altijd per kwartier afronden (ook manueel aangepaste tijden)
       segs = roundSegments(clean(segs).map(({ openBadge, ...s }) => s), rules);
       const err = validate(segs, date, master) || (material.some((m) => m.description && !m.projectId) ? 'Kies bij elk materiaal een project.' : null);
@@ -1134,7 +1238,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       if (err) { slot.innerHTML = `<div class="error">${esc(err)}</div>`; return; }
       if (!segs.length && !confirm('Er staan geen blokken op deze dag. Toch bevestigen?')) return;
       material = material.filter((m) => m.description);
-      const finalSegs = [...segs].sort((a, b) => a.start - b.start).map(({ candidates, openEnd, ...s }) => s);
+      const finalSegs = [...segs].sort((a, b) => a.start - b.start).map(({ candidates, openEnd, running, ...s }) => s);
       // automatisch voorstel bewaren (enkel bij de eerste keer bevestigen) om manuele aanpassingen te tonen aan de beheerder
       const proposalSaved = st.savedProposal ?? compactSegments(roundSegments((st.auto ?? []).map(({ openBadge, ...s }) => s), rules));
       const changes = diffSegments(proposalSaved, compactSegments(finalSegs)).length;
@@ -1159,4 +1263,16 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   onNeedSubmit(el, ctx, date, () => { draw(); loadChecks(); });
   draw();
   loadChecks();
+  // een eigen regel is nog bezig, maar de gsm zag ondertussen een rit (terug): stopuur voorstellen (één keer per rit)
+  if (!asAdmin && !readonly && date === today() && st.edited) {
+    const open = segs.filter((x) => x.openEnd || x.running).sort((a, b) => a.start - b.start)[0];
+    const trip = open && [...(st.auto ?? [])].sort((a, b) => a.start - b.start).find((x) => TRAVEL.has(x.kind) && x.start >= open.start + MIN && x.end < Date.now());
+    const key = trip && `enautec.stopAsked.${date}.${trip.start}`;
+    let asked = true;
+    try { asked = !key || !!sessionStorage.getItem(key); if (key) sessionStorage.setItem(key, '1'); } catch { asked = !key; }
+    if (!asked) {
+      const g = (merged ? employeeBlocks(segs, rules).groups : segs.map((_, k) => ({ main: k, members: [k] }))).find((x) => x.members.includes(segs.indexOf(open)));
+      if (g) setTimeout(() => askStop(g.main, g.members[0], `De app zag een verplaatsing om ${localTime(trip.start)}. Ben je gestopt met deze regel? Het voorstel staat ingevuld.`), 400);
+    }
+  }
 }

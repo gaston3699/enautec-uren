@@ -354,6 +354,12 @@ export function renderSetup(el, deps) {
       el.querySelector('[data-act=next]').onclick = next;
       return;
     }
+    // een bewaard script van een oudere versie: opnieuw aanmaken met dezelfde sleutel (anders kopieer je het oude)
+    const old = st();
+    const oldKey = old.script && /\nconst KEY = ("(?:[^"\\]|\\.)*");/.exec(old.script);
+    if (oldKey && !old.script.includes(`const SCRIPT_VERSION = ${SCRIPT_VERSION};`)) {
+      try { save({ script: widgetScript({ server, key: JSON.parse(oldKey[1]), name: deps.name }) }); } catch { /* laat het oude staan */ }
+    }
     const s = st();
     try { await fetchMe(); } catch { /* offline */ }
     const ok = s.widgetAt && me?.widgetSeen && me.widgetSeen >= s.widgetAt;

@@ -307,6 +307,22 @@ function applyAnswersRaw(segs, answers, now) {
     // blok waarin de werknemer toen was, of het eerste blok dat kort erna begint
     let i = out.findIndex((s) => !TRAVEL.has(s.kind) && s.start <= a.ts + 5 * MIN && s.end > a.ts);
     if (i < 0) i = out.findIndex((s) => !TRAVEL.has(s.kind) && s.start >= a.ts && s.start - a.ts <= 20 * MIN);
+    // vandaag "Aan het werk? Ja" maar de gsm heeft nog geen verblijf (te weinig punten): de regel staat
+    // er meteen, vanaf het moment van de vraag tot nu (of tot het volgende blok)
+    if (i < 0 && a.kind === 'start' && now != null && now > a.ts && now - a.ts < 14 * 3600000) {
+      const Q = 15 * MIN;
+      const start = Math.round(a.ts / Q) * Q;
+      const next = out.filter((s) => s.start > a.ts).sort((x, y) => x.start - y.start)[0];
+      const end = Math.min(now, next?.start ?? now);
+      if (end - start >= MIN) {
+        out.push({ start, end, kind: (a.answer.siteType ?? a.siteType) === 'atelier' ? 'atelier' : 'werk', siteId: a.answer.siteId ?? a.siteId ?? null,
+          projectId: null, candidates: [], source: 'melding', running: !next });
+        out.sort((x, y) => x.start - y.start);
+        i = out.findIndex((s) => s.source === 'melding' && s.start === start);
+        // de rit naar de klant telt als werk (zoals hierboven, maar het blok bestond toen nog niet)
+        if (out[i].kind === 'werk') for (const s of out) if (s.kind === 'woon-werk' && s.end <= start + 5 * MIN && !out.slice(0, i).some((x) => !TRAVEL.has(x.kind) && x.kind !== 'pauze')) s.kind = 'verplaatsing';
+      }
+    }
     if (i < 0) continue;
     const seg = out[i];
     if (a.answer.answer === 'geen') { Object.assign(seg, { kind: 'pauze', projectId: null, candidates: [] }); continue; }

@@ -1044,7 +1044,9 @@ async function viewMore(sub = '') {
       ${iosGroup(THEMES.map(([v, l]) => `<li><button type="button" class="ios-row" data-theme-pick="${v}"><span class="ios-label">${l}${v ? '' : '<small>Zoals je toestel</small>'}</span>
         <span class="ios-check" aria-hidden="true">${(prefs().theme ?? '') === v ? '✓' : ''}</span></button></li>`), { header: 'Achtergrond' })}
       ${iosGroup([iosRow({ label: 'Tellers tonen', toggle: `data-pref="counters" ${prefs().counters ? 'checked' : ''}` })],
-        { footer: 'Werk, pauze en netto als tellers bovenaan het dagscherm.' })}`,
+        { footer: 'Werk, pauze en netto als tellers bovenaan het dagscherm.' })}
+      ${iosGroup([iosRow({ label: 'Uren in detail', toggle: `data-pref="detail" ${prefs().detail ? 'checked' : ''}` })],
+        { footer: 'Bij je uren ook de verplaatsingen apart tonen (rit heen, werk, rit terug), zoals de app ze gemeten heeft. Uit = één regel per project.' })}`,
     meldingen: () => `${back()}<div id="pushCard"><p class="muted">Laden…</p></div>`,
     owntracks: () => `${back()}${mobile && ot && server ? `<section class="card">${owntracksGuideHtml({ ios: isIOS(), link: owntracksLink(ot), ot, server })}</section>`
       : '<p class="ios-foot">De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p>'}
