@@ -2,7 +2,7 @@
 import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS, DEFAULT_RULES } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
-import { esc, uid, alive, projectLabel, byName, toast, resolveId, info, fold } from './ui.js';
+import { esc, uid, alive, projectLabel, byName, toast, resolveId, info, fold, matRowHtml, matAddHtml, wireSwipe } from './ui.js';
 import { confirmDialog } from './update.js';
 import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN, needsProject, workTypeNoProject } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
@@ -416,9 +416,13 @@ const SUB = {
  * "Mee te nemen" per ingepland project: afvinken en zelf iets toevoegen.
  * Ook zonder materiaal staat er een kaart, zodat de werknemer zelf iets kan toevoegen.
  */
-export function needCardsHtml(ctx, master, username, date) {
+export function needCardsHtml(ctx, master, username, date, { since = null, now = Date.now() } = {}) {
   const planned = alive(ctx.planning().items).filter((p) => p.username === username && p.date === date);
   const leave = planned.find((p) => p.projectId === LEAVE);
+  // 3 uur na de aanvang van de werken (eerste blok van de dag) verdwijnen de projecten van Dag; voorbije dagen ook
+  if (date < today() || (since != null && now >= since + 3 * 60 * MIN)) {
+    return leave ? `<section class="card day-need leave"><h2>🏖 Verlof</h2><p class="muted">${esc(leave.note || 'Ingepland als niet beschikbaar.')}</p></section>` : '';
+  }
   const ids = [...new Set(planned.map((p) => p.projectId))].filter((id) => id !== LEAVE);
   return (leave ? `<section class="card day-need leave"><h2>🏖 Verlof</h2><p class="muted">${esc(leave.note || 'Ingepland als niet beschikbaar.')}</p></section>` : '')
     + ids.map((id) => {
@@ -521,69 +525,6 @@ function onNeedSubmit(el, ctx, date, redraw) {
     redraw();
     el.querySelector(`form.need-add[data-p="${CSS.escape(f.dataset.p)}"] input`)?.focus();
   };
-}
-
-/**
- * Een materiaalregel naar links of rechts vegen om hem te wissen (zoals in Mail op de iPhone).
- * Verder dan een derde van de breedte (of snel genoeg) = wissen, anders terug op zijn plaats.
- */
-export function wireSwipe(el, onDelete) {
-  if (el._swipe) for (const [t, f] of el._swipe) el.removeEventListener(t, f, true);
-  let s = null;
-  const reset = (row) => { row.style.transition = 'transform .2s'; row.style.transform = ''; };
-  const down = (e) => {
-    const box = e.target.closest('.mat-swipe.can-swipe');
-    if (!box || e.target.closest('select') || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    s = { box, row: box.querySelector('.mat'), x0: e.clientX, y0: e.clientY, t0: Date.now(), dx: 0, mode: null, id: e.pointerId };
-  };
-  const move = (e) => {
-    if (!s || e.pointerId !== s.id) return;
-    const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
-    if (!s.mode) {
-      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) {
-        s.mode = 'h';
-        s.box.classList.add('swiping');
-        // de regel krijgt de kleur van zijn blok, zodat het rode vlak er netjes onder schuift
-        for (let p = s.box.parentElement; p; p = p.parentElement) {
-          const bg = getComputedStyle(p).backgroundColor;
-          if (bg && bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg)) { s.row.style.background = bg; break; }
-        }
-        try { s.box.setPointerCapture(e.pointerId); } catch { /* oude browser */ }
-        if (s.box.contains(document.activeElement)) document.activeElement.blur();
-      } else if (Math.abs(dy) > 10) { s = null; return; }
-      else return;
-    }
-    e.preventDefault();
-    s.dx = dx;
-    s.row.style.transition = 'none';
-    s.row.style.transform = `translateX(${dx}px)`;
-    s.box.classList.toggle('from-left', dx > 0);
-    s.box.classList.toggle('armed', Math.abs(dx) > s.box.offsetWidth / 3);
-  };
-  const up = (e) => {
-    if (!s || e.pointerId !== s.id) return;
-    const { box, row, dx, mode, t0 } = s;
-    s = null;
-    if (mode !== 'h') return;
-    // de klik die na het vegen volgt niet laten doorgaan (geen veld openen)
-    const eat = (c) => { c.preventDefault(); c.stopPropagation(); };
-    el.addEventListener('click', eat, { capture: true, once: true });
-    setTimeout(() => el.removeEventListener('click', eat, true), 400);
-    const w = box.offsetWidth;
-    const fast = Math.abs(dx) > 60 && Math.abs(dx) / Math.max(1, Date.now() - t0) > 0.6;
-    if (e.type === 'pointercancel' || (Math.abs(dx) < w / 3 && !fast)) {
-      box.classList.remove('armed'); reset(row);
-      setTimeout(() => { row.style.background = ''; box.classList.remove('swiping'); }, 220);
-      return;
-    }
-    row.style.transition = 'transform .18s ease-in';
-    row.style.transform = `translateX(${dx > 0 ? w : -w}px)`;
-    box.style.height = `${box.offsetHeight}px`;
-    setTimeout(() => { box.style.transition = 'height .15s'; box.style.height = '0px'; }, 170);
-    setTimeout(() => onDelete(Number(box.dataset.m)), 330);
-  };
-  el._swipe = [['pointerdown', down], ['pointermove', move], ['pointerup', up], ['pointercancel', up]];
-  for (const [t, f] of el._swipe) el.addEventListener(t, f, true);
 }
 
 /** Dag in de toekomst: planning en wat mee moet, nog geen uren */
@@ -809,25 +750,22 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     </div>`;
   }
 
-  const addMatHtml = (pid) => `<button class="mat-add" data-act="add-mat" data-p="${esc(pid)}"><span class="need-plus" aria-hidden="true">+</span>Materiaal toevoegen</button>`;
+  const addMatHtml = (pid) => matAddHtml('add-mat', `data-p="${esc(pid)}"`);
 
   function matHtml(m, i, dayProj = []) {
     const dis = readonly ? 'disabled' : '';
     const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
     // één regel per artikel; wissen door naar links of rechts te vegen (zie wireSwipe)
-    return `<div class="mat-swipe${readonly ? '' : ' can-swipe'}" data-m="${i}"><span class="mat-del-bg" aria-hidden="true"><span>Wissen</span><span>Wissen</span></span>
-      <div class="mat" data-m="${i}">
-      <label class="mat-name-cell"><span class="mat-name" aria-hidden="true">${esc(m.description)}</span><input class="mat-desc" list="artikels" data-mf="description" placeholder="Artikel of omschrijving" value="${esc(m.description)}" aria-label="Artikel" ${dis}></label>
-      <input class="mat-qty" type="number" inputmode="decimal" step="any" min="0" data-mf="qty" value="${m.qty ?? ''}" aria-label="Aantal" ${dis}>
-      <input class="mat-unit" data-mf="unit" placeholder="st" value="${esc(m.unit ?? '')}" aria-label="Eenheid" ${dis}>
-      ${readonly ? '' : '<button class="mat-del-a11y" data-act="del-mat" aria-label="Verwijderen" tabindex="-1">✕</button>'}
-      ${m.projectId ? '' : `<select class="mat-proj bad" data-native data-mf="projectId" aria-label="Project" ${dis}>
-        <option value="">— kies het project —</option>${dayProj.map((id) => `<option value="${esc(id)}">${label(id)}</option>`).join('')}</select>`}
-    </div></div>`;
+    return matRowHtml({ desc: m.description, qty: m.qty, unit: m.unit, list: 'artikels', idx: i, readonly,
+      extra: m.projectId ? '' : `<select class="mat-proj bad" data-native data-mf="projectId" aria-label="Project" ${dis}>
+        <option value="">— kies het project —</option>${dayProj.map((id) => `<option value="${esc(id)}">${label(id)}</option>`).join('')}</select>` });
   }
 
   /** Ingepland vandaag met materiaal dat mee moet (uit de planning) */
-  const neededHtml = () => needCardsHtml(ctx, master, username, date);
+  const neededHtml = () => {
+    const starts = segs.filter((s) => s.kind !== 'pauze').map((s) => s.start);
+    return needCardsHtml(ctx, master, username, date, { since: starts.length ? Math.min(...starts) : null });
+  };
   /** Afgevinkt materiaal (gedeeld met wie op hetzelfde project staat) in de vakjes zetten */
   const ck = needChecks(el, ctx, username, date, () => { draw(); ck.load(); });
   const showChecks = ck.show;
@@ -1232,7 +1170,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       toast(`${gone.description || 'Materiaal'} gewist`, '', { label: 'Ongedaan maken', fn: () => { material.splice(i, 0, gone); persistMaterial(); draw(); } });
     }
   }
-  if (!readonly) wireSwipe(el, delMat);
+  if (!readonly) wireSwipe(el, (box) => delMat(Number(box.dataset.m)));
 
   el.onclick = (e) => {
     const btn = e.target.closest('[data-act]');

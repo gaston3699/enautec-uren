@@ -51,7 +51,7 @@ export async function seedDemo(ctx) {
       serverUrl: location.origin,
       billingFolder: 'Facturatie/Uren Enautec',
       adminPinHash: await sha256('enautec:1234'),
-      rules: { minStayMin: 10, unknownMinStayMin: 20, homeTravelIsWork: false },
+      rules: { minStayMin: 5, unknownMinStayMin: 20, homeTravelIsWork: false },
     },
   };
   ctx.store.change(PATHS.master, EMPTY_MASTER(), (m) => Object.assign(m, master));

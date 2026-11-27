@@ -10,7 +10,7 @@ import { workTypesOf, DEFAULT_WORK_TYPES, LOAD_WORK_TYPE, similarTo, workTypeOpt
 import { renderTodo, todoToConfirm } from './todo.js';
 import { weekStart, weekNumber, monthDays, shiftMonth, isoDay, holidayName } from './periods.js';
 import { planningHtml, visibleDays, needId, needOf, LEAVE, enableChipDrag } from './calendar.js';
-import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256, personPickHtml, info, fold, iosGroup, iosRow } from './ui.js';
+import { esc, uid, alive, byName, projectLabel, toast, copyText, sha256, personPickHtml, info, fold, iosGroup, iosRow, matRowHtml, matAddHtml, wireSwipe } from './ui.js';
 
 /**
  * Wie badgede, volgens de tekst van Loxone:
@@ -978,7 +978,7 @@ export class Admin {
           <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" placeholder="bv. sleutel bij buren"></label>
           <fieldset class="plan-need"><legend>Materiaal nodig (mag leeg)${info("Staat 's ochtends in het widget en in de planning van wie op dit project staat. Geldt voor alle geselecteerde dagen.")}</legend>
             <div class="need-lines" id="plNeed"></div>
-            <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button></fieldset>
+            ${matAddHtml('need-add')}</fieldset>
           <div class="row"><button class="primary">Inplannen</button><button type="button" class="secondary danger-text" data-act="unplan">Uitplannen</button></div>
         </form>
       </section></div>
@@ -986,10 +986,12 @@ export class Admin {
 
     const days = () => (sel.size ? [...sel].sort() : this.planView === 'dag' && this.planDate ? [this.planDate] : []);
     // materiaal nodig: regels (artikel, aantal, eenheid)
-    const needRow = (l = {}) => `<div class="need-row"><input class="nd-desc" list="plArt" placeholder="Artikel of omschrijving" value="${esc(l.description ?? '')}" aria-label="Artikel">
-      <input class="nd-qty" type="number" inputmode="decimal" step="any" min="0" placeholder="Aantal" value="${l.qty ?? ''}" aria-label="Aantal">
-      <input class="nd-unit" placeholder="st" value="${esc(l.unit ?? '')}" aria-label="Eenheid">
-      <button type="button" class="link danger" data-act="need-del" aria-label="Regel verwijderen">✕</button></div>`;
+    // zelfde regel als bij Gebruikt materiaal op Dag (één regel, wissen = opzij vegen)
+    const needRow = (l = {}) => matRowHtml({ desc: l.description, qty: l.qty, unit: l.unit, list: 'plArt', cls: 'need-row', del: 'need-del', mf: false });
+    const addNeedRow = (box) => {
+      box.insertAdjacentHTML('beforeend', needRow());
+      box.querySelector('.need-row:last-child .nd-desc')?.focus();
+    };
     const readNeed = (box) => [...box.querySelectorAll('.need-row')].map((r) => {
       const q = r.querySelector('.nd-qty').value;
       return { description: r.querySelector('.nd-desc').value.trim(), qty: q === '' ? null : Number(q), unit: r.querySelector('.nd-unit').value.trim() || null };
@@ -1001,6 +1003,7 @@ export class Admin {
       if (cur) Object.assign(cur, { lines, deleted: !lines.length, updated: Date.now() });
       else if (lines.length) pl.needs.push({ id, date, projectId, lines, updated: Date.now() });
     };
+    wireSwipe(view.querySelector('#plNeed') ?? view, (box) => box.remove());
     view.addEventListener('input', (e) => {
       if (!e.target.classList.contains('nd-desc')) return;
       const art = alive(m.articles).find((a) => a.name === e.target.value);
@@ -1015,7 +1018,7 @@ export class Admin {
         <h2 id="ndTitle">🧰 Materiaal nodig</h2>
         <p class="muted small">${esc(projectLabel(m.projects.find((p) => p.id === projectId), m))} · ${esc(fmtDate(date))}</p>
         <div class="need-lines">${(cur?.lines ?? []).map(needRow).join('') || needRow()}</div>
-        <button type="button" class="secondary small" data-act="need-add">+ Materiaal</button>
+        ${matAddHtml('need-add')}
         <label class="check-row" style="margin-top:10px"><span>Ook voor de andere geplande dagen van dit project in deze ${this.planView === 'maand' ? 'maand' : 'week'}</span><input type="checkbox" class="ios-switch" name="all"></label>
         <div class="row modal-actions"><button type="button" class="secondary" data-act="cancel">Annuleren</button><button class="primary">Bewaren</button></div>
       </form>`;
@@ -1023,6 +1026,7 @@ export class Admin {
       wrap.append(view.querySelector('#plArt').cloneNode(true));
       document.body.append(wrap);
       const f = wrap.querySelector('form');
+      wireSwipe(f, (box) => box.remove());
       f.addEventListener('input', (e) => {
         if (!e.target.classList.contains('nd-desc')) return;
         const art = alive(m.articles).find((a) => a.name === e.target.value);
@@ -1031,7 +1035,7 @@ export class Admin {
       });
       f.onclick = (e) => {
         const a = e.target.closest('[data-act]')?.dataset.act;
-        if (a === 'need-add') f.querySelector('.need-lines').insertAdjacentHTML('beforeend', needRow());
+        if (a === 'need-add') addNeedRow(f.querySelector('.need-lines'));
         if (a === 'need-del') e.target.closest('.need-row').remove();
         if (a === 'cancel') wrap.remove();
       };
@@ -1119,7 +1123,7 @@ export class Admin {
         return drawCal();
       }
       const act = e.target.closest('[data-act]')?.dataset.act;
-      if (act === 'need-add') view.querySelector('#plNeed').insertAdjacentHTML('beforeend', needRow());
+      if (act === 'need-add') addNeedRow(view.querySelector('#plNeed'));
       if (act === 'need-del') e.target.closest('.need-row').remove();
       if (act === 'clear') { sel.clear(); drawCal(); }
       if (act === 'copyweek') {
@@ -1307,7 +1311,7 @@ export class Admin {
           iosRow({ icon: '🛰', color: '#007aff', label: 'Verzamelserver', value: esc(host), act: 'page:server' }),
         ], { header: 'Verbindingen' })}
         ${iosGroup([
-          iosRow({ icon: '⚖', color: '#ff9500', label: 'Regels', value: `${rules.minStayMin ?? 10} min`, act: 'page:rules' }),
+          iosRow({ icon: '⚖', color: '#ff9500', label: 'Regels', value: `${rules.minStayMin ?? 5} min`, act: 'page:rules' }),
           iosRow({ icon: '🔒', color: '#8e8e93', label: 'Beheer-pincode', act: 'page:pin' }),
           iosRow({ icon: '🏷', color: '#5856d6', label: 'Loxone', act: 'page:loxone' }),
         ], { header: 'App' })}`;
@@ -1337,7 +1341,7 @@ export class Admin {
     ${show('rules') ? `<section class="card">
       <h2>Regels</h2>
       <form class="form-grid" id="ruleForm">
-        <label><span>Minimale tijd op een locatie (min)</span><input type="number" name="minStayMin" value="${rules.minStayMin ?? 10}" min="3" max="60"></label>
+        <label><span>Minimale tijd op een gekende plek: begin of einde van een rit (min)</span><input type="number" name="minStayMin" value="${rules.minStayMin ?? 5}" min="3" max="60"></label>
         <label><span>Stilstand op onbekende plek telt vanaf (min)</span><input type="number" name="unknownMinStayMin" value="${rules.unknownMinStayMin ?? 20}" min="5" max="120"></label>
         <label class="check-row"><span>Woon-werkverkeer telt als arbeidstijd</span><input type="checkbox" class="ios-switch" name="homeTravelIsWork" ${rules.homeTravelIsWork ? 'checked' : ''}></label>
         <label><span>Map voor de export (facturatie)</span><input name="billingFolder" value="${esc(s.billingFolder ?? 'Facturatie/Uren Enautec')}"></label>

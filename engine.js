@@ -14,7 +14,7 @@ export const KINDS = {
 
 /** Standaardregels (de beheerder kan ze aanpassen in Instellingen) */
 export const DEFAULT_RULES = {
-  minStayMin: 10, unknownMinStayMin: 20, maxAccuracyM: 250, clusterRadiusM: 200,
+  minStayMin: 5, unknownMinStayMin: 20, maxAccuracyM: 250, clusterRadiusM: 200,
   // Badges binnen 10 minuten na elkaar tellen als één (bv. eerst de poort, dan de deur)
   avgSpeedKmh: 50, roadFactor: 1.3, homeTravelIsWork: false, badgeDebounceSec: 600,
   // Afronden per kwartier: begin tot 5 min erna naar beneden, einde tot 8 min erna naar beneden

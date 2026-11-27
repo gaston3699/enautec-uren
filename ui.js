@@ -180,3 +180,94 @@ export async function sha256(text) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * Materiaalregel: naam | aantal | eenheid op één regel (lange namen lopen door op een tweede regel).
+ * Overal dezelfde: Dag (gebruikt materiaal) en Materiaal nodig (planning). Wissen = opzij vegen.
+ * opts: { desc, qty, unit, list, idx, cls, del, readonly, extra }
+ */
+export function matRowHtml({ desc = '', qty = '', unit = '', list = '', idx = '', cls = '', del = 'del-mat', readonly = false, extra = '', mf = true } = {}) {
+  const dis = readonly ? 'disabled' : '';
+  const f = (k) => (mf ? ` data-mf="${k}"` : '');
+  return `<div class="mat-swipe${readonly ? '' : ' can-swipe'}${cls ? ` ${cls}` : ''}" data-m="${idx}"><span class="mat-del-bg" aria-hidden="true"><span>Wissen</span><span>Wissen</span></span>
+    <div class="mat" data-m="${idx}">
+    <label class="mat-name-cell"><span class="mat-name" aria-hidden="true">${esc(desc ?? '')}</span><input class="mat-desc${cls === 'need-row' ? ' nd-desc' : ''}"${list ? ` list="${list}"` : ''}${f('description')} placeholder="Artikel of omschrijving" value="${esc(desc ?? '')}" aria-label="Artikel" autocomplete="off" ${dis}></label>
+    <input class="mat-qty${cls === 'need-row' ? ' nd-qty' : ''}" type="number" inputmode="decimal" step="any" min="0"${f('qty')} placeholder="1" value="${qty ?? ''}" aria-label="Aantal" ${dis}>
+    <input class="mat-unit${cls === 'need-row' ? ' nd-unit' : ''}"${f('unit')} placeholder="st" value="${esc(unit ?? '')}" aria-label="Eenheid" ${dis}>
+    ${readonly ? '' : `<button type="button" class="mat-del-a11y" data-act="${del}" aria-label="Verwijderen" tabindex="-1">✕</button>`}
+    ${extra}
+  </div></div>`;
+}
+
+/** ⊕ Materiaal toevoegen (zelfde stijl als bij Mee te nemen) */
+export const matAddHtml = (act = 'add-mat', attrs = '') => `<button type="button" class="mat-add" data-act="${act}" ${attrs}><span class="need-plus" aria-hidden="true">+</span>Materiaal toevoegen</button>`;
+
+/**
+ * Een materiaalregel naar links of rechts vegen om hem te wissen (zoals in Mail op de iPhone).
+ * Verder dan een derde van de breedte (of snel genoeg) = wissen, anders terug op zijn plaats.
+ * onDelete(box) krijgt het .mat-swipe-element van de geveegde regel.
+ */
+export function wireSwipe(el, onDelete) {
+  if (el._swipe) for (const [t, f] of el._swipe) el.removeEventListener(t, f, true);
+  let s = null;
+  const reset = (row) => { row.style.transition = 'transform .2s'; row.style.transform = ''; };
+  const down = (e) => {
+    const box = e.target.closest('.mat-swipe.can-swipe');
+    if (!box || e.target.closest('select') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    s = { box, row: box.querySelector('.mat'), x0: e.clientX, y0: e.clientY, t0: Date.now(), dx: 0, mode: null, id: e.pointerId };
+  };
+  const move = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+    if (!s.mode) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+        s.mode = 'h';
+        s.box.classList.add('swiping');
+        // de regel krijgt de kleur van zijn blok, zodat het rode vlak er netjes onder schuift
+        for (let p = s.box.parentElement; p; p = p.parentElement) {
+          const bg = getComputedStyle(p).backgroundColor;
+          if (bg && bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg)) { s.row.style.background = bg; break; }
+        }
+        try { s.box.setPointerCapture(e.pointerId); } catch { /* oude browser */ }
+        if (s.box.contains(document.activeElement)) document.activeElement.blur();
+      } else if (Math.abs(dy) > 10) { s = null; return; }
+      else return;
+    }
+    e.preventDefault();
+    s.dx = dx;
+    s.row.style.transition = 'none';
+    s.row.style.transform = `translateX(${dx}px)`;
+    s.box.classList.toggle('from-left', dx > 0);
+    s.box.classList.toggle('armed', Math.abs(dx) > s.box.offsetWidth / 3);
+  };
+  const up = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const { box, row, dx, mode, t0 } = s;
+    s = null;
+    if (mode !== 'h') return;
+    // de klik die na het vegen volgt niet laten doorgaan (geen veld openen)
+    const eat = (c) => { c.preventDefault(); c.stopPropagation(); };
+    el.addEventListener('click', eat, { capture: true, once: true });
+    setTimeout(() => el.removeEventListener('click', eat, true), 400);
+    const w = box.offsetWidth;
+    const fast = Math.abs(dx) > 60 && Math.abs(dx) / Math.max(1, Date.now() - t0) > 0.6;
+    if (e.type === 'pointercancel' || (Math.abs(dx) < w / 3 && !fast)) {
+      box.classList.remove('armed'); reset(row);
+      setTimeout(() => { row.style.background = ''; box.classList.remove('swiping'); }, 220);
+      return;
+    }
+    row.style.transition = 'transform .18s ease-in';
+    row.style.transform = `translateX(${dx > 0 ? w : -w}px)`;
+    box.style.height = `${box.offsetHeight}px`;
+    setTimeout(() => { box.style.transition = 'height .15s'; box.style.height = '0px'; }, 170);
+    setTimeout(() => onDelete(box), 330);
+  };
+  // de naam die over het veld staat meeschrijven tijdens het typen
+  const typed = (e) => {
+    if (!e.target.classList?.contains('mat-desc')) return;
+    const nm = e.target.previousElementSibling;
+    if (nm?.classList.contains('mat-name')) nm.textContent = e.target.value;
+  };
+  el._swipe = [['pointerdown', down], ['pointermove', move], ['pointerup', up], ['pointercancel', up], ['input', typed]];
+  for (const [t, f] of el._swipe) el.addEventListener(t, f, true);
+}
