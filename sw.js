@@ -8,7 +8,7 @@
 const VERSION = 'a4102acc2ef4';
 const CACHE = `enautec-uren-${VERSION}`;
 const SHELL = ['./', './index.html', './app.js', './auth.js', './drive.js', './gdrive.js', './store.js', './day.js', './admin.js',
-  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './questions.js', './projects.js', './combo.js', './todo.js', './calendar.js', './setup.js', './manifest.webmanifest',
+  './export.js', './engine.js', './geo.js', './time.js', './ui.js', './config.js', './demo.js', './update.js', './geocode.js', './xlsx.js', './report.js', './periods.js', './questions.js', './projects.js', './combo.js', './todo.js', './calendar.js', './setup.js', './needs.js', './widget-script.js', './manifest.webmanifest',
   './privacy.html', './logo.svg', './logo-mark.svg', './logo-mark-kerst.svg', './icon-kerst.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 const STATIC_ORIGINS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];
 
