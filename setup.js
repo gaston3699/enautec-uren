@@ -284,14 +284,17 @@ export function renderSetup(el, deps) {
   function frame(body) {
     const cur = stepIndex(current());
     const left = st().only ? 1 : STEPS.length - cur;
-    el.innerHTML = `<section class="card setup">
-      <h1>Je gsm instellen</h1>
+    // geopend vanuit Meer: terugknop linksboven en enkel deze ene stap (geen stappenbalk)
+    const fromMeer = !!deps.back;
+    el.innerHTML = `${fromMeer ? `<a class="ios-back" href="${esc(deps.back)}" data-act="later"><span aria-hidden="true">‹</span> Meer</a>` : ''}
+      <section class="card setup">
+      ${fromMeer && st().only ? '' : `<h1>Je gsm instellen</h1>
       <p class="muted">Nog ${left} stap${left > 1 ? 'pen' : ''}. Daarna kan je de app gebruiken.</p>
-      <ol class="setup-bar">${STEPS.map(([k, ico, label], i) => `<li class="${i < cur ? 'done' : i === cur ? 'now' : ''}"><span aria-hidden="true">${i < cur ? '✔' : ico}</span>${label}</li>`).join('')}</ol>
+      <ol class="setup-bar">${STEPS.map(([k, ico, label], i) => `<li class="${i < cur ? 'done' : i === cur ? 'now' : ''}"><span aria-hidden="true">${i < cur ? '✔' : ico}</span>${label}</li>`).join('')}</ol>`}
       <div class="setup-body">${body}</div>
-      ${deps.optional ? '<p class="center"><button class="link" data-act="later">Later verder</button></p>' : ''}
+      ${deps.optional && !fromMeer ? '<p class="center"><button class="link" data-act="later">Later verder</button></p>' : ''}
     </section>`;
-    el.querySelector('[data-act=later]')?.addEventListener('click', () => { clearInterval(timer); el._setupRun = null; save({ done: true, step: null }); deps.onDone(); });
+    el.querySelectorAll('[data-act=later]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); clearInterval(timer); el._setupRun = null; save({ done: true, step: null, only: null }); deps.onDone(); }));
   }
 
   async function drawPush() {

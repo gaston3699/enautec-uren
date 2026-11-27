@@ -2,7 +2,7 @@
 import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS, DEFAULT_RULES } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
-import { esc, uid, alive, projectLabel, byName, toast, resolveId, info } from './ui.js';
+import { esc, uid, alive, projectLabel, byName, toast, resolveId, info, fold } from './ui.js';
 import { confirmDialog } from './update.js';
 import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN, needsProject, workTypeNoProject } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
@@ -427,11 +427,16 @@ export function needCardsHtml(ctx, master, username, date) {
       const time = items.find((p) => p.time)?.time;
       const notes = [...new Set(items.map((p) => p.note).filter(Boolean))];
       const has = need?.lines?.some((l) => l.description);
-      return `<section class="card day-need" style="--h:${hue(id)}"><h2>${time ? `<span class="muted">${esc(time)}</span> ` : ''}${esc(projectLabel(master.projects.find((p) => p.id === id), master) || 'Project')}</h2>
-        ${notes.map((n) => `<p class="muted small">${esc(n)}</p>`).join('')}
+      const n = (need?.lines ?? []).filter((l) => l.description).length;
+      const title = `${time ? `<span class="muted">${esc(time)}</span> ` : ''}${esc(projectLabel(master.projects.find((p) => p.id === id), master) || 'Project')}`;
+      const body = `${notes.map((x) => `<p class="muted small">${esc(x)}</p>`).join('')}
         ${has ? needHtml(need, { checkable: !!ctx.checks }) : '<b class="small">🧰 Mee te nemen</b>'}
-        <form class="need-add" data-p="${esc(id)}"><label><span class="need-plus" aria-hidden="true">+</span><input name="t" placeholder="Toevoegen" aria-label="Mee te nemen toevoegen, bv. 2 st kabelgoot" autocomplete="off" enterkeyhint="next"></label></form>
-      </section>`;
+        <form class="need-add" data-p="${esc(id)}"><label><span class="need-plus" aria-hidden="true">+</span><input name="t" placeholder="Toevoegen" aria-label="Mee te nemen toevoegen, bv. 2 st kabelgoot" autocomplete="off" enterkeyhint="next"></label></form>`;
+      // vandaag tot 10:00 open (materiaal inladen), daarna dicht; latere dagen open, voorbije dicht
+      const t = today();
+      const open = date > t || (date === t && new Date().getHours() < 10);
+      return `<section class="card day-need fold-card" style="--h:${hue(id)}">${fold(`need-${date}-${id}`, title, body,
+        { open, extra: `<span data-need-sum="${esc(id)}">${n ? `${n} mee te nemen` : ''}</span>` })}</section>`;
     }).join('');
 }
 
@@ -460,6 +465,11 @@ function needChecks(el, ctx, username, date, onAdded = null) {
       c.checked = !!hit;
       c.closest('.need-check').classList.toggle('done', !!hit);
       c.closest('.need-check').querySelector('small').textContent = hit ? `✔ ${hit.by ?? ''}` : '';
+    }
+    // dichtgeklapt project: "1 van 2 ingeladen" in de titel
+    for (const sum of el.querySelectorAll('[data-need-sum]')) {
+      const boxes = [...el.querySelectorAll(`[data-ck="${CSS.escape(sum.dataset.needSum)}"]`)];
+      if (boxes.length) sum.textContent = `${boxes.filter((b) => b.checked).length} van ${boxes.length} ingeladen`;
     }
   };
   const load = async () => {
@@ -490,6 +500,14 @@ function needChecks(el, ctx, username, date, onAdded = null) {
     ctx.setCheck(body).catch((err) => { toast(`Niet bewaard: ${err.message}`, 'err'); load(); });
   };
   return { show, load, change };
+}
+
+/** "Mee te nemen" in een ander scherm (Planning): afvinken en toevoegen zoals op Dag */
+export function wireNeeds(el, ctx, username, date, redraw) {
+  const ck = needChecks(el, ctx, username, date, redraw);
+  el.onchange = (e) => { if (e.target.dataset.ck) ck.change(e.target); };
+  onNeedSubmit(el, ctx, date, redraw);
+  ck.load();
 }
 
 /** Toevoegen aan "mee te nemen" (formulier onder de lijst) */

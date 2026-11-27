@@ -4,7 +4,7 @@ import * as auth from './auth.js';
 import { OneDrive, TestDrive } from './drive.js';
 import { GoogleDrive } from './gdrive.js';
 import { Store, PATHS, EMPTY_MASTER } from './store.js';
-import { renderDay, emptyReg, rulesFrom } from './day.js';
+import { renderDay, emptyReg, rulesFrom, wireNeeds } from './day.js';
 import { Admin } from './admin.js';
 import { summarize } from './engine.js';
 import { today, shiftDate, fmtDate, isDate, fmtHours } from './time.js';
@@ -14,7 +14,7 @@ import { initUpdates, confirmDialog } from './update.js';
 import { weekHtml, monthHtml, yearHtml, ensureMonths, openDays, openDaysButton } from './report.js';
 import { initCombos } from './combo.js';
 import { renderTodo } from './todo.js';
-import { planningHtml } from './calendar.js';
+import { planningHtml, NAV_APPS, defaultNav } from './calendar.js';
 import { weekStart, shiftMonth } from './periods.js';
 import { pushSupport, enablePush, disablePush, currentSubscription, syncPlaces, syncPlanning, renderQuestion } from './questions.js';
 import { renderSetup, installHtml, autoOpenHtml, owntracksGuideHtml } from './setup.js';
@@ -359,6 +359,9 @@ function route() {
     // (de beheersleutel geeft enkel toegang tot het beheer; de werknemersweergave vraagt altijd aanmelden)
     if (!hasSession) return adminKey() && view === 'beheer' ? viewAdmin(rest[0] || 'overzicht') : viewLogin();
     // eerste keer aangemeld op een gsm: eerst de verplichte stappen
+    // vanuit Meer geopend en de werknemer tikt een ander tabblad aan: de stap sluiten
+    const ss = lsGet(SETUP);
+    if (ss?.from && !ss.done && location.hash !== ss.from) lsSet(SETUP, { ...ss, done: true, step: null, only: null, from: null });
     if (needsSetup()) return viewSetup();
   } else if (!dev) return viewWho();
   if (view === 'beheer') return viewAdmin(rest[0] || 'overzicht');
@@ -420,25 +423,29 @@ function viewInstall() {
 function viewSetup() {
   const dev = device();
   const me = lsGet(ME) ?? {};
-  setNav('');
-  $nav.hidden = true;
+  const back = lsGet(SETUP)?.from ?? null; // geopend vanuit Meer: daar terugkeren, onderste balk blijft
+  setNav(back ? 'meer' : '');
+  $nav.hidden = !back;
   $switch.hidden = true;
   renderSetup($main, {
     server: serverUrl(), session: dev.session, name: me.name ?? dev.username, ios: isIOS(),
     deviceKey: localDeviceKey, deviceLabel, owntracksLink,
     optional: !!lsGet(SETUP)?.optional,
+    back,
     getState: () => lsGet(SETUP),
     setState: (st) => lsSet(SETUP, st),
     onDone: () => {
+      lsSet(SETUP, { ...(lsGet(SETUP) ?? {}), from: null });
+      if (back) { if (location.hash === back) route(); else location.hash = back; return; }
       toast('Je gsm is ingesteld', 'ok');
       if (location.hash === '#dag') route(); else location.hash = '#dag';
     },
   });
 }
 
-/** Stappen (opnieuw) starten vanuit Meer, bv. om het widget in te stellen */
+/** Stappen (opnieuw) starten vanuit Meer, bv. om het widget in te stellen; terug = naar die pagina in Meer */
 function startSetup(step, only = false) {
-  lsSet(SETUP, { ...(lsGet(SETUP) ?? {}), username: device().username, done: false, step, optional: true, only: only ? step : null });
+  lsSet(SETUP, { ...(lsGet(SETUP) ?? {}), username: device().username, done: false, step, optional: true, only: only ? step : null, from: location.hash.startsWith('#meer') ? location.hash : '#meer' });
   route();
 }
 
@@ -858,7 +865,11 @@ function viewPlanning([view = 'week', date, of] = []) {
   setNav('planning');
   const me = device().username;
   of = of ? decodeURIComponent(of) : me;
-  $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: me, of, view, date });
+  $main.innerHTML = planningHtml({ master: ctx.master(), planning: ctx.planning(), username: me, of, view, date, nav: prefs().nav ?? null });
+  // dagweergave van de eigen planning: materiaal afvinken en toevoegen (zoals op Dag)
+  if (view === 'dag' && $main.querySelector('form.need-add')) {
+    wireNeeds($main, ctx, me, isDate(date) ? date : today(), () => viewPlanning([view, date, of]));
+  }
   // agenda van een collega bekijken
   // agenda's van collega's aanvinken (meerdere tegelijk); niets aangevinkt = de eigen
   // keuzelijst met schakelaars: toepassen als ze dichtgaat (zo kan je er meerdere na elkaar aanzetten)
@@ -1023,7 +1034,8 @@ async function viewMore(sub = '') {
   const themeName = THEMES.find(([v]) => v === (prefs().theme ?? ''))?.[1] ?? 'Automatisch';
   const appUrl = location.origin + location.pathname.replace(/index\.html$/, '');
   const storeName = TEST ? 'Testmodus' : acc ? STORE_NAME : GOOGLE ? 'Google Drive' : 'Niet aangemeld';
-  const back = () => iosPageHead(esc({ account: name, pauze: 'Standaardpauze', weergave: 'Weergave', meldingen: 'Meldingen', owntracks: 'OwnTracks', widget: 'Widget en snelkoppelingen', beginscherm: 'App op je beginscherm', opslag: 'Opslag' }[sub] ?? ''), '#meer', 'Meer');
+  const navName = (NAV_APPS.find(([v]) => v === (prefs().nav ?? defaultNav())) ?? NAV_APPS[0])[1];
+  const back = () => iosPageHead(esc({ account: name, pauze: 'Standaardpauze', weergave: 'Weergave', meldingen: 'Meldingen', navigatie: 'Navigatie', owntracks: 'OwnTracks', widget: 'Widget en snelkoppelingen', beginscherm: 'App op je beginscherm', opslag: 'Opslag' }[sub] ?? ''), '#meer', 'Meer');
   const pages = {
     account: () => `${back()}
       ${iosGroup([iosRow({ label: 'Gebruikersnaam', value: esc(dev.username) }), me.isAdmin ? iosRow({ label: 'Rol', value: 'Beheerder' }) : ''])}
@@ -1048,6 +1060,10 @@ async function viewMore(sub = '') {
       ${iosGroup([iosRow({ label: 'Uren in detail', toggle: `data-pref="detail" ${prefs().detail ? 'checked' : ''}` })],
         { footer: 'Bij je uren ook de verplaatsingen apart tonen (rit heen, werk, rit terug), zoals de app ze gemeten heeft. Uit = één regel per project.' })}`,
     meldingen: () => `${back()}<div id="pushCard"><p class="muted">Laden…</p></div>`,
+    navigatie: () => `${back()}
+      ${iosGroup(NAV_APPS.map(([v, l]) => `<li><button type="button" class="ios-row" data-nav-pick="${v}"><span class="ios-label">${l}</span>
+        <span class="ios-check" aria-hidden="true">${navName === l ? '✓' : ''}</span></button></li>`),
+        { header: 'Route openen in', footer: 'De knop "Route" in de planning opent het adres in deze app. Staat ze niet op je gsm, dan opent de website.' })}`,
     owntracks: () => `${back()}${mobile && ot && server ? `<section class="card">${owntracksGuideHtml({ ios: isIOS(), link: owntracksLink(ot), ot, server })}</section>`
       : '<p class="ios-foot">De automatische registratie (OwnTracks) stel je enkel in op je gsm.</p>'}
       <p class="ios-foot">OwnTracks stuurt je locatie door zodat de app je uren voorstelt. Je locatie wordt enkel daarvoor gebruikt en na enkele weken gewist.</p>`,
@@ -1069,6 +1085,7 @@ async function viewMore(sub = '') {
       iosRow({ icon: '🔔', color: '#ff3b30', label: 'Meldingen', href: '#meer/meldingen' }),
       iosRow({ icon: '☕', color: '#a2845e', label: 'Standaardpauze', value: (me.pauseMin ?? 30) ? fmtHours(me.pauseMin ?? 30) : 'geen', href: '#meer/pauze' }),
       iosRow({ icon: '◐', color: '#5856d6', label: 'Weergave', value: themeName, href: '#meer/weergave' }),
+      iosRow({ icon: '➤', color: '#34c759', label: 'Navigatie', value: esc(navName), href: '#meer/navigatie' }),
     ])}
     ${iosGroup([
       mobile && ot && server ? iosRow({ icon: '📍', color: '#34c759', label: 'OwnTracks', sub: 'Automatische registratie', href: '#meer/owntracks' }) : '',
@@ -1099,6 +1116,7 @@ async function viewMore(sub = '') {
   $main.querySelector('[data-act=setup]')?.addEventListener('click', () => startSetup('push'));
   $main.querySelectorAll('[data-pause-pick]').forEach((b) => b.onclick = () => { ctx.setPauseMin(Number(b.dataset.pausePick)); toast('Bewaard', 'ok'); viewMore(sub); });
   $main.querySelectorAll('[data-theme-pick]').forEach((b) => b.onclick = () => { setPref('theme', b.dataset.themePick || null); viewMore(sub); });
+  $main.querySelectorAll('[data-nav-pick]').forEach((b) => b.onclick = () => { setPref('nav', b.dataset.navPick); toast('Bewaard', 'ok'); viewMore(sub); });
   const on = (sel, fn) => { const el = $main.querySelector(sel); if (el) el.onclick = fn; };
   on('[data-act=signout]', () => {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;

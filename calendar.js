@@ -102,7 +102,23 @@ export function enableChipDrag(root, onDrop) {
   return () => Date.now() - justDragged < 400;
 }
 
-export function planningHtml({ master: m, planning, username, of = null, view = 'week', date, admin = false, selected = new Set(), only = null }) {
+/** Navigatie-apps (Meer → Navigatie) */
+export const NAV_APPS = [['apple', 'Apple Kaarten'], ['google', 'Google Maps'], ['waze', 'Waze']];
+export const defaultNav = () => (typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent) ? 'apple' : 'google');
+
+/**
+ * Route naar een locatie in de gekozen navigatie-app. Het zijn gewone links: staat de app op de gsm,
+ * dan opent ze; anders opent de website (Apple Kaarten bestaat enkel op Apple-toestellen).
+ */
+export function routeUrl(site, nav = null) {
+  const ll = `${site.lat},${site.lon}`;
+  const app = nav || defaultNav();
+  if (app === 'waze') return `https://waze.com/ul?ll=${ll}&navigate=yes`;
+  if (app === 'apple') return `https://maps.apple.com/?daddr=${ll}&dirflg=d`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${ll}`;
+}
+
+export function planningHtml({ master: m, planning, username, of = null, view = 'week', date, admin = false, selected = new Set(), only = null, nav: navApp = null }) {
   of = of || username; // wiens agenda: de eigen, die van een collega of van meerdere (komma's)
   const ofSet = new Set(String(of).split(',').filter(Boolean));
   const multi = !admin && ofSet.size > 1;
@@ -147,6 +163,8 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     prev = shiftDate(date, -1); next = shiftDate(date, 1);
     const list = on(date);
     const hol = holidayName(date);
+    // eigen planning, vandaag of later: materiaal afvinken en toevoegen zoals op Dag
+    const own = (e) => !admin && !multi && date >= t && of === username && e.projectId !== LEAVE;
     body = `${hol ? `<p class="cal-hol">🎉 ${esc(hol)}</p>` : ''}${list.length ? list.map((e) => {
       const p = proj(e.projectId);
       const site = m.sites.find((s) => s.id === p?.site_id);
@@ -155,12 +173,13 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
         <div><b>${timeOf(e.items) ? `${esc(timeOf(e.items))} · ` : ''}${esc(name(e.projectId))}</b>${multi ? ` <span class="cal-who">${esc(e.items.map((i) => first(i.username)).join(', '))}</span>` : ''}
         ${site ? `<div class="muted">📍 ${esc(site.name)}${site.address ? ` · ${esc(site.address)}` : ''}</div>` : ''}
         ${notes.map((n) => `<div>${esc(n)}</div>`).join('')}
-        ${needHtml(needOf(planning, date, e.projectId))}
+        ${own(e) ? `${needHtml(needOf(planning, date, e.projectId), { checkable: true }) || '<div class="cal-need"><b>🧰 Mee te nemen</b></div>'}
+          <form class="need-add" data-p="${esc(e.projectId)}"><label><span class="need-plus" aria-hidden="true">+</span><input name="t" placeholder="Toevoegen" aria-label="Mee te nemen toevoegen, bv. 2 st kabelgoot" autocomplete="off" enterkeyhint="next"></label></form>`
+          : needHtml(needOf(planning, date, e.projectId))}
         ${admin && e.projectId !== LEAVE ? `<div><button type="button" class="link" data-need="${esc(`${date}|${e.projectId}`)}">🧰 ${needOf(planning, date, e.projectId)?.lines?.length ? 'Materiaal wijzigen' : 'Materiaal nodig toevoegen'}</button></div>` : ''}
-        ${!admin && !multi && date >= t && of === username && e.projectId !== LEAVE ? `<div><a href="#dag/${date}">🧰 Mee te nemen bekijken of aanvullen</a></div>` : ''}
         ${!admin && mates(date, e.projectId).length ? `<div class="cal-mates">👷 Samen met ${esc(mates(date, e.projectId).map(first).join(', '))}</div>` : ''}
         ${admin ? `<div class="cal-people">${e.items.map((i) => `<span class="pill">${esc(person(i.username))}<button type="button" class="link danger" data-del="${esc(i.id)}" aria-label="${esc(person(i.username))} uitplannen">✕</button></span>`).join('')}</div>` : ''}</div>
-        ${!admin && site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}">Route</a>` : ''}
+        ${!admin && site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="${esc(routeUrl(site, navApp))}">Route</a>` : ''}
       </section>`;
     }).join('') : `<section class="card"><p class="muted">${isoDay(date) > 5 ? 'Weekend: niets ingepland.' : 'Niets ingepland op deze dag.'}</p></section>`}`;
   } else if (view === 'week') {

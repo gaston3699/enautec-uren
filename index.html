@@ -1003,6 +1003,15 @@ div.ios-row { cursor: default; }
 .cmp-table tr.changed td { background: var(--accent-soft); }
 .cmp-table tr.changed td:first-child { color: var(--fg); font-weight: 600; }
 /* uitklapblokken (standaard dicht) */
+/* elke andere uitklapper ook in iOS-stijl: afgerond blok, titel links, › rechts (draait bij openen) */
+details:not(.fold):not(.person-pick) { background: var(--surface); border: .5px solid var(--line); border-radius: 12px; padding: 0 14px; margin: 10px 0; }
+details:not(.fold):not(.person-pick) > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 46px; margin: 0; cursor: pointer; user-select: none; font-weight: 600; font-size: 16px; }
+details:not(.fold):not(.person-pick) > summary::-webkit-details-marker { display: none; }
+details:not(.fold):not(.person-pick) > summary::after { content: '›'; color: var(--muted); font-size: 22px; font-weight: 400; line-height: 1; transition: transform .2s; flex: none; }
+details:not(.fold):not(.person-pick)[open] > summary::after { transform: rotate(90deg); }
+details:not(.fold):not(.person-pick)[open] { padding-bottom: 12px; }
+.row-card details.blk-more-wrap { background: var(--surface); margin: 0; }
+.row-card details.blk-more-wrap > summary { font-size: 15px; color: var(--muted); min-height: 40px; }
 details.fold > summary { list-style: none; display: flex; align-items: center; gap: 10px; min-height: 46px; cursor: pointer; user-select: none; font-weight: 700; font-size: 17px; }
 details.fold > summary::-webkit-details-marker { display: none; }
 .fold-title { flex: 1; min-width: 0; }
