@@ -523,6 +523,69 @@ function onNeedSubmit(el, ctx, date, redraw) {
   };
 }
 
+/**
+ * Een materiaalregel naar links of rechts vegen om hem te wissen (zoals in Mail op de iPhone).
+ * Verder dan een derde van de breedte (of snel genoeg) = wissen, anders terug op zijn plaats.
+ */
+export function wireSwipe(el, onDelete) {
+  if (el._swipe) for (const [t, f] of el._swipe) el.removeEventListener(t, f, true);
+  let s = null;
+  const reset = (row) => { row.style.transition = 'transform .2s'; row.style.transform = ''; };
+  const down = (e) => {
+    const box = e.target.closest('.mat-swipe.can-swipe');
+    if (!box || e.target.closest('select') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    s = { box, row: box.querySelector('.mat'), x0: e.clientX, y0: e.clientY, t0: Date.now(), dx: 0, mode: null, id: e.pointerId };
+  };
+  const move = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+    if (!s.mode) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+        s.mode = 'h';
+        s.box.classList.add('swiping');
+        // de regel krijgt de kleur van zijn blok, zodat het rode vlak er netjes onder schuift
+        for (let p = s.box.parentElement; p; p = p.parentElement) {
+          const bg = getComputedStyle(p).backgroundColor;
+          if (bg && bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg)) { s.row.style.background = bg; break; }
+        }
+        try { s.box.setPointerCapture(e.pointerId); } catch { /* oude browser */ }
+        if (s.box.contains(document.activeElement)) document.activeElement.blur();
+      } else if (Math.abs(dy) > 10) { s = null; return; }
+      else return;
+    }
+    e.preventDefault();
+    s.dx = dx;
+    s.row.style.transition = 'none';
+    s.row.style.transform = `translateX(${dx}px)`;
+    s.box.classList.toggle('from-left', dx > 0);
+    s.box.classList.toggle('armed', Math.abs(dx) > s.box.offsetWidth / 3);
+  };
+  const up = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const { box, row, dx, mode, t0 } = s;
+    s = null;
+    if (mode !== 'h') return;
+    // de klik die na het vegen volgt niet laten doorgaan (geen veld openen)
+    const eat = (c) => { c.preventDefault(); c.stopPropagation(); };
+    el.addEventListener('click', eat, { capture: true, once: true });
+    setTimeout(() => el.removeEventListener('click', eat, true), 400);
+    const w = box.offsetWidth;
+    const fast = Math.abs(dx) > 60 && Math.abs(dx) / Math.max(1, Date.now() - t0) > 0.6;
+    if (e.type === 'pointercancel' || (Math.abs(dx) < w / 3 && !fast)) {
+      box.classList.remove('armed'); reset(row);
+      setTimeout(() => { row.style.background = ''; box.classList.remove('swiping'); }, 220);
+      return;
+    }
+    row.style.transition = 'transform .18s ease-in';
+    row.style.transform = `translateX(${dx > 0 ? w : -w}px)`;
+    box.style.height = `${box.offsetHeight}px`;
+    setTimeout(() => { box.style.transition = 'height .15s'; box.style.height = '0px'; }, 170);
+    setTimeout(() => onDelete(Number(box.dataset.m)), 330);
+  };
+  el._swipe = [['pointerdown', down], ['pointermove', move], ['pointerup', up], ['pointercancel', up]];
+  for (const [t, f] of el._swipe) el.addEventListener(t, f, true);
+}
+
 /** Dag in de toekomst: planning en wat mee moet, nog geen uren */
 function renderFuture(el, { ctx, username, date }) {
   const master = ctx.master();
@@ -741,22 +804,26 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const items = material.map((m, i) => ({ m, i })).filter(({ m }) => m.projectId === pid);
     if (readonly && !items.length) return '';
     return `<div class="blk-mat">
-      ${items.length ? `<b class="small">🧰 Gebruikt materiaal</b><div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span></span></div>${items.map(({ m, i }) => matHtml(m, i)).join('')}` : ''}
-      ${readonly ? '' : `<button class="secondary small" data-act="add-mat" data-p="${esc(pid)}">🧰 + Materiaal</button>`}
+      <b class="small">🧰 Gebruikt materiaal</b>${items.map(({ m, i }) => matHtml(m, i)).join('')}
+      ${readonly ? '' : addMatHtml(pid)}
     </div>`;
   }
+
+  const addMatHtml = (pid) => `<button class="mat-add" data-act="add-mat" data-p="${esc(pid)}"><span class="need-plus" aria-hidden="true">+</span>Materiaal toevoegen</button>`;
 
   function matHtml(m, i, dayProj = []) {
     const dis = readonly ? 'disabled' : '';
     const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
-    return `<div class="mat" data-m="${i}">
-      <input class="mat-desc" list="artikels" data-mf="description" placeholder="Artikel of omschrijving" value="${esc(m.description)}" ${dis}>
+    // één regel per artikel; wissen door naar links of rechts te vegen (zie wireSwipe)
+    return `<div class="mat-swipe${readonly ? '' : ' can-swipe'}" data-m="${i}"><span class="mat-del-bg" aria-hidden="true"><span>Wissen</span><span>Wissen</span></span>
+      <div class="mat" data-m="${i}">
+      <label class="mat-name-cell"><span class="mat-name" aria-hidden="true">${esc(m.description)}</span><input class="mat-desc" list="artikels" data-mf="description" placeholder="Artikel of omschrijving" value="${esc(m.description)}" aria-label="Artikel" ${dis}></label>
       <input class="mat-qty" type="number" inputmode="decimal" step="any" min="0" data-mf="qty" value="${m.qty ?? ''}" aria-label="Aantal" ${dis}>
       <input class="mat-unit" data-mf="unit" placeholder="st" value="${esc(m.unit ?? '')}" aria-label="Eenheid" ${dis}>
-      ${readonly ? '<span></span>' : '<button class="link danger" data-act="del-mat" aria-label="Verwijderen">✕</button>'}
-      ${m.projectId ? '' : `<select class="mat-proj bad" data-native data-mf="projectId" aria-label="Project" style="grid-column:1/-1" ${dis}>
+      ${readonly ? '' : '<button class="mat-del-a11y" data-act="del-mat" aria-label="Verwijderen" tabindex="-1">✕</button>'}
+      ${m.projectId ? '' : `<select class="mat-proj bad" data-native data-mf="projectId" aria-label="Project" ${dis}>
         <option value="">— kies het project —</option>${dayProj.map((id) => `<option value="${esc(id)}">${label(id)}</option>`).join('')}</select>`}
-    </div>`;
+    </div></div>`;
   }
 
   /** Ingepland vandaag met materiaal dat mee moet (uit de planning) */
@@ -776,8 +843,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     if (dayProj.length === 1 && !readonly) for (const m of material) if (!m.projectId) m.projectId = dayProj[0];
     const groups = [...new Set(material.map((m) => m.projectId).filter((p) => p && !matHosts.has(p)))];
     const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
-    const head = '<div class="mat-head muted"><span>Artikel</span><span>Aantal</span><span>Eenh.</span><span></span></div>';
-    const rows = (list) => (list.length ? head + list.map(({ m, i }) => matHtml(m, i, dayProj)).join('') : '');
+    const rows = (list) => list.map(({ m, i }) => matHtml(m, i, dayProj)).join('');
     const all = material.map((m, i) => ({ m, i }));
     const loose = all.filter(({ m }) => !m.projectId);
     const parts = groups.map((pid) => {
@@ -785,7 +851,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       if (readonly && !items.length) return '';
       return `<div class="mat-proj-group"><h3>${label(pid)}</h3>
         ${rows(items) || '<p class="muted small">Nog geen materiaal op dit project.</p>'}
-        ${readonly ? '' : `<button class="secondary" data-act="add-mat" data-p="${esc(pid)}">+ Materiaal${groups.length > 1 ? ' op dit project' : ''}</button>`}</div>`;
+        ${readonly ? '' : addMatHtml(pid)}</div>`;
     }).join('');
     const looseHtml = loose.length ? `<div class="mat-proj-group"><h3>Materiaal: nog geen project gekozen</h3>${rows(loose)}</div>` : '';
     return parts || looseHtml ? `<div class="mat-rest">${parts}${looseHtml}</div>` : '';
@@ -972,6 +1038,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   el.oninput = (e) => {
     const m = e.target.closest('.mat');
     if (m && e.target.dataset.mf === 'description') {
+      const nm = e.target.previousElementSibling;
+      if (nm?.classList.contains('mat-name')) nm.textContent = e.target.value;
       const art = articles.find((a) => a.name === e.target.value);
       const item = material[Number(m.dataset.m)];
       item.description = e.target.value;
@@ -1155,6 +1223,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     }, 0);
   };
 
+  /** Materiaal wissen (na vegen); even terugzetten kan via de melding */
+  function delMat(i) {
+    const [gone] = material.splice(i, 1);
+    if (!gone) return;
+    persistMaterial(); draw();
+    if (gone.description || gone.qty > 1) {
+      toast(`${gone.description || 'Materiaal'} gewist`, '', { label: 'Ongedaan maken', fn: () => { material.splice(i, 0, gone); persistMaterial(); draw(); } });
+    }
+  }
+  if (!readonly) wireSwipe(el, delMat);
+
   el.onclick = (e) => {
     const btn = e.target.closest('[data-act]');
     const act = btn?.dataset.act;
@@ -1232,8 +1311,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       persistMaterial(); draw();
       el.querySelector(`.mat[data-m="${material.length - 1}"] .mat-desc`)?.focus();
     } else if (act === 'del-mat') {
-      material.splice(Number(e.target.closest('.mat').dataset.m), 1);
-      persistMaterial(); draw();
+      delMat(Number(e.target.closest('.mat').dataset.m));
     } else if (act === 'confirm') {
       // vandaag nog een regel bezig: eerst het stopuur kiezen (pop-up met voorstel), daarna opnieuw bevestigen
       if (date === today() && segs.some((x) => x.openEnd || x.running)) {

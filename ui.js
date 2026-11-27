@@ -4,7 +4,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 let toastTimer;
-export function toast(msg, kind = '') {
+export function toast(msg, kind = '', action = null) {
   let el = document.getElementById('toast');
   if (!el) {
     el = document.createElement('div');
@@ -14,8 +14,15 @@ export function toast(msg, kind = '') {
   }
   el.className = `show ${kind}`;
   el.textContent = msg;
+  // optioneel een knop in de melding, bv. "Ongedaan maken"
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'toast-act'; b.textContent = action.label;
+    b.onclick = () => { el.className = ''; action.fn(); };
+    el.append(' ', b);
+  }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 3500);
+  toastTimer = setTimeout(() => { el.className = ''; }, action ? 5000 : 3500);
 }
 
 /** Actieve (niet-verwijderde) records */

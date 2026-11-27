@@ -530,17 +530,41 @@ main:has(.plan-admin) { max-width: 1400px; }
 .todo-add button { min-width: 44px; justify-content: center; }
 
 /* Materiaal */
-.mat, .mat-head { display: grid; grid-template-columns: 1fr 5em 4.5em 36px; gap: 6px; align-items: center; margin: 6px 0; }
-.mat-head { font-size: 13px; margin-bottom: 0; }
-.mat input, .mat select { width: 100%; }
+/* één regel per artikel: naam | aantal | eenheid; wissen = vegen */
+.mat-swipe { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); touch-action: pan-y; }
+.mat-del-bg { position: absolute; inset: 0; background: var(--red); color: #fff; font-weight: 600; font-size: 15px; display: none; align-items: center; justify-content: space-between; padding: 0 16px; }
+.mat-swipe.swiping .mat-del-bg { display: flex; }
+.mat-swipe:not(.armed) .mat-del-bg { background: color-mix(in srgb, var(--red) 70%, var(--muted)); }
+.mat-swipe.from-left .mat-del-bg span:last-child, .mat-swipe:not(.from-left) .mat-del-bg span:first-child { visibility: hidden; }
+.mat { position: relative; display: grid; grid-template-columns: 1fr 3.6em 3em; gap: 4px; align-items: center; padding: 2px 0; margin: 0; }
+.mat-swipe > .mat { margin: 0; }
+/* lange namen lopen door op een tweede regel; tijdens het typen gewoon het invulveld */
+.mat-name-cell { position: relative; display: block; margin: 0; font-weight: inherit; min-width: 0; }
+.mat-name { display: block; min-height: 38px; padding: 9px 4px; line-height: 1.25; font-size: 16px; overflow-wrap: anywhere; pointer-events: none; }
+.mat-name-cell input.mat-desc { position: absolute; inset: 0; height: 100%; color: transparent; caret-color: var(--fg); }
+.mat-name-cell input.mat-desc:focus { color: var(--fg); }
+.mat-name-cell:focus-within .mat-name { visibility: hidden; }
+.mat input, .mat select { width: 100%; min-height: 38px !important; padding: 6px 4px !important; border: 0 !important; background: transparent !important; box-shadow: none !important; font-size: 16px; }
+.mat input:focus { background: color-mix(in srgb, var(--muted) 12%, transparent) !important; border-radius: 8px; }
+.mat .mat-qty, .mat .mat-unit { text-align: right; }
+.mat .mat-unit { text-align: left; color: var(--muted); }
+.mat .mat-qty { -moz-appearance: textfield; } .mat .mat-qty::-webkit-inner-spin-button, .mat .mat-qty::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.mat .mat-proj { grid-column: 1 / -1; border: 1px solid var(--red) !important; border-radius: 8px; margin-bottom: 4px; }
+.mat-del-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+@media (hover: hover) and (pointer: fine) {
+  /* met een muis: het kruisje verschijnt bij aanwijzen */
+  .mat { grid-template-columns: 1fr 3.6em 3em 28px; }
+  .mat-del-a11y { position: static; width: 28px; height: 28px; margin: 0; clip: auto; background: none; color: var(--red); opacity: 0; cursor: pointer; }
+  .mat:hover .mat-del-a11y { opacity: .8; }
+}
+.mat-add { display: flex; align-items: center; gap: 10px; width: 100%; background: none !important; border: 0; box-shadow: none; padding: 8px 0; margin: 0; color: var(--muted); font: inherit; font-weight: 400; cursor: pointer; justify-content: flex-start; min-height: 0; }
+.mat-add:hover .need-plus { opacity: 1; border-color: var(--accent); }
+.blk-mat > b.small { display: block; margin-bottom: 2px; }
 .mat-proj-group { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .mat-proj-group:first-of-type { border-top: 0; padding-top: 0; }
 .mat-proj-group h3 { margin-bottom: 4px; }
-@media (max-width: 640px) {
-  .mat-head { display: none; }
-  .mat { grid-template-columns: 1fr 1fr 40px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
-  .mat-desc { grid-column: 1 / -1; }
-}
+#toast .toast-act { pointer-events: auto; margin-left: 10px; background: none; border: 0; color: inherit; text-decoration: underline; font: inherit; font-weight: 700; padding: 0; min-height: 0; cursor: pointer; }
+#toast.show:has(.toast-act) { pointer-events: auto; }
 
 /* Tabellen en formulieren */
 .table-wrap { overflow-x: auto; }
