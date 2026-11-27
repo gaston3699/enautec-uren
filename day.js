@@ -8,6 +8,7 @@ import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workT
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
 import { trackHtml, legendHtml, counterHtml, hourRange, gapsOf, dayTotals, savedDays, CAT } from './report.js';
 import { needOf, needHtml, hue, LEAVE } from './calendar.js';
+import { parseNeedLine, needKey } from './needs.js';
 
 const TRAVEL = new Set(['verplaatsing', 'woon-werk']);
 const WORKLIKE = new Set(['werk', 'atelier', 'leverancier']);
@@ -374,18 +375,12 @@ export function needCardsHtml(ctx, master, username, date) {
     }).join('');
 }
 
-/** "2 st kabelgoot" → { qty: 2, unit: 'st', description: 'kabelgoot' } (aantal en eenheid mogen ontbreken) */
-export function parseNeedLine(text) {
-  const t = String(text ?? '').trim().replace(/\s+/g, ' ');
-  const m = /^(\d+(?:[.,]\d+)?)\s*(st|stuks?|m|meter|rol|rollen|doos|dozen|pak|kg|l)?\s+(.+)$/i.exec(t);
-  if (!m) return { description: t, qty: null, unit: null };
-  return { description: m[3], qty: Number(m[1].replace(',', '.')), unit: m[2] ? m[2].toLowerCase() : null };
-}
+export { parseNeedLine };
 
 /** Regel toevoegen aan "mee te nemen" van een project op een dag (gedeeld met de collega's op dat project) */
 export function addNeedLine(ctx, date, projectId, text) {
-  const line = parseNeedLine(text);
-  if (!line.description) return false;
+  const line = typeof text === 'string' ? parseNeedLine(text) : text;
+  if (!line?.description) return false;
   ctx.store.change(PATHS.planning, { items: [] }, (pl) => {
     pl.needs ??= [];
     const id = `${date}|${projectId}`;
@@ -397,7 +392,7 @@ export function addNeedLine(ctx, date, projectId, text) {
 }
 
 /** Afgevinkt materiaal (gedeeld met wie op hetzelfde project staat) laden, tonen en bewaren */
-function needChecks(el, ctx, username, date) {
+function needChecks(el, ctx, username, date, onAdded = null) {
   let checks = null;
   const show = () => {
     for (const c of el.querySelectorAll('[data-ck]')) {
@@ -408,6 +403,19 @@ function needChecks(el, ctx, username, date) {
     }
   };
   const load = async () => {
+    // via het widget toegevoegd materiaal: in de planning opnemen (één keer per regel)
+    if (ctx.needAdds && el.querySelector('form.need-add')) {
+      try {
+        const adds = (await ctx.needAdds(date)) ?? [];
+        let changed = false;
+        for (const a of adds) {
+          const need = needOf(ctx.planning(), date, a.projectId);
+          if ((need?.deleted ? [] : need?.lines ?? []).some((l) => needKey(l.description) === needKey(a.description))) continue;
+          if (addNeedLine(ctx, date, a.projectId, { description: a.description, qty: a.qty ?? null, unit: a.unit ?? null })) changed = true;
+        }
+        if (changed && onAdded) { onAdded(); return; }
+      } catch { /* offline */ }
+    }
     if (!ctx.checks || !el.querySelector('[data-ck]')) return;
     show();
     try { checks = (await ctx.checks(date)) ?? checks; } catch { /* offline */ }
@@ -440,7 +448,7 @@ function onNeedSubmit(el, ctx, date, redraw) {
 /** Dag in de toekomst: planning en wat mee moet, nog geen uren */
 function renderFuture(el, { ctx, username, date }) {
   const master = ctx.master();
-  const ck = needChecks(el, ctx, username, date);
+  const ck = needChecks(el, ctx, username, date, () => { draw(); ck.load(); });
   const draw = () => {
     const cards = needCardsHtml(ctx, master, username, date);
     el.innerHTML = cards || `<section class="card"><p class="muted">Nog niets ingepland op deze dag.</p><a class="btn secondary" href="#planning/week/${date}">Naar de planning</a></section>`;
@@ -670,7 +678,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   /** Ingepland vandaag met materiaal dat mee moet (uit de planning) */
   const neededHtml = () => needCardsHtml(ctx, master, username, date);
   /** Afgevinkt materiaal (gedeeld met wie op hetzelfde project staat) in de vakjes zetten */
-  const ck = needChecks(el, ctx, username, date);
+  const ck = needChecks(el, ctx, username, date, () => { draw(); ck.load(); });
   const showChecks = ck.show;
   const loadChecks = ck.load;
 

@@ -8,155 +8,9 @@ import { pushSupport, enablePush, currentSubscription } from './questions.js';
 
 const MIN = 60000;
 
-/** Versie van het script (de server meldt als er een nieuwere is: dan opnieuw instellen via Meer) */
-export const SCRIPT_VERSION = 3;
+import { SCRIPT_VERSION, widgetScript } from './widget-script.js';
 
-/**
- * Script voor Scriptable: toont de stand van vandaag (uren, waar, open vragen) en 's ochtends
- * de planning met het materiaal. Middelgroot/groot: tik op een materiaalregel om af te vinken
- * (voor iedereen op dat project) en op de pauzeknop om je pauze te starten of te stoppen.
- * Een tik opent Scriptable even (een widget kan op iPhone niets doen zonder een app te openen).
- */
-export function widgetScript({ server, key, name = '' }) {
-  return `// Enautec Uren – widget${name ? ` voor ${name}` : ''}
-// Gemaakt door de app op ${new Date().toLocaleDateString('nl-BE')}. Deze sleutel geeft enkel de stand van vandaag,
-// pauze starten/stoppen en materiaal afvinken. Afmelden kan in de app bij Meer → Mijn toestellen ("Widget").
-const SCRIPT_VERSION = ${SCRIPT_VERSION};
-const SERVER = ${JSON.stringify(server)};
-const KEY = ${JSON.stringify(key)};
-
-const RED = new Color("#e3262e");
-const FG = Color.dynamic(new Color("#111111"), new Color("#ffffff"));
-const MUTED = Color.dynamic(new Color("#6b6b6b"), new Color("#a0a0a0"));
-const BTN = Color.dynamic(new Color("#f0f0ee"), new Color("#2c2c2e"));
-const STATUS = { geen: "Nog niet gestart", werk: "Aan het werk", pauze: "Pauze", onderweg: "Onderweg", gedaan: "Dag gedaan", nee: "Niet gewerkt" };
-const hm = (min) => Math.floor(min / 60) + "u" + String(min % 60).padStart(2, "0");
-const hhmm = (ts) => { const d = new Date(ts); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
-
-async function api(path, body) {
-  const r = new Request(SERVER + path);
-  r.headers = { Authorization: "Bearer " + KEY, "Content-Type": "application/json" };
-  r.timeoutInterval = 20;
-  if (body) { r.method = "POST"; r.body = JSON.stringify(body); }
-  const d = await r.loadJSON();
-  if (r.response.statusCode !== 200) throw new Error(d.error || "Fout " + r.response.statusCode);
-  return d;
-}
-
-// getikt op het widget: eerst de actie uitvoeren
-const q = args.queryParameters || {};
-let banner = null;
-try {
-  if (q.act === "pause") {
-    await api("/api/widget/pause", { action: q.v });
-    banner = q.v === "start" ? "✔ Pauze gestart" : "✔ Pauze gestopt";
-  } else if (q.act === "check") {
-    await api("/api/widget/check", { date: q.d, projectId: q.p, key: q.k, done: q.v === "1" });
-    banner = (q.v === "1" ? "✔ Ingeladen: " : "↺ Niet meer ingeladen: ") + (q.t || "");
-  }
-} catch (e) { banner = "⚠ " + (e.message || e); }
-
-// in de app (na een tik) tonen we het middelgrote widget, zodat je verder kan aftikken
-const family = config.runsInWidget ? (config.widgetFamily || "small") : "medium";
-const taps = family === "medium" || family === "large";
-const link = (p) => "scriptable:///run/" + encodeURIComponent(Script.name()) + "?" + Object.keys(p).map((k) => k + "=" + encodeURIComponent(p[k])).join("&");
-const w = new ListWidget();
-const style = (x, font, color, lines) => { x.font = font; x.textColor = color; if (lines) x.lineLimit = lines; x.minimumScaleFactor = 0.7; return x; };
-const text = (t, font, color, lines) => style(w.addText(t), font, color, lines);
-/** regel met een eigen tikvlak (enkel middelgroot en groot) */
-function tapRow(t, font, color, url, button) {
-  if (!taps) return text(t, font, color, 1);
-  const s = w.addStack();
-  s.url = url;
-  s.centerAlignContent();
-  if (button) { s.backgroundColor = BTN; s.cornerRadius = 8; s.setPadding(4, 8, 4, 8); }
-  style(s.addText(t), font, color, 1);
-  if (!button) s.addSpacer();
-  return s;
-}
-/** vandaag nog geen locatie: OwnTracks is waarschijnlijk weggeveegd → tik om het te openen */
-function owntracksRow(d) {
-  if (!d.otMissing) return;
-  if (family === "small") { w.url = "owntracks:///"; text("📍 OwnTracks uit · tik", Font.semiboldSystemFont(11), RED, 1); }
-  else tapRow("📍 OwnTracks staat uit · tik om te openen", Font.semiboldSystemFont(12), RED, "owntracks:///", true);
-  w.addSpacer(3);
-}
-function pauseButton(d) {
-  if (!taps || !["werk", "pauze", "onderweg"].includes(d.status)) return;
-  w.addSpacer(4);
-  if (d.pause === "loopt") tapRow("☕ Pauze stoppen · sinds " + hhmm(d.pauseSince), Font.semiboldSystemFont(12), FG, link({ act: "pause", v: "stop" }), true);
-  else if (d.pause === "mogelijk") tapRow("☕ Pauze starten", Font.semiboldSystemFont(12), FG, link({ act: "pause", v: "start" }), true);
-}
-try {
-  const d = await api("/api/widget");
-  const status = STATUS[d.status] + (d.since && ["werk", "pauze"].includes(d.status) ? " sinds " + hhmm(d.since) : "");
-  const openPlan = (d.plan || []).some((p) => p.material.some((m) => !m.done));
-  w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
-  if (family.startsWith("accessory")) {
-    // vergrendelscherm
-    w.backgroundColor = null;
-    text("Enautec · " + hm(d.workedMin), Font.boldSystemFont(14), Color.white(), 1);
-    text(d.otMissing ? "📍 OwnTracks uit" : d.openCount ? "❓ vraag open" : status, Font.systemFont(12), Color.white(), 1);
-    if (d.otMissing) w.url = "owntracks:///";
-    if (family === "accessoryRectangular" && (d.project || d.place)) text(d.project || d.place, Font.systemFont(12), Color.white(), 1);
-  } else if ((d.plan || []).length && (d.status === "geen" || new Date().getHours() < 10 || (!config.runsInWidget && openPlan && q.act === "check"))) {
-    // 's ochtends: wat staat er vandaag gepland en welk materiaal moet mee (tik = ingeladen)
-    w.setPadding(12, 14, 12, 14);
-    if (banner) text(banner, Font.semiboldSystemFont(11), RED, 1);
-    const max = family === "large" ? 14 : family === "medium" ? 5 : 3;
-    text("ENAUTEC · VANDAAG", Font.heavySystemFont(11), RED, 1);
-    w.addSpacer(3);
-    owntracksRow(d);
-    let left = max;
-    for (const p of d.plan.slice(0, family === "small" ? 1 : 3)) {
-      text(p.project, Font.boldSystemFont(family === "small" ? 13 : 14), FG, family === "small" ? 2 : 1);
-      if (family !== "small" && (p.place || p.note)) text([p.place, p.note].filter(Boolean).join(" · "), Font.systemFont(11), MUTED, 1);
-      if (!p.material.length) { text("Geen materiaal opgegeven", Font.systemFont(11), MUTED, 1); continue; }
-      // nog in te laden eerst
-      const list = p.material.filter((m) => !m.done).concat(p.material.filter((m) => m.done));
-      for (const m of list.slice(0, Math.max(left, 0))) {
-        tapRow((m.done ? "✅ " : "⬜️ ") + m.text, Font.systemFont(12), m.done ? MUTED : FG,
-          link({ act: "check", d: d.date, p: p.projectId, k: m.key, v: m.done ? "0" : "1", t: m.text }));
-      }
-      if (list.length > left) text("+ " + (list.length - Math.max(left, 0)) + " meer in de app", Font.systemFont(11), MUTED, 1);
-      left -= list.length;
-      w.addSpacer(3);
-    }
-    if (family === "small") {
-      const all = d.plan.flatMap((p) => p.material);
-      if (all.length) text(all.filter((m) => m.done).length + "/" + all.length + " ingeladen · tik om af te vinken", Font.systemFont(10), MUTED, 2);
-      if (d.plan.length > 1) text("+ " + (d.plan.length - 1) + " project", Font.systemFont(11), MUTED, 1);
-    }
-    w.addSpacer();
-    if (d.openCount) text("❓ " + (d.openCount === 1 ? "1 vraag open" : d.openCount + " vragen open"), Font.semiboldSystemFont(11), RED, 1);
-  } else {
-    w.setPadding(12, 14, 12, 14);
-    if (banner) text(banner, Font.semiboldSystemFont(11), RED, 1);
-    text("ENAUTEC", Font.heavySystemFont(11), RED);
-    w.addSpacer(2);
-    owntracksRow(d);
-    text(hm(d.workedMin), Font.boldSystemFont(32), FG, 1);
-    text(status, Font.mediumSystemFont(12), MUTED, 1);
-    if (d.project || d.place) { w.addSpacer(4); text(d.project || d.place, Font.semiboldSystemFont(12), FG, family === "small" ? 2 : 1); }
-    if (family !== "small" && d.project && d.place) text("📍 " + d.place, Font.systemFont(11), MUTED, 1);
-    pauseButton(d);
-    w.addSpacer();
-    if (d.openCount) text("❓ " + (d.openCount === 1 ? "1 vraag open" : d.openCount + " vragen open"), Font.semiboldSystemFont(11), RED, 1);
-    else text("Bijgewerkt " + hhmm(d.now), Font.systemFont(10), MUTED, 1);
-  }
-  if (d.scriptVersion > SCRIPT_VERSION && !family.startsWith("accessory")) text("Nieuwe versie: app → Meer → Widget instellen", Font.systemFont(10), RED, 2);
-} catch (e) {
-  w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
-  text("ENAUTEC", Font.heavySystemFont(11), RED);
-  w.addSpacer(4);
-  text(String(e.message || e), Font.systemFont(12), FG, 4);
-}
-w.refreshAfterDate = new Date(Date.now() + 10 * 60 * 1000);
-if (config.runsInWidget) Script.setWidget(w);
-else await w.presentMedium();
-Script.complete();
-`;
-}
+export { SCRIPT_VERSION, widgetScript };
 
 /** Scherm "Zet de app op je beginscherm" (op een gsm in de browser, vóór het aanmelden) */
 export function installHtml({ ios, canPrompt, installed }) {
@@ -188,13 +42,13 @@ const ALL_STEPS = [
 export function autoOpenHtml() {
   return `<p class="muted small">In de app <b>Opdrachten</b> maak je een opdracht die zelf start op een vast uur. Ze opent OwnTracks.</p>
     <ol class="setup-steps">
-      <li>Open de app <b>Opdrachten</b> (blauw-roze icoon) en maak een nieuwe opdracht met <b>+</b>, met een automatisering <b>Tijdstip</b>.
-        Je ziet dan bovenaan een blok <b>"Om …"</b> met Activiteit, Herhaal, Automatisering en Meld.</li>
-      <li>Tik op het uur en kies een uur vóór je vertrekt (bv. <b>06:30</b>).</li>
-      <li>Tik bij <b>Herhaal</b> op "Elke dag" en kies <b>maandag t.e.m. vrijdag</b>.</li>
-      <li>Laat <b>Automatisering</b> aan (groen): dan start ze zonder te vragen. <b>Meld</b> mag uit.</li>
-      <li>Tik onderaan in <b>Zoek</b>, typ <b>Open app</b> en tik op die actie. Tik in de actie op het blauwe woord <b>App</b> en kies <b>OwnTracks</b>.</li>
-      <li>Tik linksboven op <b>‹</b>: het is bewaard. Er is geen knop "Volgende".</li>
+      <li>Open de app <b>Opdrachten</b> (paars-roze icoon) en tik <b>onderaan in het midden</b> op de ronde <b>+</b>.</li>
+      <li>Onderaan verschijnt een lijst. Tik op het blauwe knopje <b>Automatisering</b> en daarna op <b>Tijdstip</b> ("Om 8 uur, op weekdagen").</li>
+      <li>Bovenaan staat nu een blok <b>Om …</b>. Tik op het blauwe uur en kies een uur vóór je vertrekt (bv. <b>06:30</b>).</li>
+      <li>Tik op het blauwe pijltje <b>›</b> naast het uur: kies bij <b>Herhaal</b> <b>maandag t.e.m. vrijdag</b> en laat <b>Automatisering</b> aan (zonder te vragen). <b>Meld</b> mag uit.</li>
+      <li>Tik onderaan op <b>Open app</b> (of typ het in <b>Zoek</b>). Er komt een blok <b>Open app</b> bij.</li>
+      <li>Tik in dat blok op het lichtblauwe woord <b>app</b> en kies <b>OwnTracks</b>.</li>
+      <li>Tik linksboven op <b>‹</b>: het is bewaard (er is geen knop "Volgende"). Je ziet het nu bij <b>Alle opdrachten</b>.</li>
     </ol>
     <details><summary>Oudere iPhone (iOS 18 of vroeger)?</summary>
       <p class="muted small">Tik in Opdrachten onderaan op <b>Automatisering</b> → <b>+</b> → <b>Tijdstip</b>. Kies het uur en <b>Wekelijks</b> (ma–vr) en <b>Voer onmiddellijk uit</b>, en tik op <b>Volgende</b>. Kies <b>Nieuwe lege automatisering</b> → <b>Open app</b> → <b>OwnTracks</b>.</p></details>
@@ -388,16 +242,21 @@ export function renderSetup(el, deps) {
     const s = st();
     try { await fetchMe(); } catch { /* offline */ }
     const ok = s.widgetAt && me?.widgetSeen && me.widgetSeen >= s.widgetAt;
-    frame(`<h2>🧩 Widget op je beginscherm${info("Het widget toont 's ochtends je planning en het materiaal dat mee moet, en daarna je uren van vandaag, waar je bent en of er een vraag openstaat. Kies middelgroot: dan tik je op een materiaalregel om ze af te vinken als ingeladen, en op ☕ Pauze starten/stoppen. Scriptable opent dan even; veeg daarna terug naar je beginscherm.")}</h2>
+    frame(`<h2>🧩 Widget op je beginscherm${info("Het widget toont je uren van vandaag en het materiaal dat vandaag mee moet. Tik op een bolletje om iets af te vinken als ingeladen, op + Toevoegen om materiaal toe te voegen en op ☕ om je pauze te starten of te stoppen. Scriptable opent dan even; veeg daarna terug naar je beginscherm. Het widget werkt zichzelf bij als er een nieuwe versie is.")}</h2>
       <ol class="setup-steps">
-        <li>Installeer de gratis app <b>Scriptable</b> uit de App Store.</li>
+        <li>Installeer de gratis app <b>Scriptable</b> uit de App Store (zwart icoon met <b>{ }</b>).</li>
         <li>${s.script ? '<button class="primary" data-act="copy">📋 Kopieer het script</button>' : '<button class="primary" data-act="make">Script klaarzetten</button>'}
           ${s.script ? info('Opnieuw kopiëren kan altijd.') : ''}</li>
-        <li>Open <b>Scriptable</b>, tik rechtsboven op <b>+</b>, tik in het lege blad en kies <b>Plak</b>.</li>
-        <li>Tik bovenaan op de naam en noem het script <b>Enautec</b>. Tik onderaan op <b>▶</b>: je ziet het widget. Tik op <b>Klaar</b>.</li>
-        <li>Op je beginscherm: hou een lege plek ingedrukt → <b>Wijzig</b> → <b>Voeg widget toe</b> → <b>Scriptable</b> → klein of middelgroot formaat → <b>Voeg widget toe</b>.</li>
-        <li>Tik op het nieuwe widget (terwijl de iconen wiebelen) en kies bij <b>Script</b>: <b>Enautec</b>.</li>
+        <li>Open <b>Scriptable</b> en tik <b>onderaan in het midden</b> op de ronde <b>+</b>. Je ziet een leeg blad "Untitled Script".</li>
+        <li>Tik in het lege blad en kies <b>Plak</b>.</li>
+        <li>Tik bovenaan op <b>Untitled Script ⌄</b> → <b>Wijzig naam</b> en noem het <b>Enautec</b>.</li>
+        <li>Tik onderaan rechts op <b>▶</b> om te testen: je ziet je widget. Sluit met <b>✕</b> linksboven (het script is bewaard).</li>
+        <li>Ga naar je beginscherm en hou een lege plek ingedrukt tot de iconen wiebelen. Tik linksboven op het <b>penseel</b> → <b>Voeg widget toe</b>.</li>
+        <li>Typ in <b>Zoek widgets</b>: <b>Scriptable</b> en tik erop. Veeg naar <b>groot</b> (aangeraden: daar past al het materiaal op) of middelgroot en tik <b>Voeg widget toe</b>.</li>
+        <li>Tik op het nieuwe (lege) widget. Bij <b>Run Script</b> tik je op <b>Script</b> en kies je <b>Enautec</b>. Tik ernaast en dan rechtsboven op <b>✓</b>.</li>
       </ol>
+      <details><summary>Ik zie "[object Object]" of het widget ziet er anders uit</summary>
+        <p class="muted small">Dan heb je nog een oude versie. Open Scriptable, tik lang op het oude script → <b>Delete</b>, en doe de stappen hierboven opnieuw (Kopieer het script → Plak). Vanaf deze versie werkt het widget zichzelf bij.</p></details>
       ${ok ? '<div class="notice ok">✔ Het widget werkt.</div>'
         : s.script ? '<div class="notice wait"><span class="spinner" aria-hidden="true"></span> Wachten tot het widget (of ▶ in Scriptable) de eerste keer je gegevens ophaalt…</div>' : ''}
       ${s.script ? `<details><summary>Kopiëren lukt niet?</summary><p class="muted small">Selecteer de tekst hieronder (lang tikken → Alles selecteren → Kopieer).</p>

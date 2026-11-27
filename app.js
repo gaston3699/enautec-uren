@@ -183,6 +183,13 @@ const ctx = {
     const r = await fetch(`${serverUrl()}/api/checks?date=${date}`, { headers: { Authorization: `Bearer ${s}` } });
     return r.ok ? r.json() : null;
   },
+  /** Via het widget toegevoegd materiaal (de app neemt het op in de planning) */
+  needAdds: async (date) => {
+    const s = device()?.session;
+    if (!s || !serverUrl()) return null;
+    const r = await fetch(`${serverUrl()}/api/needs/added?date=${date}`, { headers: { Authorization: `Bearer ${s}` } });
+    return r.ok ? r.json() : null;
+  },
   setCheck: (body) => {
     const s = device()?.session;
     if (!s) return Promise.reject(new Error('Niet aangemeld.'));
@@ -1011,6 +1018,7 @@ async function viewMore(sub = '') {
   const name = emp?.name ?? me.name ?? dev.username;
   const THEMES = [['', 'Automatisch'], ['light', 'Wit'], ['dark', 'Zwart']];
   const themeName = THEMES.find(([v]) => v === (prefs().theme ?? ''))?.[1] ?? 'Automatisch';
+  const appUrl = location.origin + location.pathname.replace(/index\.html$/, '');
   const storeName = TEST ? 'Testmodus' : acc ? STORE_NAME : GOOGLE ? 'Google Drive' : 'Niet aangemeld';
   const back = () => iosPageHead(esc({ account: name, pauze: 'Standaardpauze', weergave: 'Weergave', meldingen: 'Meldingen', owntracks: 'OwnTracks', widget: 'Widget en snelkoppelingen', beginscherm: 'App op je beginscherm', opslag: 'Opslag' }[sub] ?? ''), '#meer', 'Meer');
   const pages = {
@@ -1062,6 +1070,12 @@ async function viewMore(sub = '') {
       mobile && isStandalone() ? iosRow({ icon: '🧩', color: '#007aff', label: 'Widget en snelkoppelingen', href: '#meer/widget' }) : '',
       mobile && !isStandalone() ? iosRow({ icon: '📲', color: '#007aff', label: 'App op je beginscherm', href: '#meer/beginscherm' }) : '',
     ], { footer: mobile ? '' : 'Je gebruikt een computer. De automatische registratie (OwnTracks) stel je enkel in op je gsm.' })}
+    ${iosGroup([
+      `<li><div class="ios-row app-link"><span class="ios-ico" style="background:#f5c400" aria-hidden="true">🔗</span>
+        <span class="ios-label">Link naar de app<small class="app-url">${esc(appUrl)}</small></span></div></li>`,
+      iosRow({ label: 'Kopieer link', act: 'copylink' }),
+      navigator.share ? iosRow({ label: 'Delen…', sub: 'WhatsApp, Mail, Berichten…', act: 'sharelink' }) : '',
+    ], { header: 'App delen met een collega', footer: 'Stuur deze link naar een nieuwe werknemer. Die opent hem op de gsm, zet de app op het beginscherm en meldt zich aan met de gebruikersnaam en het wachtwoord van de beheerder.' })}
     ${iosGroup([iosRow({ icon: '☁', color: '#8e8e93', label: 'Opslag', value: esc(storeName), href: '#meer/opslag' })])}
     <p class="ios-foot center">Enautec Uren versie ${APP_VERSION} · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p>`;
 
@@ -1085,6 +1099,10 @@ async function viewMore(sub = '') {
     if (store.dirtyPaths().length && !confirm('Er zijn nog wijzigingen die niet bewaard zijn in de opslag. Toch afmelden?')) return;
     if (confirm('Afmelden op dit toestel? Daarna kan je (of een collega) je opnieuw aanmelden.')) signOut();
   });
+  on('[data-act=copylink]', async () => {
+    try { await navigator.clipboard.writeText(appUrl); toast('Link gekopieerd', 'ok'); } catch { prompt('Kopieer deze link:', appUrl); }
+  });
+  on('[data-act=sharelink]', () => navigator.share({ title: 'Enautec Uren', text: 'De app Enautec Uren:', url: appUrl }).catch(() => {}));
   on('[data-act=sync]', async () => { rawCache.clear(); await syncNow(); toast(store.status === 'ok' ? 'Gesynchroniseerd' : store.lastError || 'Synchroniseren niet gelukt', store.status === 'ok' ? 'ok' : 'err'); });
   $main.querySelector('[data-act=testreset]')?.addEventListener('click', () => {
     if (!confirm('Alle testgegevens in deze browser wissen?')) return;
