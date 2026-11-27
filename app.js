@@ -412,6 +412,9 @@ function viewInstall() {
     installPrompt = null;
     viewInstall();
   });
+  $main.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '✔ Link gekopieerd'; } catch { prompt('Kopieer deze link:', b.dataset.copy); }
+  });
 }
 
 function viewSetup() {

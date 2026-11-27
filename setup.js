@@ -18,11 +18,7 @@ export function installHtml({ ios, canPrompt, installed }) {
     <img src="logo.svg" alt="Enautec" class="welcome-logo">
     <h1>Eerst de app op je beginscherm${info('Op je gsm gebruik je Enautec Uren als app op je beginscherm. Enkel zo krijg je meldingen en blijf je aangemeld. Op een computer kan je gewoon in de browser aanmelden.')}</h1>
     ${installed ? '<div class="notice ok">✔ Geïnstalleerd. Open nu <b>Enautec Uren</b> via het icoon op je beginscherm en meld je daar aan.</div>'
-      : ios ? `<ol class="setup-steps">
-        <li>Open deze pagina in <b>Safari</b> (niet in een andere app).</li>
-        <li>Tik onderaan op <b>Deel</b> <span class="ios-share" aria-hidden="true">⬆︎</span> (vierkantje met pijl).</li>
-        <li>Scrol en tik op <b>Zet op beginscherm</b> → <b>Voeg toe</b>.</li>
-        <li>Open <b>Enautec Uren</b> via het nieuwe icoon en meld je daar aan.</li></ol>`
+      : ios ? homeGuideHtml()
       : `${canPrompt ? '<button class="primary big" data-act="install">📲 App installeren</button>' : ''}
         <ol class="setup-steps">
         ${canPrompt ? '' : '<li>Tik in Chrome rechtsboven op <b>⋮</b>.</li><li>Kies <b>App installeren</b> of <b>Toevoegen aan startscherm</b>.</li>'}
@@ -38,18 +34,47 @@ const ALL_STEPS = [
   ['widget', '🧩', 'Widget'],
 ];
 
-/** Uitleg: OwnTracks elke werkdag zelf laten openen (Opdrachten-app op iPhone) */
+/** Uitleg: OwnTracks elke werkdag zelf laten openen (Opdrachten-app op iPhone), met tekeningen */
 export function autoOpenHtml() {
-  return `<p class="muted small">In de app <b>Opdrachten</b> maak je een opdracht die zelf start op een vast uur. Ze opent OwnTracks.</p>
-    <ol class="setup-steps">
-      <li>Open de app <b>Opdrachten</b> (paars-roze icoon) en tik <b>onderaan in het midden</b> op de ronde <b>+</b>.</li>
-      <li>Onderaan verschijnt een lijst. Tik op het blauwe knopje <b>Automatisering</b> en daarna op <b>Tijdstip</b> ("Om 8 uur, op weekdagen").</li>
-      <li>Bovenaan staat nu een blok <b>Om …</b>. Tik op het blauwe uur en kies een uur vóór je vertrekt (bv. <b>06:30</b>).</li>
-      <li>Tik op het blauwe pijltje <b>›</b> naast het uur: kies bij <b>Herhaal</b> <b>maandag t.e.m. vrijdag</b> en laat <b>Automatisering</b> aan (zonder te vragen). <b>Meld</b> mag uit.</li>
-      <li>Tik onderaan op <b>Open app</b> (of typ het in <b>Zoek</b>). Er komt een blok <b>Open app</b> bij.</li>
-      <li>Tik in dat blok op het lichtblauwe woord <b>app</b> en kies <b>OwnTracks</b>.</li>
-      <li>Tik linksboven op <b>‹</b>: het is bewaard (er is geen knop "Volgende"). Je ziet het nu bij <b>Alle opdrachten</b>.</li>
-    </ol>
+  const sheet = (body) => `<div class="ph-sheet">${body}</div>`;
+  const action = (icon, color, label, inner = label) => `<div class="ph-action"><span class="ph-ai" style="background:${color}">${icon}</span><span>${inner}</span><span class="ph-i">i</span></div>`;
+  const steps = [
+    guideStep(1, 'Opdrachten openen',
+      `<p>Zoek op je iPhone de app <b>Opdrachten</b> (paars-roze icoon, twee blokjes op elkaar) en open ze.</p>
+       <p>Tik <b>onderaan in het midden</b> op de ronde <b>+</b>.</p>`,
+      phone('Alle opdrachten', `<div class="ph-empty">◇<br><b>Geen opdrachten</b></div>${fab()}`, { back: true })),
+    guideStep(2, 'Kies "Tijdstip"', '<p>Onderaan schuift een lijst omhoog.</p>', [
+      ['Tik op het blauwe knopje <b>Automatisering</b>.',
+        phone('Opdracht ⌄', sheet(`<div class="ph-search">🔍 Zoek</div><div class="ph-chips">${tap('<span class="ph-chip">⏱ Automatisering</span>')}<span class="ph-chip">Scripten</span></div>
+          ${action('💬', '#34c759', 'Verstuur bericht')}${action('↗', '#5e5ce6', 'Open app')}`), { back: true })],
+      ['Tik op <b>Tijdstip</b> (bovenaan, met de oranje klok).',
+        phone('', sheet(`<div class="ph-search">🔍 <span class="ph-chip small">⏱ Automatisering</span></div><b class="ph-h">Dagelijkse routine</b>
+          ${tap(`<div class="ph-action"><span class="ph-ai" style="background:#ff9f0a">🕘</span><span><b>Tijdstip</b><small>"Om 8 uur, op weekdagen"</small></span><span class="ph-i">i</span></div>`)}
+          <div class="ph-action"><span class="ph-ai" style="background:#ff9f0a">⏰</span><span><b>Wekker</b></span><span class="ph-i">i</span></div>`))],
+    ]),
+    guideStep(3, 'Het uur kiezen', '<p>Bovenaan staat nu een blok <b>Om 08:00</b>.</p>', [
+      ['Tik op het <b>blauwe uur</b> en kies een uur vóór je vertrekt, bv. <b>06:30</b>.',
+        phone('Opdracht ⌄', `<div class="ph-block">🕘 Om ${tap('<span class="ph-blue">06:30</span>', 'Uur kiezen')} <span class="ph-blue">⊙›</span></div>`, { back: true })],
+      ['Tik op het <b>blauwe pijltje ›</b>. Kies bij <b>Herhaal</b> maandag tot vrijdag. <b>Automatisering</b> moet aan staan (groen).',
+        phone('Opdracht ⌄', `<div class="ph-block">🕘 Om <span class="ph-blue">06:30</span> ${tap('<span class="ph-blue">⊙›</span>', 'Dagen')}</div>
+          <div class="ph-group">${row('Herhaal', '<small>ma, di, wo, do, vr</small> ›')}${row('Automatisering', sw(true))}${row('Meld', sw(false))}</div>`, { back: true })],
+    ]),
+    guideStep(4, 'OwnTracks laten openen', '', [
+      ['Tik onderaan in de lijst op <b>Open app</b>. Zie je het niet? Typ "Open app" in <b>Zoek</b>.',
+        phone('Opdracht ⌄', `<div class="ph-block">🕘 Om <span class="ph-blue">06:30</span> <span class="ph-blue">⊙›</span></div>
+          ${sheet(`<div class="ph-search">🔍 Zoek</div>${action('💬', '#34c759', 'Verstuur bericht')}${tap(action('↗', '#5e5ce6', 'Open app'))}${action('♫', '#fc3c44', 'Speel muziek af')}`)}`, { back: true })],
+      ['Tik in het nieuwe blok op het lichtblauwe woord <b>app</b> en kies <b>OwnTracks</b>.',
+        phone('Open app ⌄', `<div class="ph-block">🕘 Om <span class="ph-blue">06:30</span> <span class="ph-blue">⊙›</span></div>
+          <div class="ph-block"><span class="ph-ai" style="background:#5e5ce6">↗</span> Open ${tap('<span class="ph-blue dim">app</span>', 'Kies OwnTracks')}</div>`, { back: true })],
+    ]),
+    guideStep(5, 'Bewaren',
+      `<p>Zo moet het eruitzien. Tik linksboven op <b>‹</b>. Er is geen knop "Klaar" of "Volgende": het is meteen bewaard.</p>
+       <p>Je ziet de opdracht nu bij <b>Alle opdrachten</b>.</p>`,
+      phone('Open app ⌄', `<div class="ph-block">🕘 Om <span class="ph-blue">06:30</span> <span class="ph-blue">⊙›</span></div>
+        <div class="ph-block"><span class="ph-ai" style="background:#5e5ce6">↗</span> Open <span class="ph-blue">📍 OwnTracks</span></div>`, { left: tap('<span class="ph-back">‹</span>', 'Bewaren') })),
+  ];
+  return `<p>Zo gaat OwnTracks elke werkdag vanzelf open, ook als je het per ongeluk hebt weggeveegd.</p>
+    <ol class="ot-guide">${steps.join('')}</ol>
     <details><summary>Oudere iPhone (iOS 18 of vroeger)?</summary>
       <p class="muted small">Tik in Opdrachten onderaan op <b>Automatisering</b> → <b>+</b> → <b>Tijdstip</b>. Kies het uur en <b>Wekelijks</b> (ma–vr) en <b>Voer onmiddellijk uit</b>, en tik op <b>Volgende</b>. Kies <b>Nieuwe lege automatisering</b> → <b>Open app</b> → <b>OwnTracks</b>.</p></details>
     <details><summary>Rij je met CarPlay of Bluetooth in de wagen? (aangeraden)</summary>
@@ -59,10 +84,100 @@ export function autoOpenHtml() {
 
 // ---------- OwnTracks: handleiding met tekeningen van de schermen ----------
 // Elke stap toont een klein gsm-scherm zoals je het ziet, met een rode cirkel "tik hier".
-const tap = (inner, label = 'Tik hier') => `<span class="ph-tap">${inner}<span class="ph-tap-lbl">👆 ${label}</span></span>`;
-const phone = (title, body, { back = false } = {}) => `<div class="ph" aria-hidden="true">
-  <div class="ph-top">${back ? '<span class="ph-back">‹</span>' : '<span></span>'}<b>${title}</b><span></span></div>
+const tap = (inner, label = 'Tik hier', cls = '') => `<span class="ph-tap ${cls}">${inner}<span class="ph-tap-lbl">👆 ${label}</span></span>`;
+const phone = (title, body, { back = false, left = '', right = '' } = {}) => `<div class="ph" aria-hidden="true">
+  <div class="ph-top">${left || (back ? '<span class="ph-back">‹</span>' : '<span></span>')}<b>${title}</b><span>${right}</span></div>
   <div class="ph-body">${body}</div></div>`;
+/** ronde + onderaan in het midden (Scriptable, Opdrachten) */
+const fab = (label = 'Tik op +') => `<div class="ph-fabrow">${tap('<span class="ph-fab">+</span>', label)}</div>`;
+/** genummerde stap met uitleg en één tekening, of een lijst [tekst, tekening] (a, b, c…) */
+const guideStep = (n, title, text, pic = '') => `<li class="ot-step"><div class="ot-num">${n}</div><div class="ot-txt"><h3>${title}</h3>${text}</div>${!pic ? ''
+  : Array.isArray(pic) ? `<div class="ot-pics">${pic.map(([t, p], i) => `<div class="ot-sub"><p><b class="ot-letter">${'abcdef'[i]}</b> ${t}</p><div class="ot-pic">${p}</div></div>`).join('')}</div>`
+  : `<div class="ot-pic">${pic}</div>`}</li>`;
+
+/** iPhone: de app op het beginscherm zetten (Safari), met tekeningen */
+export function homeGuideHtml() {
+  const bar = (menuTap) => `<div class="ph-safari"><span class="ph-round">‹</span><span class="ph-addr">${menuTap ? tap('<span class="ph-menu-ic">≡</span>', 'Tik hier', 'l') : '<span class="ph-menu-ic">≡</span>'}<span>gaston3699.github.io</span><span>↻</span></span><span class="ph-round">⧉</span></div>`;
+  const page = '<div class="ph-page"><b>Eerst de app op je beginscherm</b><small>1. Open deze pagina in Safari…</small></div>';
+  const steps = [
+    guideStep(1, 'Open deze pagina in Safari',
+      `<p>Safari is het blauwe kompas 🧭 op je iPhone. Kwam je hier via WhatsApp of mail? Tik dan op de knop om de link te kopiëren, open <b>Safari</b>, tik in de adresbalk en kies <b>Plak en bezoek</b>.</p>
+       <button type="button" class="secondary" data-copy="${esc(location.origin + location.pathname)}">🔗 Kopieer de link</button>`),
+    guideStep(2, 'Het menu openen', '', [
+      ['Tik onderaan in de adresbalk op de <b>drie streepjes ≡</b> (links).', phone('', `${page}${bar(true)}`)],
+      ['Tik bovenaan in het menu op <b>Deel</b>.',
+        phone('', `<div class="ph-menu">${['<div class="ph-mi">' + tap('⇪ Deel') + '</div>', '<div class="ph-mi">🔗 Kopieer</div>', '<div class="ph-mi">📋 Plak en bezoek</div>', '<div class="ph-mi">🎙 Zoek met stem</div>', '<div class="ph-mi" style="color:#ff453a">✕ Sluit tabblad</div>'].join('')}</div>`)],
+    ]),
+    guideStep(3, 'Zet op beginscherm', '', [
+      ['Scrol een beetje naar beneden en tik op <b>Zet op beginscherm</b> (vierkantje met een +).',
+        phone('', `<div class="ph-app"><span class="ph-icon" style="background:#fff">🎄</span><span><b>Enautec Uren</b><small>gaston3699.github.io</small></span><span class="ph-x">✕</span></div>
+          <div class="ph-group">${row('📖 Voeg bladwijzer toe aan…')}${row('☆ Zet in favorieten')}${row('🔍 Zoek op pagina')}${tap(row('⊞ <b>Zet op beginscherm</b>'))}</div>`)],
+      ['Tik rechtsboven op <b>Voeg toe</b>.',
+        phone('Zet op beginscherm', `<div class="ph-app"><span class="ph-icon" style="background:#fff">🎄</span><span><b>Enautec Uren</b><small>gaston3699.github.io</small></span></div>
+          <div class="ph-group">${row('Open als webapp', sw(true))}</div>`, { left: '<span class="ph-blue">Annuleer</span>', right: tap('<span class="ph-blue">Voeg toe</span>', 'Tik hier', 'r') })],
+    ]),
+    guideStep(4, 'Open de app via het nieuwe icoon',
+      `<p>Ga naar je beginscherm. Daar staat nu <b>Enautec Uren</b> met het Enautec-logo. Tik erop en meld je daar aan.</p>
+       <p class="muted small">Meld je aan in de app op je beginscherm, niet hier in Safari: Safari en de app onthouden elk iets anders.</p>`,
+      phone('', `<div class="ph-icons">${['<span class="ph-appicon still"><span style="background:#1b2a4a">{ }</span><small>Scriptable</small></span>', `<span class="ph-appicon still">${tap('<span style="background:#fff">🎄</span>', 'Tik', 'l')}<small>Enautec Uren</small></span>`, '<span class="ph-appicon still"><span style="background:#4a6fb5">📍</span><small>OwnTracks</small></span>'].join('')}</div>`)),
+  ];
+  return `<ol class="ot-guide">${steps.join('')}</ol>
+    <details><summary>Zie je geen ≡ in de adresbalk? (oudere iPhone)</summary>
+      <p class="muted small">Tik onderaan in het midden op <b>Deel</b> (vierkantje met een pijl omhoog ⬆︎), scrol en tik op <b>Zet op beginscherm</b> → <b>Voeg toe</b>.</p></details>`;
+}
+
+/**
+ * Widget (Scriptable) instellen, met tekeningen. copyHtml = de knop om het script te kopiëren.
+ */
+export function widgetGuideHtml(copyHtml = '') {
+  const icon = (bg, t, label) => `<span class="ph-appicon"><span style="background:${bg}">${t}</span><small>${label}</small></span>`;
+  const menu = (items) => `<div class="ph-menu">${items.join('')}</div>`;
+  const steps = [
+    guideStep(1, 'Scriptable installeren',
+      `<p>Tik op de knop. De App Store opent. Tik daar op <b>Download</b> (of het wolkje ☁️). Daarna kom je terug naar deze app.</p>
+       <a class="btn secondary" href="https://apps.apple.com/app/scriptable/id1405459188" target="_blank" rel="noopener">📲 Scriptable in de App Store</a>`,
+      phone('App Store', `<div class="ph-app"><span class="ph-icon" style="background:#1b2a4a">{ }</span><span><b>Scriptable</b><small>Automation with JavaScript</small></span>${tap('<span class="ph-btn">Download</span>')}</div>`)),
+    guideStep(2, 'Het script kopiëren',
+      `<p>Tik op de knop. Je gsm onthoudt nu het script (zoals bij kopiëren en plakken van een tekst).</p>${copyHtml}`),
+    guideStep(3, 'Het script in Scriptable plakken', '<p>Open de app <b>Scriptable</b> (zwart icoon met <b>{ }</b>).</p>', [
+      ['Tik <b>onderaan in het midden</b> op de ronde <b>+</b>.',
+        phone('All Scripts', `<div class="ph-search">🔍 Zoek</div><div class="ph-empty">▢<br><b>No Scripts</b></div>${fab()}`, { back: true })],
+      ['Je ziet een leeg blad. <b>Tik in het lege blad</b> en kies <b>Plak</b>. Er komt veel tekst: dat is goed.',
+        phone('Untitled Script ⌄', `<div class="ph-code"><span>1</span>${tap('<span class="ph-paste">Plak</span>', 'Tik in het blad → Plak', 'l')}</div>`, { left: '<span class="ph-x">✕</span>' })],
+    ]),
+    guideStep(4, 'Een naam geven en testen', '', [
+      ['Tik bovenaan op <b>Untitled Script ⌄</b> en daarna op <b>Wijzig naam</b>. Typ <b>Enautec</b>.',
+        phone(tap('Untitled Script ⌄', 'Tik hier'), `${menu([`<div class="ph-mi">${tap('✎ Wijzig naam')}</div>`, '<div class="ph-mi">🎨 Edit Icon</div>', '<div class="ph-mi">⧉ Duplicate</div>'])}`, { left: '<span class="ph-x">✕</span>' })],
+      ['Tik onderaan rechts op <b>▶</b>. Je ziet je widget. Sluit het met <b>✕</b> linksboven: het script is bewaard.',
+        phone('Enautec ⌄', `<div class="ph-code small"><span>55</span> w.backgroundColor = …<br><span>56</span> w.setPadding(12, 14, 12, 14);</div>
+          <div class="ph-toolbar"><span>⚙</span><span>▤</span><span>⇪</span><span>🔍</span>${tap('<span>▶</span>', 'Testen')}</div>`, { left: '<span class="ph-x">✕</span>' })],
+    ]),
+    guideStep(5, 'Het widget op je beginscherm zetten', '<p>Ga naar je beginscherm (veeg omhoog).</p>', [
+      ['Hou je vinger op een <b>lege plek</b> tot de iconen wiebelen. Tik linksboven op het <b>penseel</b>.',
+        phone('', `<div class="ph-editbar">${tap('<span class="ph-pill">🖌</span>', 'Penseel', 'l')}<span class="ph-pill">✓</span></div>
+          <div class="ph-icons">${icon('#e8743b', '✳', 'Claude')}${icon('#fff', '🎄', 'Enautec')}${icon('#1b2a4a', '{ }', 'Scriptable')}${icon('#4a6fb5', '📍', 'OwnTracks')}</div>`)],
+      ['Tik op <b>Voeg widget toe</b>.',
+        phone('', `${menu([`<div class="ph-mi">${tap('⊞ Voeg widget toe')}</div>`, '<div class="ph-mi">✎ Pas aan</div>', '<div class="ph-mi">❀ Wijzig achtergrond</div>', '<div class="ph-mi">▯ Wijzig pagina\'s</div>'])}`)],
+      ['Typ bovenaan in <b>Zoek widgets</b>: <b>Scr</b> en tik op <b>Scriptable</b>.',
+        phone('', `<div class="ph-search">🔍 Scr</div><div class="ph-group">${tap(row('<span class="ph-mini-icon">{ }</span> <b>Scriptable</b>'))}</div>`)],
+      ['Veeg naar links tot je het <b>grote</b> widget ziet (daar past al het materiaal op). Tik op <b>Voeg widget toe</b>.',
+        phone('Scriptable', `<div class="ph-wbig"></div><div class="ph-dots">○ ○ ●</div><div class="ph-fabrow">${tap('<span class="ph-btn">+ Voeg widget toe</span>')}</div>`)],
+    ]),
+    guideStep(6, 'Het script kiezen', '<p>Het nieuwe widget is nog leeg. De iconen wiebelen nog.</p>', [
+      ['Tik op het <b>lege widget</b>. Je ziet "Run Script". Tik op <b>Script</b> en kies <b>Enautec</b>.',
+        phone('', `<div class="ph-runscript"><div><span class="ph-mini-icon">{ }</span> <b>Run Script</b><small>Scriptable</small></div>
+          <div class="ph-group">${tap(row('Script', '<span class="ph-blue">Kies</span>'), 'Kies Enautec')}${row('Parameter', '<small>Parameter</small>')}</div></div>`)],
+      ['Tik naast het venster en daarna rechtsboven op <b>✓</b>. Klaar!',
+        phone('', `<div class="ph-editbar"><span class="ph-pill">🖌</span>${tap('<span class="ph-pill">✓</span>', 'Klaar')}</div>
+          <div class="ph-widget"><b class="r">ENAUTEC</b><b>07:30 Werken Atree</b><span>✓ 50 m kabel 3G2,5</span><span>○ 2 st kabelgoot</span><span class="y">⊕ Toevoegen</span></div>`)],
+    ]),
+    guideStep(7, 'Zo gebruik je het widget',
+      `<p>Tik op een <b>bolletje ○</b> als dat materiaal in de camionette ligt: het wordt een geel vinkje voor iedereen op dat project.</p>
+       <p>Tik op <b>⊕ Toevoegen</b> om iets op de lijst te zetten. Tik op <b>☕</b> om je pauze te starten of te stoppen.</p>
+       <p class="muted small">Scriptable gaat dan even open. Veeg daarna gewoon terug naar je beginscherm.</p>`),
+  ];
+  return `<ol class="ot-guide">${steps.join('')}</ol>`;
+}
 const row = (label, right = '', cls = '') => `<div class="ph-row ${cls}"><span>${label}</span><span class="ph-right">${right}</span></div>`;
 const sw = (on = true) => `<span class="ph-sw ${on ? 'on' : ''}"><i></i></span>`;
 
@@ -243,18 +358,7 @@ export function renderSetup(el, deps) {
     try { await fetchMe(); } catch { /* offline */ }
     const ok = s.widgetAt && me?.widgetSeen && me.widgetSeen >= s.widgetAt;
     frame(`<h2>🧩 Widget op je beginscherm${info("Het widget toont je uren van vandaag en het materiaal dat vandaag mee moet. Tik op een bolletje om iets af te vinken als ingeladen, op + Toevoegen om materiaal toe te voegen en op ☕ om je pauze te starten of te stoppen. Scriptable opent dan even; veeg daarna terug naar je beginscherm. Het widget werkt zichzelf bij als er een nieuwe versie is.")}</h2>
-      <ol class="setup-steps">
-        <li>Installeer de gratis app <b>Scriptable</b> uit de App Store (zwart icoon met <b>{ }</b>).</li>
-        <li>${s.script ? '<button class="primary" data-act="copy">📋 Kopieer het script</button>' : '<button class="primary" data-act="make">Script klaarzetten</button>'}
-          ${s.script ? info('Opnieuw kopiëren kan altijd.') : ''}</li>
-        <li>Open <b>Scriptable</b> en tik <b>onderaan in het midden</b> op de ronde <b>+</b>. Je ziet een leeg blad "Untitled Script".</li>
-        <li>Tik in het lege blad en kies <b>Plak</b>.</li>
-        <li>Tik bovenaan op <b>Untitled Script ⌄</b> → <b>Wijzig naam</b> en noem het <b>Enautec</b>.</li>
-        <li>Tik onderaan rechts op <b>▶</b> om te testen: je ziet je widget. Sluit met <b>✕</b> linksboven (het script is bewaard).</li>
-        <li>Ga naar je beginscherm en hou een lege plek ingedrukt tot de iconen wiebelen. Tik linksboven op het <b>penseel</b> → <b>Voeg widget toe</b>.</li>
-        <li>Typ in <b>Zoek widgets</b>: <b>Scriptable</b> en tik erop. Veeg naar <b>groot</b> (aangeraden: daar past al het materiaal op) of middelgroot en tik <b>Voeg widget toe</b>.</li>
-        <li>Tik op het nieuwe (lege) widget. Bij <b>Run Script</b> tik je op <b>Script</b> en kies je <b>Enautec</b>. Tik ernaast en dan rechtsboven op <b>✓</b>.</li>
-      </ol>
+      ${widgetGuideHtml(s.script ? `<button class="primary big" data-act="copy">📋 Kopieer het script</button>${info('Opnieuw kopiëren kan altijd.')}` : '<button class="primary big" data-act="make">Script klaarzetten</button><p class="muted small">Tik eerst hier; daarna verschijnt de knop "Kopieer het script".</p>')}
       <details><summary>Ik zie "[object Object]" of het widget ziet er anders uit</summary>
         <p class="muted small">Dan heb je nog een oude versie. Open Scriptable, tik lang op het oude script → <b>Delete</b>, en doe de stappen hierboven opnieuw (Kopieer het script → Plak). Vanaf deze versie werkt het widget zichzelf bij.</p></details>
       ${ok ? '<div class="notice ok">✔ Het widget werkt.</div>'
