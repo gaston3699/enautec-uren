@@ -40,6 +40,7 @@ const ENTITIES = {
       { k: 'loxone_user', label: 'Loxone-gebruiker' },
       { k: 'start_date', label: 'Uren tellen vanaf', type: 'date', noList: true, help: 'leeg = eerste ingegeven dag' },
       { k: 'is_admin', label: 'Beheerder', type: 'bool', def: false },
+      { k: 'own_material', label: 'Eigen materiaal (zelfstandige)', type: 'bool', def: false, noList: true, help: 'bij gebruikt materiaal een vinkje "eigen materiaal": dat rekent hij zelf aan' },
       { k: 'has_password', label: 'Wachtwoord', type: 'bool', def: false, noForm: true },
       { k: 'active', label: 'Actief', type: 'bool' },
     ],
@@ -963,16 +964,17 @@ export class Admin {
         selected: emps.filter((e) => !this.planOnly || this.planOnly.has(e.username)).map((e) => e.username) })}
       <div id="plCal"></div></div>
       <section class="card plan-panel">
-        <h2>Inplannen${info('Tik de dagen aan in de kalender, kies het project en de werknemers en tik op Inplannen. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in.')}</h2>
+        <h2>Inplannen${info('Tik de dagen aan in de kalender, kies het project en de werknemers en tik op Inplannen. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in. Iets aanpassen dat al ingepland is (ander project, iemand bijzetten of weghalen)? Tik op het blokje in de kalender.')}</h2>
         <div class="plan-sel"><b id="plSelText"></b>
           <div class="row"><button type="button" class="secondary small" data-act="workdays">Werkdagen in beeld</button>
           <button type="button" class="secondary small" data-act="clear">Selectie wissen</button>
           <button type="button" class="secondary small" data-act="copyweek" title="De planning van de week in beeld (van de aangevinkte personen) ook in de week erna zetten">📋 Week kopiëren → volgende week</button></div></div>
         <form id="plForm" class="plan-form">
-          <label class="q-field"><span>Project</span><select name="projectId" required><option value="">— kies een project —</option>
+          <label class="q-field"><span>Project</span><span class="sel-plus"><select name="projectId" required><option value="">— kies een project —</option>
             <option value="${LEAVE}">🏖 Verlof / niet beschikbaar</option>
             ${projects.map((p) => `<option value="${esc(p.id)}">${esc(projectLabel(p, m))}</option>`).join('')}
-            <option value="__new">+ Nieuw project…</option></select></label>
+            <option value="__new">+ Nieuw project…</option></select>
+            <button type="button" class="round-plus" data-act="new-project" aria-label="Nieuw project aanmaken" title="Nieuw project">+</button></span></label>
           <label class="q-field"><span>Uur (mag leeg)</span><input name="time" type="time" step="900" style="max-width:9em"></label>
           ${personPickHtml({ name: 'who', label: 'Werknemers', empty: 'Kies werknemers', people: emps.map((e) => ({ value: e.username, label: e.name })) })}
           <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" placeholder="bv. sleutel bij buren"></label>
@@ -1051,6 +1053,107 @@ export class Admin {
         toast(lines.length ? `Materiaal bewaard (${dates.length} dag${dates.length === 1 ? '' : 'en'})` : 'Materiaal verwijderd', 'ok');
       };
     };
+    /**
+     * Een ingepland blokje aanpassen (tik op het blokje): project wisselen, uur, opmerking,
+     * wie er op staat (bijzetten of weghalen) en het materiaal. Of het hele blokje uitplannen.
+     */
+    const projOptions = (cur) => `<option value="${LEAVE}" ${cur === LEAVE ? 'selected' : ''}>🏖 Verlof / niet beschikbaar</option>
+      ${alive(this.ctx.master().projects).filter((p) => p.active !== false || p.id === cur).sort((a, b) => projectLabel(a, m).localeCompare(projectLabel(b, m), 'nl'))
+        .map((p) => `<option value="${esc(p.id)}" ${p.id === cur ? 'selected' : ''}>${esc(projectLabel(p, this.ctx.master()))}</option>`).join('')}
+      <option value="__new">+ Nieuw project…</option>`;
+    const editPlanned = (date, projectId) => {
+      const items = alive(this.ctx.planning().items).filter((it) => it.date === date && it.projectId === projectId);
+      if (!items.length) return;
+      const need = needOf(this.ctx.planning(), date, projectId);
+      const time = items.map((i) => i.time).filter(Boolean).sort()[0] ?? '';
+      const note = items.find((i) => i.note)?.note ?? '';
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-backdrop';
+      wrap.innerHTML = `<form class="modal plan-edit" role="dialog" aria-modal="true" aria-labelledby="peTitle">
+        <h2 id="peTitle">✎ Ingepland aanpassen</h2>
+        <p class="muted small">${esc(fmtDate(date, { weekday: 'long', day: 'numeric', month: 'long' }))}</p>
+        <label class="q-field"><span>Project</span><span class="sel-plus"><select name="projectId" required>${projOptions(projectId)}</select>
+          <button type="button" class="round-plus" data-act="pe-new" aria-label="Nieuw project aanmaken" title="Nieuw project">+</button></span></label>
+        ${personPickHtml({ name: 'who', label: 'Werknemers', empty: 'Niemand (= uitplannen)', people: emps.map((e) => ({ value: e.username, label: e.name })), selected: items.map((i) => i.username) })}
+        <label class="q-field"><span>Uur (mag leeg)</span><input name="time" type="time" step="900" value="${esc(time)}" style="max-width:9em"></label>
+        <label class="q-field"><span>Opmerking (mag leeg)</span><input name="note" value="${esc(note)}" placeholder="bv. sleutel bij buren"></label>
+        <fieldset class="plan-need"><legend>Materiaal nodig</legend>
+          <div class="need-lines">${(need?.lines ?? []).map(needRow).join('')}</div>${matAddHtml('need-add')}</fieldset>
+        <div class="row modal-actions"><button type="button" class="secondary danger-text" data-act="pe-unplan">Uitplannen</button>
+          <button type="button" class="secondary" data-act="cancel">Annuleren</button><button class="primary">Bewaren</button></div>
+      </form>`;
+      wrap.append(view.querySelector('#plArt').cloneNode(true));
+      document.body.append(wrap);
+      const f = wrap.querySelector('form');
+      wireSwipe(f, (box) => box.remove());
+      // meteen zien wie er al op staat (en bijzetten of weghalen)
+      f.querySelector('.person-pick').open = true;
+      const sel = f.elements.projectId;
+      const mkNew = async () => {
+        sel.value = projectId;
+        const p = await newProjectDialog(this.ctx, {});
+        if (!p) return;
+        sel.querySelector('option[value="__new"]').insertAdjacentHTML('beforebegin', `<option value="${esc(p.id)}">${esc(projectLabel(p, this.ctx.master()))}</option>`);
+        sel.value = p.id;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      sel.onchange = () => { if (sel.value === '__new') mkNew(); };
+      f.addEventListener('input', (e) => {
+        if (!e.target.classList.contains('nd-desc')) return;
+        const art = alive(m.articles).find((a) => a.name === e.target.value);
+        const unit = e.target.closest('.need-row').querySelector('.nd-unit');
+        if (art?.unit && !unit.value) unit.value = art.unit;
+      });
+      const close = () => wrap.remove();
+      const label = (pid) => (pid === LEAVE ? 'Verlof' : projectLabel(this.ctx.master().projects.find((p) => p.id === pid), this.ctx.master()));
+      f.onclick = (e) => {
+        const a = e.target.closest('[data-act]')?.dataset.act;
+        if (a === 'need-add') addNeedRow(f.querySelector('.need-lines'));
+        if (a === 'need-del') e.target.closest('.need-row').remove();
+        if (a === 'pe-new') { e.preventDefault(); mkNew(); }
+        if (a === 'cancel') close();
+        if (a === 'pe-unplan') {
+          if (!confirm(`${label(projectId)} op ${fmtDate(date, { weekday: 'long', day: 'numeric', month: 'short' })} uitplannen voor iedereen (${items.length})?`)) return;
+          save((pl) => {
+            for (const it of pl.items) if (!it.deleted && it.date === date && it.projectId === projectId) Object.assign(it, { deleted: true, updated: Date.now() });
+            setNeed(pl, date, projectId, []);
+          });
+          close();
+          toast(`${label(projectId)} uitgepland`, 'ok');
+        }
+      };
+      f.onsubmit = (e) => {
+        e.preventDefault();
+        const pid = sel.value;
+        if (!pid || pid === '__new') return toast('Kies een project.', 'err');
+        const who = new Set([...f.querySelectorAll('[name=who]:checked')].map((x) => x.value));
+        const t = f.elements.time.value;
+        const n = f.elements.note.value.trim();
+        const lines = readNeed(f);
+        save((pl) => {
+          const now = Date.now();
+          for (const it of pl.items) {
+            if (it.deleted || it.date !== date || it.projectId !== projectId) continue;
+            if (!who.has(it.username)) { Object.assign(it, { deleted: true, updated: now }); continue; }
+            who.delete(it.username);
+            // stond die persoon die dag al op het nieuwe project: dit dubbel blokje weg
+            if (pid !== projectId && pl.items.some((x) => !x.deleted && x !== it && x.date === date && x.username === it.username && x.projectId === pid)) {
+              Object.assign(it, { deleted: true, updated: now }); continue;
+            }
+            Object.assign(it, { projectId: pid, note: n, updated: now });
+            if (t) it.time = t; else delete it.time;
+          }
+          for (const username of who) {
+            if (pl.items.some((x) => !x.deleted && x.date === date && x.username === username && x.projectId === pid)) continue;
+            pl.items.push({ id: uid(), date, username, projectId: pid, note: n, ...(t ? { time: t } : {}), updated: now });
+          }
+          if (pid !== projectId) setNeed(pl, date, projectId, []);
+          if (pid !== LEAVE) setNeed(pl, date, pid, lines);
+        });
+        close();
+        toast(pid !== projectId ? `Aangepast: nu ${label(pid)}` : 'Aangepast', 'ok');
+      };
+    };
     const drawCal = () => {
       view.querySelector('#plCal').innerHTML = planningHtml({ master: m, planning: this.ctx.planning(), view: this.planView, date: this.planDate, admin: true, selected: sel, only: this.planOnly });
       const d = days();
@@ -1087,16 +1190,19 @@ export class Admin {
       drawCal();
     };
     // nieuw project vanuit de planning
-    view.querySelector('#plForm').elements.projectId.onchange = async (e) => {
-      if (e.target.value !== '__new') return;
-      e.target.value = '';
+    const projSel = view.querySelector('#plForm').elements.projectId;
+    const newProject = async () => {
+      projSel.value = '';
       const p = await newProjectDialog(this.ctx, {});
       if (!p) return;
-      e.target.insertAdjacentHTML('beforeend', `<option value="${esc(p.id)}">${esc(projectLabel(p, this.ctx.master()))}</option>`);
-      e.target.value = p.id;
-      e.target.dispatchEvent(new Event('change', { bubbles: true }));
+      projSel.querySelector('option[value="__new"]').insertAdjacentHTML('beforebegin', `<option value="${esc(p.id)}">${esc(projectLabel(p, this.ctx.master()))}</option>`);
+      projSel.value = p.id;
+      projSel.dispatchEvent(new Event('change', { bubbles: true }));
       toast(`Project "${p.name}" aangemaakt`, 'ok');
     };
+    projSel.onchange = (e) => { if (e.target.value === '__new') newProject(); };
+    // het bolletje met + rechts van het project
+    view.querySelector('#plForm [data-act=new-project]').onclick = (e) => { e.preventDefault(); e.stopPropagation(); newProject(); };
     view.onclick = (e) => {
       if (dragged() && e.target.closest('#plCal')) { e.preventDefault(); return; }
       const nb = e.target.closest('[data-need]');
@@ -1105,6 +1211,14 @@ export class Admin {
         e.stopPropagation();
         const [date, projectId] = nb.dataset.need.split('|');
         return editNeed(date, projectId);
+      }
+      // tik op een ingepland blokje (of ✎ in de dagweergave): aanpassen
+      const ed = e.target.closest('[data-edit]') ?? (e.target.closest('button') ? null : e.target.closest('#plCal [data-move]'));
+      if (ed) {
+        e.preventDefault();
+        e.stopPropagation();
+        const [date, projectId] = (ed.dataset.edit ?? ed.dataset.move).split('|');
+        return editPlanned(date, projectId);
       }
       const del = e.target.closest('[data-del]');
       if (del) {

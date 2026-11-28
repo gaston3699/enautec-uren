@@ -186,7 +186,7 @@ export async function sha256(text) {
  * Overal dezelfde: Dag (gebruikt materiaal) en Materiaal nodig (planning). Wissen = opzij vegen.
  * opts: { desc, qty, unit, list, idx, cls, del, readonly, extra }
  */
-export function matRowHtml({ desc = '', qty = '', unit = '', list = '', idx = '', cls = '', del = 'del-mat', readonly = false, extra = '', mf = true } = {}) {
+export function matRowHtml({ desc = '', qty = '', unit = '', list = '', idx = '', cls = '', del = 'del-mat', readonly = false, extra = '', mf = true, own = null } = {}) {
   const dis = readonly ? 'disabled' : '';
   const f = (k) => (mf ? ` data-mf="${k}"` : '');
   return `<div class="mat-swipe${readonly ? '' : ' can-swipe'}${cls ? ` ${cls}` : ''}" data-m="${idx}"><span class="mat-del-bg" aria-hidden="true"><span>Wissen</span><span>Wissen</span></span>
@@ -194,6 +194,7 @@ export function matRowHtml({ desc = '', qty = '', unit = '', list = '', idx = ''
     <label class="mat-name-cell"><span class="mat-name" aria-hidden="true">${esc(desc ?? '')}</span><input class="mat-desc${cls === 'need-row' ? ' nd-desc' : ''}"${list ? ` list="${list}"` : ''}${f('description')} placeholder="Artikel of omschrijving" value="${esc(desc ?? '')}" aria-label="Artikel" autocomplete="off" ${dis}></label>
     <input class="mat-qty${cls === 'need-row' ? ' nd-qty' : ''}" type="number" inputmode="decimal" step="any" min="0"${f('qty')} placeholder="1" value="${qty ?? ''}" aria-label="Aantal" ${dis}>
     <input class="mat-unit${cls === 'need-row' ? ' nd-unit' : ''}"${f('unit')} placeholder="st" value="${esc(unit ?? '')}" aria-label="Eenheid" ${dis}>
+    ${own === null ? '' : `<button type="button" class="mat-own${own ? ' on' : ''}" data-act="own-mat" aria-pressed="${own ? 'true' : 'false'}" title="Eigen materiaal (zelf aangerekend)" aria-label="Eigen materiaal" ${dis}><span aria-hidden="true">✓</span></button>`}
     ${readonly ? '' : `<button type="button" class="mat-del-a11y" data-act="${del}" aria-label="Verwijderen" tabindex="-1">✕</button>`}
     ${extra}
   </div></div>`;

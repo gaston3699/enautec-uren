@@ -98,6 +98,9 @@ export function enableChipDrag(root, onDrop) {
   root.addEventListener('touchmove', (e) => { if (st?.active) e.preventDefault(); }, { passive: false });
   root.addEventListener('pointerup', () => end(true));
   root.addEventListener('pointercancel', () => end(false));
+  // de dagen zijn links: de browser zou die zelf meeslepen (grijs vak met het webadres) en
+  // dan krijgt het blokje de beweging niet meer. Dat eigen slepen van de browser uitzetten.
+  root.addEventListener('dragstart', (e) => { if (st || e.target.closest?.('[data-move], [data-day]')) e.preventDefault(); });
   root.addEventListener('contextmenu', (e) => { if (st?.active || e.target.closest('[data-move]')) e.preventDefault(); });
   return () => Date.now() - justDragged < 400;
 }
@@ -150,12 +153,12 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     return w.length ? `<span class="cal-who">met ${esc(w.map(first).join(', '))}</span>` : '';
   };
   // beheer: een blokje (project op een dag, met al zijn mensen) kan je naar een andere dag slepen
-  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}"${admin ? ` data-move="${esc(`${d}|${e.projectId}`)}" data-ids="${esc(e.items.map((i) => i.id).join(','))}" title="Sleep naar een andere dag om te verplaatsen"` : ''}>${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}${admin && !cls && e.projectId !== LEAVE ? `<button type="button" class="cal-add" data-need="${esc(`${d}|${e.projectId}`)}" title="Materiaal nodig" aria-label="Materiaal toevoegen">+</button>` : ''}</span>`;
+  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}"${admin ? ` data-move="${esc(`${d}|${e.projectId}`)}" data-ids="${esc(e.items.map((i) => i.id).join(','))}" role="button" title="Tik om aan te passen, sleep naar een andere dag om te verplaatsen"` : ''}>${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}${admin && !cls && e.projectId !== LEAVE ? `<button type="button" class="cal-add" data-need="${esc(`${d}|${e.projectId}`)}" title="Materiaal nodig" aria-label="Materiaal toevoegen">+</button>` : ''}</span>`;
   const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}${of !== username ? `/${encodeURIComponent(of)}` : ''}`);
   const nav = (v, d) => `href="${link(v, d)}" data-v="${v}" data-d="${d}"`;
   const sel = (d) => (selected.has(d) ? 'sel' : '');
   // werknemer: dag openen; beheer: dag (de)selecteren
-  const cellAttr = (d) => (admin ? `href="#" data-day="${d}"` : nav('dag', d));
+  const cellAttr = (d) => (admin ? `href="#" data-day="${d}" draggable="false"` : nav('dag', d));
 
   let title; let prev; let next; let body;
   if (view === 'dag') {
@@ -176,7 +179,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
         ${own(e) ? `${needHtml(needOf(planning, date, e.projectId), { checkable: true }) || '<div class="cal-need"><b>🧰 Mee te nemen</b></div>'}
           <form class="need-add" data-p="${esc(e.projectId)}"><label><span class="need-plus" aria-hidden="true">+</span><input name="t" placeholder="Toevoegen" aria-label="Mee te nemen toevoegen, bv. 2 st kabelgoot" autocomplete="off" enterkeyhint="next"></label></form>`
           : needHtml(needOf(planning, date, e.projectId))}
-        ${admin && e.projectId !== LEAVE ? `<div><button type="button" class="link" data-need="${esc(`${date}|${e.projectId}`)}">🧰 ${needOf(planning, date, e.projectId)?.lines?.length ? 'Materiaal wijzigen' : 'Materiaal nodig toevoegen'}</button></div>` : ''}
+        ${admin ? `<div class="row"><button type="button" class="link" data-edit="${esc(`${date}|${e.projectId}`)}">✎ Aanpassen</button>${e.projectId !== LEAVE ? `<button type="button" class="link" data-need="${esc(`${date}|${e.projectId}`)}">🧰 ${needOf(planning, date, e.projectId)?.lines?.length ? 'Materiaal wijzigen' : 'Materiaal nodig toevoegen'}</button>` : ''}</div>` : ''}
         ${!admin && mates(date, e.projectId).length ? `<div class="cal-mates">👷 Samen met ${esc(mates(date, e.projectId).map(first).join(', '))}</div>` : ''}
         ${admin ? `<div class="cal-people">${e.items.map((i) => `<span class="pill">${esc(person(i.username))}<button type="button" class="link danger" data-del="${esc(i.id)}" aria-label="${esc(person(i.username))} uitplannen">✕</button></span>`).join('')}</div>` : ''}</div>
         ${!admin && site?.lat != null ? `<a class="btn secondary" target="_blank" rel="noopener" href="${esc(routeUrl(site, navApp))}">Route</a>` : ''}

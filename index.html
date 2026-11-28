@@ -555,6 +555,15 @@ main:has(.plan-admin) { max-width: 1400px; }
   .mat-del-a11y { position: static; width: 28px; height: 28px; margin: 0; clip: auto; background: none; color: var(--red); opacity: 0; cursor: pointer; }
   .mat:hover .mat-del-a11y { opacity: .8; }
 }
+/* zelfstandige: vinkje "eigen materiaal" achter de regel */
+.mat:has(.mat-own) { grid-template-columns: 1fr 3.6em 3em 30px; }
+.mat-own { width: 26px; height: 26px; min-height: 0 !important; padding: 0 !important; border-radius: 50% !important; border: 1.5px solid var(--muted) !important; background: transparent !important; color: transparent; display: grid; place-items: center; font-size: 14px; font-weight: 700; opacity: .6; cursor: pointer; }
+.mat-own.on { background: var(--accent) !important; border-color: var(--accent) !important; color: #fff; opacity: 1; }
+.mat-own-hint { margin: 0 0 2px; }
+.blk-mat .mat-fold { border: 0; background: none; margin: 0; padding: 0; }
+.blk-mat .mat-fold > summary { padding: 6px 0; }
+.blk-mat .mat-fold .fold-title { font-size: 15px; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { .mat:has(.mat-own) { grid-template-columns: 1fr 3.6em 3em 30px 28px; } }
 .mat-add { display: flex; align-items: center; gap: 10px; width: 100%; background: none !important; border: 0; box-shadow: none; padding: 8px 0; margin: 0; color: var(--muted); font: inherit; font-weight: 400; cursor: pointer; justify-content: flex-start; min-height: 0; }
 .mat-add:hover .need-plus { opacity: 1; border-color: var(--accent); }
 .blk-mat > b.small { display: block; margin-bottom: 2px; }
@@ -625,7 +634,7 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 .copy-row button { min-height: 36px; padding: 6px 12px; }
 
 /* Navigatie onderaan */
-#nav[hidden] { display: none; }
+#nav[hidden], body.typing #nav { display: none; }
 /* typen op een gsm: het toetsenbord duwt de onderste balk anders midden op het scherm */
 @media (pointer: coarse) { body.typing #nav { display: none; } }
 .check-row { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 10px; min-height: 44px; cursor: pointer; }
@@ -648,6 +657,11 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 /* toevoegen zoals een lijst in Apple Notities: bolletje met + en "Toevoegen" in lichtgrijs */
 .need-add { margin-top: 2px; }
 .need-add label { display: flex; align-items: center; gap: 10px; padding: 4px 0; cursor: text; margin: 0; font-weight: inherit; }
+/* keuzelijst met rechts een bolletje + (bv. nieuw project in de planning) */
+.sel-plus { display: flex; align-items: center; gap: 10px; }
+.sel-plus > :first-child { flex: 1; min-width: 0; }
+.round-plus { flex: none; width: 36px; height: 36px; min-height: 0 !important; padding: 0 !important; border-radius: 50% !important; border: 1.5px solid var(--accent) !important; background: transparent !important; color: var(--accent); display: grid; place-items: center; font-size: 24px; line-height: 1; font-weight: 400; cursor: pointer; }
+.round-plus:active { background: color-mix(in srgb, var(--accent) 15%, transparent) !important; }
 .need-plus { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--muted); color: var(--muted); display: grid; place-items: center; font-size: 18px; line-height: 1; font-weight: 400; opacity: .7; }
 .need-add input, .need-add input:focus { flex: 1; min-width: 0; min-height: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; outline: none; padding: 2px 0 !important; font-size: inherit; color: var(--fg); }
 .need-add input::placeholder { color: var(--muted); opacity: .65; }
@@ -669,6 +683,7 @@ details summary { cursor: pointer; font-weight: 700; margin-top: 8px; }
 .cal-chip.leave { background: var(--surface2); color: var(--muted); }
 [data-move] { cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 [data-move].dragging { opacity: .35; }
+[data-move] { -webkit-user-drag: none; user-select: none; -webkit-user-select: none; cursor: grab; }
 .cal-ghost { position: fixed; z-index: 60; pointer-events: none; transform: scale(1.04) rotate(-1.5deg); box-shadow: 0 12px 30px rgba(0,0,0,.25); opacity: .95; }
 .drop-on { outline: 2.5px dashed var(--accent); outline-offset: -3px; background: var(--accent-soft) !important; }
 .cal-chip small { font-weight: 600; opacity: .85; }

@@ -36,6 +36,14 @@ const ADMIN_OK = 'enautec.adminOk';
 const $main = document.getElementById('main');
 const $status = document.getElementById('syncStatus');
 const $nav = document.getElementById('nav');
+// Op een gsm de menubalk verbergen zolang je typt: anders schuift hij mee boven het toetsenbord
+// en staat hij midden in het scherm (iPhone). Na het typen staat hij weer vast onderaan.
+{
+  const typing = (el) => el?.matches?.('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, select, [contenteditable=true]');
+  const touch = () => matchMedia('(pointer: coarse)').matches;
+  document.addEventListener('focusin', (e) => { if (touch() && typing(e.target)) document.body.classList.add('typing'); });
+  document.addEventListener('focusout', () => setTimeout(() => { if (!typing(document.activeElement)) document.body.classList.remove('typing'); }, 60));
+}
 
 const lsGet = (k, d = null) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* geblokkeerd */ } };

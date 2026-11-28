@@ -2,7 +2,7 @@
 import { buildTimeline, summarize, roundSegments, applyAnswers, diffSegments, compactSegments, KINDS, DEFAULT_RULES } from './engine.js';
 import { localTime, localToTs, dayRange, fmtHours, fmtDate, today, shiftDate, datesBetween } from './time.js';
 import { PATHS } from './store.js';
-import { esc, uid, alive, projectLabel, byName, toast, resolveId, info, fold, matRowHtml, matAddHtml, wireSwipe } from './ui.js';
+import { esc, uid, alive, projectLabel, byName, toast, resolveId, info, fold, matRowHtml, matAddHtml, wireSwipe, initials } from './ui.js';
 import { confirmDialog } from './update.js';
 import { workTypeOptions, workTypeName, newProjectDialog, defaultWorkType, workTypesOf, LOAD_WORK_TYPE, SHORT_ATELIER_MIN, needsProject, workTypeNoProject } from './projects.js';
 import { parseTime, weekStart, expectedMinutes, monthDays, holidayName } from './periods.js';
@@ -468,7 +468,8 @@ function needChecks(el, ctx, username, date, onAdded = null) {
       const hit = checks?.find((x) => x.projectId === c.dataset.ck && x.key === c.dataset.key);
       c.checked = !!hit;
       c.closest('.need-check').classList.toggle('done', !!hit);
-      c.closest('.need-check').querySelector('small').textContent = hit ? `✔ ${hit.by ?? ''}` : '';
+      c.closest('.need-check').querySelector('small').textContent = hit ? `✔ ${initials(hit.by ?? '')}` : '';
+      if (hit?.by) c.closest('.need-check').querySelector('small').title = `Afgevinkt door ${hit.by}`;
     }
     // dichtgeklapt project: "1 van 2 ingeladen" in de titel
     for (const sum of el.querySelectorAll('[data-need-sum]')) {
@@ -692,7 +693,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
           : `<select class="rc-proj ${needsProject(s, master) ? 'bad' : ''}" data-f="projectId" aria-label="Project">${projectOptions(s.projectId, s.candidates)}</select>`}
       </div>
       ${work ? `<div class="rc-kind seg-ctl" role="group" aria-label="Werf of atelier">
-        ${[['werk', '⛑️ Werf'], ['atelier', '🏭 Atelier']].map(([k, l]) => `<button type="button" class="${s.kind === k ? 'on' : ''}" data-act="rowkind" data-k="${k}" ${dis}>${l}</button>`).join('')}</div>`
+        ${[['atelier', '🏭 Atelier'], ['werk', '⛑️ Werf']].map(([k, l]) => `<button type="button" class="${s.kind === k ? 'on' : ''}" data-act="rowkind" data-k="${k}" ${dis}>${l}</button>`).join('')}</div>`
         : `<div class="rc-kind muted small">${esc(KINDS[s.kind] ?? s.kind)}</div>`}
       <div class="rc-times">
         ${time('start', 'Start')}${time('end', 'Stop')}
@@ -717,6 +718,26 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
   }
 
   /** Pauze van een regel instellen: de oude pauze eruit, de nieuwe om 12:00 (of in het midden) */
+/**
+   * Werf of Atelier van een regel automatisch kiezen uit het voorstel (gsm en badges): waar was je
+   * het langst tussen begin en einde van die regel? Niet als de werknemer zelf Werf/Atelier aantikte.
+   */
+  function autoKind(mem) {
+    if (mem.some((x) => x.kindSet)) return;
+    const work = mem.filter((x) => x.kind === 'werk' || x.kind === 'atelier');
+    if (!work.length) return;
+    const a = Math.min(...work.map((x) => x.start)); const b = Math.max(...work.map((x) => x.end));
+    let atelier = 0; let werf = 0;
+    for (const p of st.auto ?? []) {
+      const o = Math.min(b, p.end) - Math.max(a, p.start);
+      if (o <= 0) continue;
+      if (p.kind === 'atelier') atelier += o; else if (p.kind === 'werk') werf += o;
+    }
+    if (!atelier && !werf) return;
+    const k = atelier > werf ? 'atelier' : 'werk';
+    for (const x of work) x.kind = k;
+  }
+
   function setRowPause(mem, minutes) {
     const list = mem.map((k) => segs[k]).sort((a, b) => a.start - b.start);
     const rowStart = list[0].start; const rowEnd = list.at(-1).end;
@@ -741,13 +762,17 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
 
   /** Gebruikt materiaal in het blok van het project (onder het soort werk) */
   let matHosts = new Map();
+  // zelfstandige (Personeel → "Eigen materiaal"): per regel aanduiden wat hij zelf aanrekent
+  const ownMat = !!alive(master.employees).find((e) => e.username === username)?.own_material;
   function blockMaterial(pid) {
     const items = material.map((m, i) => ({ m, i })).filter(({ m }) => m.projectId === pid);
     if (readonly && !items.length) return '';
-    return `<div class="blk-mat">
-      <b class="small">🧰 Gebruikt materiaal</b>${items.map(({ m, i }) => matHtml(m, i)).join('')}
-      ${readonly ? '' : addMatHtml(pid)}
-    </div>`;
+    // inklapbaar (aantal in de titel); bij het invullen open, bevestigd = dicht
+    const own = ownMat ? items.filter(({ m }) => m.own).length : 0;
+    const extra = items.length ? `${items.length} artikel${items.length === 1 ? '' : 's'}${own ? ` · ${own} eigen` : ''}` : '';
+    const body = `${ownMat ? '<p class="mat-own-hint muted small">Vinkje = eigen materiaal (reken je zelf aan)</p>' : ''}${items.map(({ m, i }) => matHtml(m, i)).join('')}
+      ${readonly ? '' : addMatHtml(pid)}`;
+    return `<div class="blk-mat">${fold(`mat-${date}-${pid}`, '🧰 Gebruikt materiaal', body, { open: !readonly, extra, cls: 'mat-fold' })}</div>`;
   }
 
   const addMatHtml = (pid) => matAddHtml('add-mat', `data-p="${esc(pid)}"`);
@@ -756,7 +781,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
     const dis = readonly ? 'disabled' : '';
     const label = (id) => esc(projectLabel(master.projects.find((p) => p.id === id), master) || '?');
     // één regel per artikel; wissen door naar links of rechts te vegen (zie wireSwipe)
-    return matRowHtml({ desc: m.description, qty: m.qty, unit: m.unit, list: 'artikels', idx: i, readonly,
+    return matRowHtml({ desc: m.description, qty: m.qty, unit: m.unit, list: 'artikels', idx: i, readonly, own: ownMat ? !!m.own : null,
       extra: m.projectId ? '' : `<select class="mat-proj bad" data-native data-mf="projectId" aria-label="Project" ${dis}>
         <option value="">— kies het project —</option>${dayProj.map((id) => `<option value="${esc(id)}">${label(id)}</option>`).join('')}</select>` });
   }
@@ -1066,6 +1091,8 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
         }
         // een pauze midden in een werkblok knipt het in twee
         fitPauses(segs);
+        // Werf of Atelier volgt wat de gsm/badge in die tijd zag (tenzij je zelf koos)
+        if (merged) autoKind(mem.filter((x) => segs.includes(x)));
       } else if (f === 'km') s.km = t.value === '' ? null : Number(t.value);
       else if (f === 'workType') {
         // soort zonder project (bv. offertes): het project valt weg
@@ -1202,7 +1229,7 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       // Werf of Atelier voor de hele regel (ritten blijven ritten)
       const box = btn.closest('.blk');
       const mem = (box.dataset.g || box.dataset.i).split(',').map((k) => segs[Number(k)]);
-      for (const x of mem) if (WORKLIKE.has(x.kind)) x.kind = btn.dataset.k;
+      for (const x of mem) if (WORKLIKE.has(x.kind)) { x.kind = btn.dataset.k; x.kindSet = true; }
       persistSegments(); draw();
     }
     else if (act === 'badge') {
@@ -1248,6 +1275,9 @@ export function renderDay(el, { ctx, username, date, raw, asAdmin = false, rawEr
       material.push({ id: uid(), description: '', qty: 1, unit: '', projectId: btn.dataset.p || null, articleId: null });
       persistMaterial(); draw();
       el.querySelector(`.mat[data-m="${material.length - 1}"] .mat-desc`)?.focus();
+    } else if (act === 'own-mat') {
+      const item = material[Number(e.target.closest('.mat').dataset.m)];
+      if (item) { item.own = !item.own; persistMaterial(); draw(); }
     } else if (act === 'del-mat') {
       delMat(Number(e.target.closest('.mat').dataset.m));
     } else if (act === 'confirm') {

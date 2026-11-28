@@ -61,6 +61,8 @@ export function collect(master, regs, from, to) {
         mats.push({
           date, employee: name, description: m.description, articleCode: art?.code ?? '', qty: m.qty, unit: m.unit ?? '',
           projectCode: p?.code ?? '', project: p?.name ?? '', customer: cust.get(p?.customer_id)?.name ?? '',
+          // eigen materiaal van een zelfstandige: die rekent het zelf aan
+          billedBy: m.own ? name : 'Enautec',
         });
       }
     }
@@ -128,6 +130,7 @@ export async function buildWorkbook(master, regs, from, to) {
     { header: 'Omschrijving', key: 'description', width: 34 },
     { header: 'Aantal', key: 'qty', width: 9 },
     { header: 'Eenheid', key: 'unit', width: 9 },
+    { header: 'Aangerekend door', key: 'billedBy', width: 18 },
   ];
   mats.forEach((m) => mat.addRow(m));
   styleHeader(mat);
