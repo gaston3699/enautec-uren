@@ -437,6 +437,10 @@ tr.total td { font-weight: 700; background: var(--surface2); }
 .cal-date { display: grid; justify-items: center; line-height: 1.1; }
 .cal-date small { color: var(--muted); text-transform: uppercase; font-size: 12px; font-weight: 700; }
 .cal-date b { font: 700 22px/1.1 var(--font-head); }
+/* beheer: bolletje onder de datum = dag gekozen om in te plannen (tik op de datum) */
+.cal-pick { width: 20px; height: 20px; margin-top: 5px; border-radius: 50%; border: 1.5px solid var(--muted); display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff; opacity: .7; }
+.cal-wday.sel .cal-pick { background: var(--red); border-color: var(--red); opacity: 1; }
+.cal-wday .cal-date { cursor: pointer; padding: 6px 4px; }
 .cal-wday.weekend { background: var(--surface2); }
 .cal-wday.past { opacity: .65; }
 .cal-wday.today { border: 2px solid var(--red); }

@@ -228,7 +228,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     body = `<div class="cal-week">${days.map((d, i) => {
       const hol = holidayName(d);
       return `<a class="cal-wday ${d === t ? 'today' : ''} ${i >= 5 ? 'weekend' : ''} ${d < t ? 'past' : ''} ${sel(d)}" ${cellAttr(d)}>
-        <span class="cal-date"><small>${WD[i]}</small><b>${Number(d.slice(8))}</b></span>
+        <span class="cal-date"><small>${WD[i]}</small><b>${Number(d.slice(8))}</b>${admin ? `<span class="cal-pick" aria-hidden="true">${sel(d) ? '✓' : ''}</span>` : ''}</span>
         <span class="cal-items">${hol ? `<span class="cal-hol">${esc(hol)}</span>` : ''}${on(d).map((e) => chip(e, d, '', admin)).join('') || (hol ? '' : '<span class="muted small">—</span>')}</span>
         ${admin ? `<span class="cal-open" data-v="dag" data-d="${d}" title="Dag openen" aria-label="Dag openen">›</span>` : ''}
       </a>`;

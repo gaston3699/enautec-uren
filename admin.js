@@ -964,7 +964,7 @@ export class Admin {
         selected: emps.filter((e) => !this.planOnly || this.planOnly.has(e.username)).map((e) => e.username) })}
       <div id="plCal"></div></div>
       <section class="card plan-panel">
-        <h2>Inplannen${info('Tik de dagen aan in de kalender, kies het project en de werknemers en tik op Inplannen. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in. Iets aanpassen dat al ingepland is (ander project, iemand bijzetten of weghalen)? Tik op het blokje in de kalender.')}</h2>
+        <h2>Inplannen${info('Tik de dagen aan in de kalender, kies het project en de werknemers en tik op Inplannen. Werkt iemand maar een deel van die dagen mee, selecteer dan enkel die dagen en plan hem apart in. Een dag kiezen: tik op de datum (het bolletje eronder wordt rood). Iets aanpassen dat al ingepland is (ander project, iemand bijzetten of weghalen)? Tik op het blokje. Uitplannen: veeg het blokje opzij.')}</h2>
         <div class="plan-sel"><b id="plSelText"></b>
           <div class="row"><button type="button" class="secondary small" data-act="workdays">Werkdagen in beeld</button>
           <button type="button" class="secondary small" data-act="clear">Selectie wissen</button>
@@ -1157,7 +1157,7 @@ export class Admin {
     const drawCal = () => {
       view.querySelector('#plCal').innerHTML = planningHtml({ master: m, planning: this.ctx.planning(), view: this.planView, date: this.planDate, admin: true, selected: sel, only: this.planOnly });
       const d = days();
-      view.querySelector('#plSelText').textContent = !d.length ? 'Nog geen dagen geselecteerd.'
+      view.querySelector('#plSelText').textContent = !d.length ? 'Nog geen dagen gekozen: tik op een datum.'
         : `${d.length} dag${d.length === 1 ? '' : 'en'}: ${d.map((x) => fmtDate(x, { weekday: 'short', day: 'numeric', month: 'short' })).join(', ')}`;
     };
     drawCal();
@@ -1221,7 +1221,7 @@ export class Admin {
         return editNeed(date, projectId);
       }
       // tik op een ingepland blokje (of ✎ in de dagweergave): aanpassen
-      const ed = e.target.closest('[data-edit]') ?? (e.target.closest('button') ? null : e.target.closest('#plCal [data-move]'));
+      const ed = e.target.closest('[data-edit]') ?? (e.target.closest('button') ? null : e.target.closest('#plCal [data-move]:not(.mini)'));
       if (ed) {
         e.preventDefault();
         e.stopPropagation();
