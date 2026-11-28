@@ -44,9 +44,11 @@ export function visibleDays(view, date) {
 /**
  * Blokjes in de kalender verslepen naar een andere dag (muis: meteen slepen; gsm: even ingedrukt houden).
  * onDrop({ from, projectId, ids, to }) wordt opgeroepen bij loslaten op een andere dag ([data-day]).
+ * Blokjes met [data-swipe] (weekweergave) kan je ook opzij vegen: verder dan een derde van de breedte
+ * = onSwipe({ from, projectId, ids }) (uitplannen).
  * Geeft een functie terug die meldt of er net gesleept werd (dan de klik erna negeren).
  */
-export function enableChipDrag(root, onDrop) {
+export function enableChipDrag(root, onDrop, onSwipe = null) {
   let st = null; // { chip, x0, y0, timer, active, ghost, target }
   let justDragged = 0;
   const dayAt = (x, y) => document.elementFromPoint(x, y)?.closest?.('[data-day]');
@@ -69,7 +71,23 @@ export function enableChipDrag(root, onDrop) {
   const end = (drop) => {
     if (!st) return;
     clearTimeout(st.timer);
-    if (st.active) {
+    if (st.swipe) {
+      const { chip, sx } = st;
+      justDragged = Date.now();
+      const w = chip.offsetWidth;
+      chip.classList.remove('swiping');
+      if (drop && Math.abs(sx) > w / 3) {
+        chip.style.transition = 'transform .18s ease-in, opacity .18s';
+        chip.style.transform = `translateX(${sx > 0 ? w : -w}px)`;
+        chip.style.opacity = '0';
+        const [from, projectId] = chip.dataset.move.split('|');
+        setTimeout(() => onSwipe({ from, projectId, ids: chip.dataset.ids.split(',').filter(Boolean) }), 190);
+      } else {
+        chip.style.transition = 'transform .2s';
+        chip.style.transform = '';
+        chip.classList.remove('armed');
+      }
+    } else if (st.active) {
       st.ghost.remove(); st.chip.classList.remove('dragging'); st.target?.classList.remove('drop-on');
       justDragged = Date.now();
       const [from, projectId] = st.chip.dataset.move.split('|');
@@ -86,7 +104,24 @@ export function enableChipDrag(root, onDrop) {
   });
   root.addEventListener('pointermove', (e) => {
     if (!st) return;
-    const far = Math.hypot(e.clientX - st.x0, e.clientY - st.y0) > 8;
+    const dx = e.clientX - st.x0; const dy = e.clientY - st.y0;
+    if (st.swipe) {
+      e.preventDefault();
+      st.sx = dx;
+      st.chip.style.transition = 'none';
+      st.chip.style.transform = `translateX(${dx}px)`;
+      st.chip.classList.toggle('armed', Math.abs(dx) > st.chip.offsetWidth / 3);
+      return;
+    }
+    const far = Math.hypot(dx, dy) > 8;
+    // opzij vegen (weekweergave): uitplannen. Op en neer = verslepen naar een andere dag (of scrollen)
+    if (!st.active && far && onSwipe && st.chip.hasAttribute('data-swipe') && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      clearTimeout(st.timer);
+      st.swipe = true; st.sx = dx;
+      st.chip.classList.add('swiping');
+      try { st.chip.setPointerCapture(e.pointerId); } catch { /* oude browser */ }
+      return;
+    }
     if (!st.active) {
       if (!far) return;
       if (st.touch) return end(false); // bewogen voor het ingedrukt houden: gewoon scrollen
@@ -95,7 +130,7 @@ export function enableChipDrag(root, onDrop) {
     move(e.clientX, e.clientY);
   });
   // tijdens het slepen op een gsm niet scrollen
-  root.addEventListener('touchmove', (e) => { if (st?.active) e.preventDefault(); }, { passive: false });
+  root.addEventListener('touchmove', (e) => { if (st?.active || st?.swipe) e.preventDefault(); }, { passive: false });
   root.addEventListener('pointerup', () => end(true));
   root.addEventListener('pointercancel', () => end(false));
   // de dagen zijn links: de browser zou die zelf meeslepen (grijs vak met het webadres) en
@@ -153,7 +188,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
     return w.length ? `<span class="cal-who">met ${esc(w.map(first).join(', '))}</span>` : '';
   };
   // beheer: een blokje (project op een dag, met al zijn mensen) kan je naar een andere dag slepen
-  const chip = (e, d, cls = '') => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}"${admin ? ` data-move="${esc(`${d}|${e.projectId}`)}" data-ids="${esc(e.items.map((i) => i.id).join(','))}" role="button" title="Tik om aan te passen, sleep naar een andere dag om te verplaatsen"` : ''}>${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}${admin && !cls && e.projectId !== LEAVE ? `<button type="button" class="cal-add" data-need="${esc(`${d}|${e.projectId}`)}" title="Materiaal nodig" aria-label="Materiaal toevoegen">+</button>` : ''}</span>`;
+  const chip = (e, d, cls = '', swipe = false) => `<span class="cal-chip ${cls} ${e.projectId === LEAVE ? 'leave' : ''}" style="--h:${hueOf(e.projectId)}"${admin ? ` data-move="${esc(`${d}|${e.projectId}`)}" data-ids="${esc(e.items.map((i) => i.id).join(','))}" role="button"${swipe ? ' data-swipe' : ''} title="Tik om aan te passen, sleep naar een andere dag om te verplaatsen${swipe ? ', veeg opzij om uit te plannen' : ''}"` : ''}>${timeOf(e.items) ? `<small>${esc(timeOf(e.items))}</small> ` : ''}${esc(name(e.projectId))}${!cls && needOf(planning, d, e.projectId)?.lines?.length ? ' <span title="Materiaal nodig">🧰</span>' : ''}${cls ? '' : who(e, d)}</span>`;
   const link = (v, d) => (admin ? '#' : `#planning/${v}/${d}${of !== username ? `/${encodeURIComponent(of)}` : ''}`);
   const nav = (v, d) => `href="${link(v, d)}" data-v="${v}" data-d="${d}"`;
   const sel = (d) => (selected.has(d) ? 'sel' : '');
@@ -194,7 +229,7 @@ export function planningHtml({ master: m, planning, username, of = null, view = 
       const hol = holidayName(d);
       return `<a class="cal-wday ${d === t ? 'today' : ''} ${i >= 5 ? 'weekend' : ''} ${d < t ? 'past' : ''} ${sel(d)}" ${cellAttr(d)}>
         <span class="cal-date"><small>${WD[i]}</small><b>${Number(d.slice(8))}</b></span>
-        <span class="cal-items">${hol ? `<span class="cal-hol">${esc(hol)}</span>` : ''}${on(d).map((e) => chip(e, d)).join('') || (hol ? '' : '<span class="muted small">—</span>')}</span>
+        <span class="cal-items">${hol ? `<span class="cal-hol">${esc(hol)}</span>` : ''}${on(d).map((e) => chip(e, d, '', admin)).join('') || (hol ? '' : '<span class="muted small">—</span>')}</span>
         ${admin ? `<span class="cal-open" data-v="dag" data-d="${d}" title="Dag openen" aria-label="Dag openen">›</span>` : ''}
       </a>`;
     }).join('')}</div>`;

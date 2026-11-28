@@ -1181,6 +1181,14 @@ export class Admin {
       });
       const nm = projectId === LEAVE ? 'Verlof' : projectLabel(m.projects.find((p) => p.id === projectId), m);
       toast(`${nm} verplaatst naar ${fmtDate(to, { weekday: 'long', day: 'numeric', month: 'short' })} (${n} ${n === 1 ? 'persoon' : 'personen'})`, 'ok');
+   }, ({ from, projectId, ids }) => {
+      // blokje opzij geveegd: uitplannen (iedereen op dat project die dag), met ongedaan maken
+      save((pl) => { for (const it of pl.items) if (!it.deleted && ids.includes(it.id)) Object.assign(it, { deleted: true, updated: Date.now() }); });
+      const nm = projectId === LEAVE ? 'Verlof' : projectLabel(m.projects.find((p) => p.id === projectId), m);
+      toast(`${nm} uitgepland op ${fmtDate(from, { weekday: 'short', day: 'numeric', month: 'short' })}`, '', {
+        label: 'Ongedaan maken',
+        fn: () => save((pl) => { for (const it of pl.items) if (ids.includes(it.id)) Object.assign(it, { deleted: false, updated: Date.now() }); }),
+      });
     });
 
     // agenda's per persoon aan- of uitvinken
